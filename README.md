@@ -57,6 +57,15 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
 - Requotes are retried automatically on a fresh price (allowed slippage = 1x the spread); the same Confirm can never
   send two orders.
 
+## Bar replay (practice)
+- **Replay** (top bar) -> click the candle to start from. The chart shows only candles that had closed by the replay
+  time, on any timeframe or candle type (switch freely; it stays at the same moment, nothing from the future).
+- Play / pause, next candle (or the Right arrow key), speed 1-25 candles per second, pick another start.
+- Gold/forex chart: Buy / Sell, SL / TP dragging and the x close all work as **practice trades** at the replay price
+  (spread included); SL / TP are checked candle by candle (SL first if both are inside one candle). The trades panel
+  shows the practice account (balance you choose, history, win rate, growth curve). Nothing is sent to MT5.
+- Exit replay returns to the live chart and your real account.
+
 ## Indian chart (Fyers)
 See `FYERS_SETUP.txt`. Copy `fyers_config.example.json` to `fyers_config.json` and put in your App ID and Secret
 (this file is git-ignored). Minute charts and up have full history; second / tick / Renko / Kagi charts are built from

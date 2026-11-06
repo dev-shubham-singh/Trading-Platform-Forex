@@ -114,6 +114,14 @@
   #tb_curve { flex:1; width:100%; min-height:0; }
   #tb_empty { color:var(--muted); padding:14px; }
   #tb_note { color:var(--muted); padding:0 8px; }
+  #rpbar { position:absolute; left:50%; bottom:38px; transform:translateX(-50%); z-index:7; display:flex; align-items:center; gap:6px;
+           background:var(--panel); border:1px solid #ff9800; border-radius:6px; padding:5px 10px; font-size:12px;
+           box-shadow:0 4px 16px rgba(0,0,0,.35); white-space:nowrap; }
+  #rpbar button { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:4px; padding:3px 9px; cursor:pointer; }
+  #rpbar button:hover { border-color:#ff9800; }
+  #rpbar select, #rpbar input { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:3px; padding:2px; }
+  #rpbar input { width:70px; } #rp_time { color:var(--muted); min-width:150px; }
+  #replaybtn.on { color:#ff9800; background:rgba(255,152,0,.12); }
   #legend { position:absolute; left:12px; top:8px; z-index:3; pointer-events:none;
             font-size:12px; color:var(--muted); line-height:1.6; }
   #legend .t { color:var(--text); font-weight:500; margin-right:8px; }
@@ -164,11 +172,13 @@
   <div class="sep"></div>
   <button class="tool" id="indbtn">&#402;x Indicators</button>
   <button class="tool" id="invbtn" title="Invert price scale (Alt+I)">Invert</button>
+  <button class="tool" id="replaybtn" title="Bar replay: go back to a past candle and replay the chart candle by candle, with practice trades">&#9194; Replay</button>
   <button class="tool" id="fit" title="Show all history">Fit all</button>
   <button class="tool" id="latest" title="Jump to the newest candle">Latest &rarr;</button>
   <div class="sep mt5only"></div>
+ <span class="mt5only" style="display:inline-flex;gap:4px;white-space:nowrap">
   <button class="tool tbuy mt5only" id="buybtn" title="Plan a buy: shows your stop loss and lot size from your risk. Nothing is sent until you press Confirm.">Buy</button>
-  <button class="tool tsell mt5only" id="sellbtn" title="Plan a sell: shows your stop loss and lot size from your risk. Nothing is sent until you press Confirm.">Sell</button>
+  <button class="tool tsell mt5only" id="sellbtn" title="Plan a sell: shows your stop loss and lot size from your risk. Nothing is sent until you press Confirm.">Sell</button></span>
   <div class="sep"></div>
   <button class="tool" id="winbtn" title="Open another chart window (e.g. 5m) to put on your other screen">&#10697; New window</button>
   <button class="tool" id="syncbtn" title="Sync drawings, crosshair, symbol and theme between your chart windows">&#8644; Sync</button>
@@ -210,6 +220,16 @@
     <div id="chart"></div>
     <canvas id="overlay"></canvas>
     <div id="legend"></div>
+    <div id="rpbar" style="display:none">
+      <b style="color:#ff9800">REPLAY</b><span id="rp_time"></span>
+      <button id="rp_pick" title="Pick another start candle (starts a new practice session)">&#10226; Start</button>
+      <button id="rp_play" title="Play / pause">&#9654;</button>
+      <button id="rp_step" title="Next candle (Right arrow key)">&#9197;</button>
+      <select id="rp_speed" title="Candles per second"><option value="1">1/s</option><option value="2" selected>2/s</option>
+        <option value="4">4/s</option><option value="10">10/s</option><option value="25">25/s</option></select>
+      <label class="mt5only" title="Practice account size (changing it starts a new practice session)">Balance <input id="rp_bal" type="number" min="1" step="any"></label>
+      <button id="rp_exit">Exit replay</button>
+    </div>
     <div id="tradep" style="display:none">
       <div class="tph" id="tp_head" title="Drag to move this panel"><b id="tp_title">BUY</b><span id="tp_acc"></span><button id="tp_x" title="Cancel (Esc)">&times;</button></div>
       <div class="tpr"><label>Risk / trade</label><input id="tp_rv" type="number" step="any" min="0">
@@ -282,6 +302,9 @@ const PRESETS = ['100t', '5s', '15s', '30s', '1m', '5m', '15m', '1h', '4h', '1d'
 let digits = 2, symbol = '', tf = '15s', tfSec = 15, raw = [], ha = [], reqId = 0;
 let SRC = 'MT5', anchor = 0;           // data source name; session start (seconds after midnight) for period alignment
 let volCandles = false;               // volume candles: width = volume (Heikin Ashi / Candles only)
+// Bar replay: the chart shows only candles that had closed by RP.t (real time); practice trades instead of orders
+const RP = { on: false, picking: false, t: 0, full: [], timer: null, speed: 2, spread: 0, hx: null,
+             bal: 0, startBal: 0, pos: [], deals: [], next: 1, accReal: null };
 let ctype = 'ha', kind = 'time', ivN = 15, box = 1, tickCnt = 0, kagiSegs = [], symMeta = null;
 // raw rows: [id, open, high, low, close, real time in seconds]; id = time for time charts, a counter otherwise
 function parseIv(s) {
@@ -1184,6 +1207,7 @@ function atrCalc(ind) {
    The server does the counting from its tick history (last 3 days); the page asks only for what is on screen. */
 const FLOW = { prof: new Map(), foot: new Map(), delta: new Map(), deltaKey: '', deltaVer: 0, busy: false, footStep: 0, profAt: new Map() };
 function flowReset() { FLOW.prof.clear(); FLOW.foot.clear(); FLOW.delta.clear(); FLOW.deltaKey = ''; FLOW.deltaVer++; FLOW.profAt.clear(); }
+function capT(t) { return RP.on ? Math.min(t, RP.t) : t; }     // replay: never ask for data after the replay time
 function flowOn(type) { return inds.some(i => i.type === type && i.visible !== false); }
 function niceStep(x) {
   const pt = symMeta && symMeta.point ? symMeta.point : Math.pow(10, -digits);
@@ -1233,8 +1257,8 @@ async function flowTick() {
         const vr = ts.getVisibleLogicalRange(); if (!vr) continue;
         const a = Math.max(0, Math.floor(vr.from)), z = Math.min(raw.length - 1, Math.ceil(vr.to));
         if (z < a) continue;
-        const t0 = barSpan(a)[0], t1 = Math.min(barSpan(z)[1], raw[raw.length - 1][5] + 86400);
-        const live = z === raw.length - 1, key = `vis|${t0}|${z === raw.length - 1 ? 'live' : t1}|${rows}`;
+        const t0 = barSpan(a)[0], t1 = capT(Math.min(barSpan(z)[1], raw[raw.length - 1][5] + 86400));
+        const live = z === raw.length - 1, key = `vis|${t0}|${z === raw.length - 1 && !RP.on ? 'live' : t1}|${rows}`;
         if (ind.visKey !== key || (live && Date.now() - (FLOW.profAt.get(key) || 0) > 2000)) {
           const j = await getJSON(`/api/profile?symbol=${encodeURIComponent(symbol)}&t0=${t0}&t1=${t1}&rows=${rows}`);
           if (id !== reqId) return;
@@ -1244,10 +1268,10 @@ async function flowTick() {
         let ses = sessionsInView(ind);
         const lastT = raw[raw.length - 1][5];
         for (const se of ses) {
-          const live = lastT < se.t1, key = `ses|${se.t0}|${rows}|${ind.day}`;
+          const live = lastT < se.t1, key = `ses|${se.t0}|${rows}|${ind.day}` + (RP.on && live ? `|rp${RP.t}` : '');
           const age = Date.now() - (FLOW.profAt.get(key) || 0);
-          if (!FLOW.prof.has(key) || (live && age > 3000)) {
-            const j = await getJSON(`/api/profile?symbol=${encodeURIComponent(symbol)}&t0=${se.t0}&t1=${se.t1}&rows=${rows}`);
+          if (!FLOW.prof.has(key) || (live && !RP.on && age > 3000)) {
+            const j = await getJSON(`/api/profile?symbol=${encodeURIComponent(symbol)}&t0=${se.t0}&t1=${capT(se.t1)}&rows=${rows}`);
             if (id !== reqId) return;
             FLOW.prof.set(key, j); FLOW.profAt.set(key, Date.now()); bump();
           }
@@ -1264,7 +1288,7 @@ async function flowTick() {
         const need = [];
         for (let i = a; i <= z && need.length < 400; i++) if (!FLOW.foot.has(`${step}|${raw[i][0]}`) || i === raw.length - 1) need.push(i);
         if (need.length) {
-          const sp2 = need.map(barSpan);
+          const sp2 = need.map(i => { const b = barSpan(i); return [b[0], capT(b[1])]; });
           const j = await getJSON(`/api/footprint?symbol=${encodeURIComponent(symbol)}&step=${step}` +
             `&s=${sp2.map(x => x[0].toFixed(3)).join(',')}&e=${sp2.map(x => x[1].toFixed(3)).join(',')}`);
           if (id !== reqId) return;
@@ -2279,6 +2303,7 @@ function saveView() { store.set('gc_view' + WK, { symbol, ctype, tf, vc: volCand
 async function load() {
   if (ctype === 'renko' || ctype === 'kagi') box = store.get(`gc_box_${symbol}_${ctype}`, symMeta ? symMeta.box : box);
   syncControls();
+  if (RP.on) replayPause();                        // replay: don't step while the new candles load
   const id = ++reqId;
   raw = []; ha = []; flowReset();
   $('msg').style.display = 'flex';
@@ -2288,11 +2313,13 @@ async function load() {
     const j = await (await fetch(query())).json();
     if (id !== reqId) return;
     if (j.error) { $('msg').textContent = j.error; return; }
-    raw = j.bars; ha = []; tickCnt = j.cnt || 0; buildFrom(0);
+    if (RP.on) { RP.full = j.bars; raw = RP.full.slice(0, replayCount(RP.full, RP.t)); }
+    else raw = j.bars;
+    ha = []; tickCnt = j.cnt || 0; buildFrom(0);
     showBars(null);
     inds.forEach(fullData);
-    refreshBos();
-    setStatus(j.status);
+    refreshBos(); lastClosedCount = ha.length - 1;
+    if (RP.on) rpStatus(); else setStatus(j.status);
     hoverIdx = null; legend(null); bump();
     setTimeout(flowTick, 50);
     const n = ha.length;
@@ -2310,12 +2337,12 @@ async function load() {
 }
 
 async function poll() {
-  if (polling || !raw.length) return;
+  if (polling || !raw.length || RP.on) return;                  // replay: no live candles
   polling = true;
   const id = reqId, since = raw[raw.length - 1][0];
   try {
     const j = await (await fetch(query(since))).json();
-    if (id !== reqId || j.error) return;
+    if (id !== reqId || j.error || RP.on) return;
     setStatus(j.status);
     if (j.cnt != null) tickCnt = j.cnt;
     let first = -1;
@@ -2324,18 +2351,19 @@ async function poll() {
       if (c[0] === lastT) { raw[raw.length - 1] = c; if (first < 0) first = raw.length - 1; }
       else if (c[0] > lastT) { raw.push(c); if (first < 0) first = raw.length - 1; }
     }
-    if (first >= 0) {
-      buildFrom(first);
-      showBars(first);
-      inds.forEach(i => tailData(i, first));
-      tailPivots(first); tailHL(first);
-      if (ha.length - 1 !== lastClosedCount) { lastClosedCount = ha.length - 1; refreshBos(); }
-      legend(null); bump();
-    }
+    if (first >= 0) applyNewBars(first);
   } catch (e) { /* server busy or restarting; next poll retries */ }
   finally { polling = false; }
 }
 setInterval(poll, 500);
+function applyNewBars(first) {                   // raw grew / changed from index `first`: update chart + indicators
+  buildFrom(first);
+  showBars(first);
+  inds.forEach(i => tailData(i, first));
+  tailPivots(first); tailHL(first);
+  if (ha.length - 1 !== lastClosedCount) { lastClosedCount = ha.length - 1; refreshBos(); }
+  legend(null); bump();
+}
 
 // ---- time zone menu + clock ----
 tzName = store.get('gc_tz', 'Asia/Kolkata');
@@ -2539,6 +2567,12 @@ chartEl.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   const { x, y } = local(e);
   if (x > paneW() || y > paneH()) return;            // leave price/time scales to the chart
+  if (RP.picking) {                                     // replay: this candle is the starting point
+    e.stopPropagation(); e.preventDefault();
+    const l = Math.round(ts.coordinateToLogical(x));
+    if (l != null && isFinite(l) && raw.length) replayStart(Math.max(0, Math.min(raw.length - 1, l)));
+    return;
+  }
   const ph_ = posHits.find(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
   if (ph_) {                                           // close box on a position line: one click closes it
     e.stopPropagation(); e.preventDefault();
@@ -2632,7 +2666,9 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     setTool('cursor'); sel = null; lockChart(false); if (plan) closePlan();
     if (posDrag) { posDrag = null; drag = null; bump(); }       // cancel a SL / TP drag
+    if (RP.picking) { RP.picking = false; RP.hx = null; $('hint').textContent = ''; chartEl.style.cursor = ''; if (!RP.on) $('replaybtn').classList.remove('on'); else $('rpbar').style.display = 'flex'; bump(); }
   }
+  if (e.key === 'ArrowRight' && RP.on && !RP.picking) { replayPause(); replayStep(); e.preventDefault(); }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel) { deleteSel(); e.preventDefault(); }
 });
 function deleteSel() { drawings = drawings.filter(d => d.id !== sel); sel = null; saveDrawings(); }
@@ -2705,6 +2741,7 @@ function render() {
     drawFootprint(pw, ph);
     drawPositions(pw);
     drawPlan(pw);
+    drawReplayPick(pw, ph);
     const all = pending ? drawings.concat([pending]) : drawings;
     for (const d of all) drawOne(d, pw, d.id === sel || d === pending);
     drawRemoteCross(pw, ph);
@@ -2972,6 +3009,7 @@ async function setSymbol(name, fromSync) {
   $('boxin').step = m.point;
   drawings = store.get('gc_draw_' + symbol, []); sel = null;
   if (plan) closePlan();
+  if (RP.on || RP.picking) replayExit(true);
   ACC = null; setTimeout(accTick, 0);
   saveView();
   await load();
@@ -3060,7 +3098,7 @@ const RISK = Object.assign({ mode: 'pct', pct: 5, usd: 1, lotMode: 'auto', lot: 
 let ACC = null, plan = null, planCur = null, accBusy = false, accAt = 0;
 function saveRisk() { store.set('gc_risk', RISK); }
 async function accTick() {
-  if (SRC !== 'MT5' || accBusy || !symbol) return;
+  if (SRC !== 'MT5' || accBusy || !symbol || RP.on) return;          // replay: ACC is the practice account
   accBusy = true;
   try {
     const sym = symbol, j = await (await fetch(`/api/account?symbol=${encodeURIComponent(sym)}`)).json();
@@ -3131,6 +3169,7 @@ function computePlan() {
 }
 function openPlan(side) {
   if (plan && plan.side === side && !plan.sending) return closePlan();
+  if (RP.on) replayPause();
   plan = { side, slManual: null, sending: false, done: false, id: Date.now().toString(36) + Math.random().toString(36).slice(2) };
   $('buybtn').classList.toggle('on', side === 'buy'); $('sellbtn').classList.toggle('on', side === 'sell');
   $('tp_title').textContent = (side === 'buy' ? 'BUY ' : 'SELL ') + symbol;
@@ -3173,14 +3212,25 @@ function updatePlan() {
   if ($('tp_info').innerHTML !== h) $('tp_info').innerHTML = h;
   const go = $('tp_go');
   go.style.background = buy ? '#26a69a' : '#ef5350';
-  go.textContent = plan.done ? 'Order placed' : plan.sending ? 'Sending...' : `Confirm ${buy ? 'BUY' : 'SELL'}${r && r.lot ? ' ' + r.lot + ' lot' : ''}`;
-  go.disabled = !r || !r.ok || plan.sending || plan.done || !RISK.live;      // done: never send the same plan twice
+  go.textContent = plan.done ? (RP.on ? 'Practice trade placed' : 'Order placed') : plan.sending ? 'Sending...' :
+    `Confirm ${buy ? 'BUY' : 'SELL'}${r && r.lot ? ' ' + r.lot + ' lot' : ''}${RP.on ? ' (practice)' : ''}`;
+  go.disabled = !r || !r.ok || plan.sending || plan.done || (!RISK.live && !RP.on);   // done: never send the same plan twice
   go.title = !RISK.live ? 'Tick "Live orders on" first' : '';
 }
 async function sendOrder() {
   const r = computePlan();
-  if (!plan || !r || !r.ok || plan.sending || plan.done || !RISK.live) return;
+  if (!plan || !r || !r.ok || plan.sending || plan.done || (!RISK.live && !RP.on)) return;
   const side = plan.side, buy = side === 'buy';
+  if (RP.on) {                                     // replay: a practice trade at the replay price, nothing sent
+    const p = rpOpen(side, r.lot, r.sl, r.tp || 0);
+    plan.done = true;
+    $('tp_msg').style.color = '#ff9800';
+    $('tp_msg').textContent = `Practice ${buy ? 'buy' : 'sell'} ${p.volume} at ${fmt(p.open)}, SL ${fmt(r.sl)}` + (r.tp ? `, TP ${fmt(r.tp)}` : '') +
+      ` (risk ${money(r.loss)}). Not sent to MT5.`;
+    updatePlan(); renderBar(true);
+    setTimeout(() => { if (plan && plan.done) closePlan(); }, 1500);
+    return;
+  }
   plan.sending = true; updatePlan();
   $('tp_msg').style.color = 'var(--muted)'; $('tp_msg').textContent = 'Sending the order to MT5...';
   let res;
@@ -3331,6 +3381,12 @@ function posLineAt(x, y) {
 }
 async function savePosLevel(p, which, price) {
   const k = Math.pow(10, digits); price = Math.round(price * k) / k;
+  if (RP.on) {                                     // practice position: just move it
+    const q = RP.pos.find(x => x.ticket === p.ticket); if (q) q[which] = price;
+    tbNote(`Practice ${which.toUpperCase()} moved to ${fmt(price)}: ${levelMoney(p, price) >= 0 ? '+' : ''}${money(levelMoney(p, price))} if hit`,
+           levelMoney(p, price) >= 0 ? 'pl-up' : 'pl-dn');
+    rpView(); renderBar(true); bump(); return;
+  }
   const sl = which === 'sl' ? price : p.sl || 0, tp = which === 'tp' ? price : p.tp || 0;
   const old = p[which]; p[which] = price; posPending[p.ticket + which] = true; bump();
   const res = await postJSON('/api/modify', { ticket: p.ticket, sl, tp });
@@ -3340,6 +3396,7 @@ async function savePosLevel(p, which, price) {
   else { p[which] = old; tbNote(res.error || 'MT5 did not accept the change', 'pl-dn'); }
   await accTick(); renderBar(true); bump();
 }
+chartEl.addEventListener('pointermove', e => { if (RP.picking) { RP.hx = local(e).x; bump(); } });
 chartEl.addEventListener('pointermove', e => {           // hover: show that the line can be dragged
   if (posDrag || drag || tool !== 'cursor' || !posLines.length) return;
   const { x, y } = local(e);
@@ -3363,6 +3420,12 @@ async function postJSON(path, body) {
   } catch (e) { return { error: 'Lost connection to the chart server. Check MT5.' }; }
 }
 async function closeTickets(tickets) {            // tickets = null: close everything
+  if (RP.on) {                                     // practice positions: close at the replay price
+    const list = RP.pos.filter(p => !tickets || tickets.includes(p.ticket));
+    let pl = 0; list.forEach(p => pl += rpClose(p, p.side === 'buy' ? status.bid : status.ask, 'closed'));
+    if (list.length) tbNote(`Practice: closed ${list.length} position${list.length > 1 ? 's' : ''}: ${pl >= 0 ? '+' : ''}${money(pl)}`, pl >= 0 ? 'pl-up' : 'pl-dn');
+    rpView(); renderBar(true); bump(); return;
+  }
   if (!ACC || !ACC.token) return;
   (tickets || (ACC.all || []).map(p => p.ticket)).forEach(t => closing.add(t));
   tbNote('Closing...', '');
@@ -3378,7 +3441,7 @@ async function closeTickets(tickets) {            // tickets = null: close every
 }
 function tbNote(t, cls) { $('tb_note').textContent = t; $('tb_note').className = cls || ''; clearTimeout(tbNote.t); tbNote.t = setTimeout(() => $('tb_note').textContent = '', 8000); }
 async function histTick() {
-  if (SRC !== 'MT5' || histBusy || $('tradebar').style.display === 'none') return;
+  if (SRC !== 'MT5' || histBusy || $('tradebar').style.display === 'none' || RP.on) return;
   histBusy = true;
   try { const j = await (await fetch('/api/history?days=0')).json(); if (j.deals) { HIST = j.deals; renderHist(); } }
   catch (e) {} finally { histBusy = false; }
@@ -3411,7 +3474,8 @@ function renderBar(force) {
   const g = growthStats(), cls = v => v >= 0 ? 'pl-up' : 'pl-dn', sg = v => (v >= 0 ? '+' : '') + money(v);
   let sum = `<span>Balance <b>${money(ACC.balance)}</b></span><span>Equity <b>${money(eq)}</b></span>` +
             `<span>Open P/L <b class="${cls(fl)}">${sg(fl)}</b></span>`;
-  if (g) sum += `<span>Today <b class="${cls(g.today + fl)}">${sg(g.today + fl)}</b></span>` +
+  if (RP.on) sum = `<span style="color:#ff9800">Practice account (replay)</span>` + sum;
+  if (g) sum += (RP.on ? '' : `<span>Today <b class="${cls(g.today + fl)}">${sg(g.today + fl)}</b></span>`) +
                 (g.growth != null ? `<span>Growth <b class="${cls(eq - g.dep + g.wd)}">${((eq - g.dep + g.wd) / g.dep * 100).toFixed(1)}%</b> <span title="deposits">of ${money(g.dep)}</span></span>` : '');
   if ($('tb_sum').innerHTML !== sum) $('tb_sum').innerHTML = sum;
   $('tb_n').textContent = all.length ? `(${all.length})` : '';
@@ -3511,6 +3575,166 @@ setInterval(() => {                                   // a position closed by SL
   const n = ACC && ACC.all ? ACC.all.length : -1;
   if (n !== lastPosN) { if (lastPosN >= 0) histTick(); lastPosN = n; }
 }, 1000);
+
+/* ---------------- bar replay ---------------- */
+function barEnd(rows, i) {                // real time (s) by which bar i had closed
+  if (kind === 'time') return rows[i][5] + tfSec;
+  if (kind === 'renko') return rows[i][5];
+  return i + 1 < rows.length ? rows[i + 1][5] : Infinity;
+}
+function replayCount(rows, t) {           // how many bars had closed by time t
+  let n = 0;
+  while (n < rows.length && barEnd(rows, n) <= t + 1e-9) n++;
+  return n;
+}
+function replayBegin() {                  // Replay button: choose the start candle
+  if (!raw.length) return;
+  if (plan) closePlan();
+  RP.picking = true; RP.hx = null;
+  $('replaybtn').classList.add('on'); chartEl.style.cursor = 'crosshair'; $('rpbar').style.display = 'none';
+  $('hint').textContent = 'Replay: click the candle to start from (Esc cancels)';
+  bump();
+}
+function rpReset() {                      // a fresh practice account
+  const real = RP.accReal;
+  const b = Number($('rp_bal').value) > 0 ? Number($('rp_bal').value) : real && real.balance > 0 ? +real.balance.toFixed(2) : 100;
+  $('rp_bal').value = b;
+  RP.bal = RP.startBal = b; RP.pos = []; RP.next = 1;
+  RP.deals = [{ ticket: 0, time: RP.t, type: 2, entry: 0, symbol: '', volume: 0, price: 0, profit: b, commission: 0, swap: 0, fee: 0, position: 0, comment: 'practice balance' }];
+}
+function replayStart(i) {
+  RP.picking = false; RP.hx = null; chartEl.style.cursor = ''; $('hint').textContent = '';
+  if (!RP.on) {
+    RP.on = true; RP.full = raw.slice(); RP.accReal = ACC;
+    RP.spread = status && status.ask != null ? Math.max(0, status.ask - status.bid) : 0;
+    $('rp_bal').value = '';
+  }
+  replayPause();
+  RP.t = barEnd(RP.full, i);
+  if (!isFinite(RP.t)) RP.t = RP.full[i][5];
+  rpReset();
+  ++reqId; flowReset();
+  raw = RP.full.slice(0, Math.max(1, replayCount(RP.full, RP.t)));
+  ha = []; buildFrom(0); showBars(null); inds.forEach(fullData); refreshBos(); lastClosedCount = ha.length - 1;
+  rpStatus(); hoverIdx = null; legend(null);
+  const n = raw.length; ts.setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 10 });
+  $('rpbar').style.display = 'flex'; $('replaybtn').classList.add('on');
+  setTimeout(flowTick, 50); bump();
+}
+function rpStatus() {                     // the replay price = close of the last shown candle (+ the spread for the ask)
+  if (!raw.length) return;
+  const bid = raw[raw.length - 1][4];
+  rpMark(bid, bid + RP.spread);
+  setStatus({ bid, ask: bid + RP.spread, server_ms: RP.t * 1000 });
+  $('rp_time').textContent = fullTime(RP.t) + (raw.length >= RP.full.length - (kind === 'time' ? 1 : 0) ? '  (end of loaded data)' : '');
+  rpView();
+}
+function replayStep() {
+  if (!RP.on || !raw.length) return false;
+  const n = raw.length;
+  if (n >= RP.full.length || !isFinite(barEnd(RP.full, n))) { replayPause(); tbNote('Replay reached the newest closed candle', ''); return false; }
+  RP.t = barEnd(RP.full, n);
+  const first = n;
+  while (raw.length < RP.full.length && barEnd(RP.full, raw.length) <= RP.t + 1e-9) {
+    const row = RP.full[raw.length];
+    raw.push(row);
+    rpCheckBar(row);                      // practice SL / TP hit inside this candle?
+  }
+  applyNewBars(first);
+  rpStatus();
+  return true;
+}
+function replayPlay() {
+  if (!RP.on) return;
+  if (RP.timer) return replayPause();
+  RP.timer = setInterval(() => { if (!replayStep()) replayPause(); }, 1000 / RP.speed);
+  $('rp_play').innerHTML = '&#10074;&#10074;';
+}
+function replayPause() {
+  if (RP.timer) clearInterval(RP.timer);
+  RP.timer = null; $('rp_play').innerHTML = '&#9654;';
+}
+function replayExit(noLoad) {
+  replayPause();
+  const was = RP.on;
+  RP.on = false; RP.picking = false; RP.hx = null; RP.full = []; RP.pos = [];
+  if (plan) closePlan();
+  $('rpbar').style.display = 'none'; $('replaybtn').classList.remove('on'); $('hint').textContent = ''; chartEl.style.cursor = '';
+  ACC = RP.accReal; HIST = null; RP.accReal = null;
+  if (was && !noLoad) load();
+  accTick(); histTick(); bump();
+}
+// ---- practice account
+function rpVpp() { return RP.accReal && RP.accReal.sym ? RP.accReal.sym.vpp : 1; }
+function rpOpen(side, lot, sl, tp) {
+  const buy = side === 'buy', price = buy ? status.ask : status.bid, t = RP.next++;
+  const p = { ticket: t, symbol, side, volume: lot, open: price, cur: buy ? status.bid : status.ask, sl, tp, profit: 0, swap: 0,
+              magic: 0, time: RP.t, digits };
+  p.profit = (p.cur - p.open) * (buy ? 1 : -1) * lot * rpVpp();
+  RP.pos.push(p);
+  RP.deals.push({ ticket: 10000 + RP.deals.length, time: RP.t, type: buy ? 0 : 1, entry: 0, symbol, volume: lot, price,
+                  profit: 0, commission: 0, swap: 0, fee: 0, position: t, comment: 'practice' });
+  rpView(); bump();
+  return p;
+}
+function rpClose(p, price, why) {
+  const buy = p.side === 'buy', pl = (price - p.open) * (buy ? 1 : -1) * p.volume * rpVpp();
+  RP.bal += pl;
+  RP.deals.push({ ticket: 10000 + RP.deals.length, time: RP.t, type: buy ? 1 : 0, entry: 1, symbol: p.symbol, volume: p.volume,
+                  price, profit: pl, commission: 0, swap: 0, fee: 0, position: p.ticket, comment: why });
+  RP.pos = RP.pos.filter(q => q !== p);
+  return pl;
+}
+function rpCheckBar(row) {                // real candle [id, o, h, l, c, t]: SL first if both are inside (worst case)
+  const sp = RP.spread;
+  for (const p of RP.pos.slice()) {
+    const buy = p.side === 'buy', o = row[1] + (buy ? 0 : sp), hi = row[2] + (buy ? 0 : sp), lo = row[3] + (buy ? 0 : sp);
+    const slHit = p.sl && (buy ? lo <= p.sl : hi >= p.sl), tpHit = p.tp && (buy ? hi >= p.tp : lo <= p.tp);
+    if (slHit) {
+      const fill = buy ? Math.min(p.sl, o) : Math.max(p.sl, o);          // a gap past the stop fills at the open
+      const pl = rpClose(p, fill, 'sl');
+      tbNote(`Practice ${p.side} hit its stop loss: ${money(pl)}`, 'pl-dn');
+    } else if (tpHit) {
+      const fill = buy ? Math.max(p.tp, o) : Math.min(p.tp, o);
+      const pl = rpClose(p, fill, 'tp');
+      tbNote(`Practice ${p.side} hit its take profit: +${money(pl)}`, 'pl-up');
+    }
+  }
+}
+function rpMark(bid, ask) {               // open practice positions at the current replay price
+  for (const p of RP.pos) {
+    p.cur = p.side === 'buy' ? bid : ask;
+    p.profit = (p.cur - p.open) * (p.side === 'buy' ? 1 : -1) * p.volume * rpVpp();
+  }
+}
+function rpView() {                       // the trades panel / position lines show the practice account
+  if (!RP.on) return;
+  const real = RP.accReal || {};
+  let fl = 0; RP.pos.forEach(p => fl += p.profit);
+  ACC = { ...real, error: null, allow: true, algo: true, accTrade: true, currency: real.currency || 'USD',
+          sym: real.sym || { digits, point: Math.pow(10, -digits), vmin: 0.01, vmax: 1000, vstep: 0.01, stops: 0, vpp: 1 },
+          balance: RP.bal, equity: RP.bal + fl, profit: fl,
+          positions: RP.pos.filter(p => p.symbol === symbol), all: RP.pos.slice() };
+  HIST = RP.deals;
+  if (tbTab === 'hist') renderHist();
+}
+function drawReplayPick(pw, ph) {          // while choosing the start: a line at the candle, the future greyed out
+  if (!RP.picking || RP.hx == null) return;
+  const l = Math.round(ts.coordinateToLogical(RP.hx)); if (l == null || !isFinite(l)) return;
+  const x = ts.logicalToCoordinate(Math.max(0, Math.min(raw.length - 1, l))); if (x == null) return;
+  ctx.fillStyle = rgba('#ff9800', 0.08); ctx.fillRect(x, 0, pw - x, ph);
+  ctx.strokeStyle = '#ff9800'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ph); ctx.stroke();
+}
+$('replaybtn').onclick = () => {
+  if (RP.picking) { RP.picking = false; $('hint').textContent = ''; chartEl.style.cursor = ''; if (!RP.on) $('replaybtn').classList.remove('on'); else $('rpbar').style.display = 'flex'; bump(); }
+  else replayBegin();
+};
+$('rp_pick').onclick = replayBegin;
+$('rp_play').onclick = replayPlay;
+$('rp_step').onclick = () => { replayPause(); replayStep(); };
+$('rp_speed').onchange = () => { RP.speed = Number($('rp_speed').value) || 2; if (RP.timer) { replayPause(); replayPlay(); } };
+$('rp_bal').onchange = () => { if (RP.on && Number($('rp_bal').value) > 0) { rpReset(); rpView(); renderBar(true); tbNote('New practice session', ''); bump(); } };
+$('rp_exit').onclick = () => replayExit(false);
 
 (async () => {
   try {
