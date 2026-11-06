@@ -119,6 +119,10 @@ class TickStore:
     def __init__(self, sym):
         self.sym, self.lock = sym, threading.Lock()
         self.t, self.b, self.n = np.empty(0, np.int64), np.empty(0), 0
+        # order flow by the tick rule: a tick above the previous price is a buy, below is a sell, unchanged keeps
+        # the last direction. sg = side per tick (+1 / -1 / 0 before the first move); cb / cs = running counts of
+        # buys / sells (cb[k] = buys among the first k ticks), so any time range is two lookups.
+        self.sg, self.cb, self.cs, self.lastsign = np.empty(0, np.int8), np.zeros(1, np.int64), np.zeros(1, np.int64), 0
         self.last_used = time.time()
         with MT5_LOCK:
             tick = mt5.symbol_info_tick(sym)
@@ -147,10 +151,20 @@ class TickStore:
         need = self.n + len(t)
         if need > len(self.t):                         # grow capacity geometrically
             cap = max(need, int(len(self.t) * 1.5) + 100000)
-            nt, nb = np.empty(cap, np.int64), np.empty(cap)
-            nt[:self.n], nb[:self.n] = self.t[:self.n], self.b[:self.n]
-            self.t, self.b = nt, nb
-        self.t[self.n:need], self.b[self.n:need] = t, b
+            nt, nb, ns = np.empty(cap, np.int64), np.empty(cap), np.empty(cap, np.int8)
+            ncb, ncs = np.zeros(cap + 1, np.int64), np.zeros(cap + 1, np.int64)
+            nt[:self.n], nb[:self.n], ns[:self.n] = self.t[:self.n], self.b[:self.n], self.sg[:self.n]
+            ncb[:self.n + 1], ncs[:self.n + 1] = self.cb[:self.n + 1], self.cs[:self.n + 1]
+            self.t, self.b, self.sg, self.cb, self.cs = nt, nb, ns, ncb, ncs
+        prev = self.b[self.n - 1] if self.n else b[0]
+        d = np.sign(np.diff(np.concatenate(([prev], b)))).astype(np.int8)
+        idx = np.where(d != 0, np.arange(len(d)), -1)
+        np.maximum.accumulate(idx, out=idx)
+        side = np.where(idx >= 0, d[np.maximum(idx, 0)], self.lastsign).astype(np.int8)
+        self.lastsign = int(side[-1])
+        self.t[self.n:need], self.b[self.n:need], self.sg[self.n:need] = t, b, side
+        self.cb[self.n + 1:need + 1] = self.cb[self.n] + np.cumsum(side > 0)
+        self.cs[self.n + 1:need + 1] = self.cs[self.n] + np.cumsum(side < 0)
         self.n = need
 
     def update(self):
@@ -163,6 +177,11 @@ class TickStore:
         with self.lock:
             n = self.n
             return self.t[start:n], self.b[start:n], n
+
+    def flow_view(self):
+        with self.lock:
+            n = self.n
+            return self.t[:n], self.b[:n], self.sg[:n], self.cb[:n + 1], self.cs[:n + 1]
 
 
 STORES, STORES_LOCK = {}, threading.Lock()
@@ -427,6 +446,103 @@ def status(sym):
     return {"bid": tk.bid, "ask": tk.ask, "server_ms": tk.time_msc} if tk else {}
 
 
+# ---------------- order flow (tick rule) ----------------
+def nice_step(x, point):
+    """Round a price step to 1 / 2 / 2.5 / 5 x 10^k, never below the symbol's point."""
+    if not x > 0:
+        return point
+    mag = 10 ** np.floor(np.log10(x))
+    for m in (1, 2, 2.5, 5, 10):
+        if x <= m * mag:
+            return float(max(point, round(m * mag, 10)))
+    return float(max(point, x))
+
+
+def bar_bounds(sym, kind, p, since=None):
+    """(ids, start_ms, end_ms) of the chart's bars: time bars run [start, start + interval); tick / Kagi bars
+    run until the next bar starts; a Renko brick holds the ticks after the previous brick up to its own."""
+    rows, _ = get_bars(sym, kind, p, None if kind in ("renko",) else since)
+    if not rows:
+        return np.empty(0, np.int64), np.empty(0, np.int64), np.empty(0, np.int64)
+    ids = np.array([r[0] for r in rows], dtype=float)
+    rt = np.array([r[5] for r in rows], dtype=float) * 1000
+    now = time.time() * 1000 + 86_400_000 * 365
+    if kind == "time":
+        st = rt.astype(np.int64); en = st + int(round(float(p) * 1000))
+    elif kind == "renko":
+        st = np.concatenate(([0.0], rt[:-1])).astype(np.int64) + 1; en = rt.astype(np.int64) + 1
+        if since is not None:
+            keep = ids >= since; ids, st, en = ids[keep], st[keep], en[keep]
+    else:
+        st = rt.astype(np.int64); en = np.concatenate((rt[1:], [now])).astype(np.int64)
+    return ids, st, en
+
+
+def flow_delta(sym, kind, p, since=None):
+    st = store_for(sym)
+    ids, a, b = bar_bounds(sym, kind, p, since)
+    t, _, _, cb, cs = st.flow_view()
+    if len(t) == 0 or len(ids) == 0:
+        return {"ids": [], "buy": [], "sell": []}
+    i0, i1 = np.searchsorted(t, a, "left"), np.searchsorted(t, b, "left")
+    keep = a >= t[0]                                    # bars older than the tick history have no flow data
+    buy, sell = (cb[i1] - cb[i0])[keep], (cs[i1] - cs[i0])[keep]
+    ids = ids[keep]
+    return {"ids": [int(x) if float(x).is_integer() else float(x) for x in ids], "buy": buy.tolist(), "sell": sell.tolist()}
+
+
+def flow_profile(sym, t0, t1, rows=24, step=None):
+    """Volume at price (ticks, split buy / sell) between two real times in seconds."""
+    st = store_for(sym)
+    t, b, sg, _, _ = st.flow_view()
+    i0, i1 = np.searchsorted(t, int(t0 * 1000), "left"), np.searchsorted(t, int(t1 * 1000), "left")
+    if i1 <= i0:
+        return {"ticks": 0}
+    pb, ps = b[i0:i1], sg[i0:i1]
+    point = symbol_point(sym)
+    lo, hi = float(pb.min()), float(pb.max())
+    step = float(step) if step else nice_step((hi - lo) / max(1, int(rows)), point)
+    k = np.floor(pb / step + 1e-9).astype(np.int64)
+    base = int(k.min()); k -= base
+    n = int(k.max()) + 1
+    buy = np.bincount(k, weights=(ps > 0), minlength=n).astype(np.int64)
+    sell = np.bincount(k, weights=(ps < 0), minlength=n).astype(np.int64)
+    return {"ticks": int(i1 - i0), "base": base, "step": step, "buy": buy.tolist(), "sell": sell.tolist(),
+            "from": float(t[i0]) / 1000, "to": float(t[i1 - 1]) / 1000, "covered": bool(t0 * 1000 >= t[0])}
+
+
+def flow_footprint(sym, starts, ends, step):
+    """Per bar: buy / sell ticks at each price row of size `step`."""
+    st = store_for(sym)
+    t, b, sg, cb, cs = st.flow_view()
+    out = []
+    if len(t) == 0:
+        return out
+    a = np.searchsorted(t, (np.asarray(starts) * 1000).astype(np.int64), "left")
+    z = np.searchsorted(t, (np.asarray(ends) * 1000).astype(np.int64), "left")
+    for s0, i0, i1 in zip(starts, a, z):
+        if i1 <= i0 or s0 * 1000 < t[0]:
+            out.append(None); continue
+        k = np.floor(b[i0:i1] / step + 1e-9).astype(np.int64)
+        base = int(k.min()); k -= base
+        n = int(k.max()) + 1
+        sgn = sg[i0:i1]
+        out.append([base, np.bincount(k, weights=(sgn > 0), minlength=n).astype(int).tolist(),
+                    np.bincount(k, weights=(sgn < 0), minlength=n).astype(int).tolist()])
+    return out
+
+
+_POINTS = {}
+
+
+def symbol_point(sym):
+    if sym not in _POINTS:
+        with MT5_LOCK:
+            info = mt5.symbol_info(sym)
+        _POINTS[sym] = float(info.point) if info and info.point else 0.01
+    return _POINTS[sym]
+
+
 def get_bars(sym, kind, p, since):
     if kind == "time":
         sec = float(p)
@@ -519,6 +635,23 @@ def make_handler(default_sym):
                     return self.js({"symbol": sym, "digits": info.digits, "point": info.point,
                                     "desc": getattr(info, "description", ""), "box": suggest_box(sym, info.point),
                                     "srvOffset": broker_offset(sym)})
+                if url.path == "/api/delta":
+                    ensure_symbol(sym)
+                    kind = q.get("kind", "time")
+                    since = q.get("since")
+                    return self.js(flow_delta(sym, kind, float(q.get("p", "15")), float(since) if since else None))
+                if url.path == "/api/profile":
+                    ensure_symbol(sym)
+                    return self.js(flow_profile(sym, float(q["t0"]), float(q["t1"]), int(q.get("rows", 24)),
+                                                float(q["step"]) if q.get("step") else None))
+                if url.path == "/api/footprint":
+                    ensure_symbol(sym)
+                    s_ = [float(x) for x in q.get("s", "").split(",") if x]
+                    e_ = [float(x) for x in q.get("e", "").split(",") if x]
+                    if len(s_) != len(e_) or len(s_) > 600:
+                        return self.js({"error": "bad footprint request"}, 400)
+                    step = float(q.get("step", "0")) or symbol_point(sym) * 100
+                    return self.js({"step": step, "bars": flow_footprint(sym, s_, e_, step)})
                 if url.path == "/api/bars":
                     ensure_symbol(sym)
                     kind = q.get("kind", "time")

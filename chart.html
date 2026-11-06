@@ -178,6 +178,9 @@
     <button data-add="macd" class="mt5only">MACD + doji</button>
     <button data-add="vol" class="mt5only">Volume</button>
     <button data-add="hdoji" class="mt5only">Doji boxes (5m, 15m, 1h...)</button>
+    <button data-add="vprof" class="mt5only">Volume profile</button>
+    <button data-add="foot" class="mt5only">Footprint (order flow)</button>
+    <button data-add="cvd" class="mt5only">Cumulative delta (CVD)</button>
   </div>
   <div id="ilist"></div>
   <div class="note">Source "HA close" calculates on Heikin Ashi values (TradingView's default on an HA chart).
@@ -384,6 +387,10 @@ const IND_DEFAULTS = {
           cH: '#ef5350', cL: '#26a69a', cC: '#9598a1', width: 1 },
   vwap: { day: 'broker', bands: 1, mult: 1, color: '#2962ff', cBand: '#7e57c2', width: 2 },
   atr: { len: 14, src: 'real', smooth: 'rma', color: '#f06292' },
+  vprof: { mode: 'session', day: 'broker', rows: 24, va: 70, width: 30, showVA: true, last: 'all',
+           cUp: '#1592e6', cDn: '#fbc123', cPoc: '#ff5252' },
+  foot: { step: 'auto', show: 'bidask', imb: 3, cBuy: '#26a69a', cSell: '#ef5350' },
+  cvd: { show: 'cvd', reset: 'session', day: 'broker', color: '#ffb74d', cUp: '#26a69a', cDn: '#ef5350' },
   hdoji: { doji: 'ha', last: '3', alpha: '0.12', border: 1, forming: true, labels: true, iv: '', on_custom: false, c_custom: '#ffffff',
            on_1m: false, c_1m: '#b0bec5', on_3m: false, c_3m: '#80deea', on_5m: true, c_5m: '#ffd54f',
            on_15m: true, c_15m: '#ce93d8', on_30m: false, c_30m: '#a5d6a7', on_1h: true, c_1h: '#4fc3f7',
@@ -1056,6 +1063,251 @@ function atrCalc(ind) {
   }
   return [ind.smooth === 'sma' ? sma(tr, len) : ind.smooth === 'ema' ? ema(tr, len) : smma(tr, len)];
 }
+/* ======== Order flow: volume profile, footprint, cumulative delta ========
+   MT5 forex / gold has no exchange volume, so (like TradingView on these symbols) volume = ticks, and each tick is
+   a buy or a sell by the tick rule (above the previous price = buy, below = sell, unchanged = same as before).
+   The server does the counting from its tick history (last 3 days); the page asks only for what is on screen. */
+const FLOW = { prof: new Map(), foot: new Map(), delta: new Map(), deltaKey: '', deltaVer: 0, busy: false, footStep: 0, profAt: new Map() };
+function flowReset() { FLOW.prof.clear(); FLOW.foot.clear(); FLOW.delta.clear(); FLOW.deltaKey = ''; FLOW.deltaVer++; FLOW.profAt.clear(); }
+function flowOn(type) { return inds.some(i => i.type === type && i.visible !== false); }
+function niceStep(x) {
+  const pt = symMeta && symMeta.point ? symMeta.point : Math.pow(10, -digits);
+  if (!(x > 0)) return pt;
+  const mag = Math.pow(10, Math.floor(Math.log10(x)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (x <= m * mag) return Math.max(pt, +(m * mag).toPrecision(6));
+  return Math.max(pt, x);
+}
+function chartP() { return kind === 'time' ? tfSec : kind === 'tick' ? ivN : box; }
+function barSpan(i) {                       // real-time span [s, e) of bar i, matching the server's bar_bounds()
+  const r = raw[i];
+  if (kind === 'time') return [r[5], r[5] + tfSec];
+  if (kind === 'renko') return [(i ? raw[i - 1][5] : 0) + 0.001, r[5] + 0.001];
+  return [r[5], i + 1 < raw.length ? raw[i + 1][5] : r[5] + 86400 * 365];
+}
+function sessionsInView(ind) {              // day sessions overlapping the visible bars (newest last)
+  const vr = ts.getVisibleLogicalRange(); if (!vr || !raw.length) return [];
+  const A = dayAnchor(ind), a = Math.max(0, Math.floor(vr.from)), z = Math.min(raw.length - 1, Math.ceil(vr.to));
+  const out = [];
+  for (let i = a; i <= z; i++) {
+    const st = periodStart(raw[i][5], 86400, A), last = out[out.length - 1];
+    if (!last || last.t0 !== st) out.push({ t0: st, t1: st + 86400, a: i, b: i }); else last.b = i;
+  }
+  return out;
+}
+async function getJSON(url) { const r = await fetch(url); return r.json(); }
+async function flowTick() {
+  if (FLOW.busy || !raw.length || SRC !== 'MT5') return;
+  FLOW.busy = true;
+  const id = reqId;
+  try {
+    // ---- cumulative delta: all bars once, then only the newest ones
+    if (flowOn('cvd')) {
+      const key = `${symbol}|${kind}|${chartP()}`;
+      const since = FLOW.deltaKey === key && raw.length ? raw[Math.max(0, raw.length - 2)][0] : null;
+      const j = await getJSON(`/api/delta?symbol=${encodeURIComponent(symbol)}&kind=${kind}&p=${chartP()}` + (since != null ? `&since=${since}` : ''));
+      if (id !== reqId) return;
+      if (FLOW.deltaKey !== key) { FLOW.delta.clear(); FLOW.deltaKey = key; }
+      (j.ids || []).forEach((x, k) => FLOW.delta.set(x, [j.buy[k], j.sell[k]]));
+      FLOW.deltaVer++;
+      inds.filter(i => i.type === 'cvd').forEach(i => fillPane(i));
+    }
+    // ---- volume profile
+    for (const ind of inds.filter(i => i.type === 'vprof' && i.visible !== false)) {
+      const rows = Math.max(4, Math.min(200, ind.rows | 0));
+      if (ind.mode === 'visible') {
+        const vr = ts.getVisibleLogicalRange(); if (!vr) continue;
+        const a = Math.max(0, Math.floor(vr.from)), z = Math.min(raw.length - 1, Math.ceil(vr.to));
+        if (z < a) continue;
+        const t0 = barSpan(a)[0], t1 = Math.min(barSpan(z)[1], raw[raw.length - 1][5] + 86400);
+        const live = z === raw.length - 1, key = `vis|${t0}|${z === raw.length - 1 ? 'live' : t1}|${rows}`;
+        if (ind.visKey !== key || (live && Date.now() - (FLOW.profAt.get(key) || 0) > 2000)) {
+          const j = await getJSON(`/api/profile?symbol=${encodeURIComponent(symbol)}&t0=${t0}&t1=${t1}&rows=${rows}`);
+          if (id !== reqId) return;
+          FLOW.prof.set(key, j); FLOW.profAt.set(key, Date.now()); ind.visKey = key; bump();
+        }
+      } else {
+        let ses = sessionsInView(ind);
+        const lastT = raw[raw.length - 1][5];
+        for (const se of ses) {
+          const live = lastT < se.t1, key = `ses|${se.t0}|${rows}|${ind.day}`;
+          const age = Date.now() - (FLOW.profAt.get(key) || 0);
+          if (!FLOW.prof.has(key) || (live && age > 3000)) {
+            const j = await getJSON(`/api/profile?symbol=${encodeURIComponent(symbol)}&t0=${se.t0}&t1=${se.t1}&rows=${rows}`);
+            if (id !== reqId) return;
+            FLOW.prof.set(key, j); FLOW.profAt.set(key, Date.now()); bump();
+          }
+        }
+      }
+    }
+    // ---- footprint for the visible candles (only when zoomed in enough to read)
+    if (flowOn('foot')) {
+      const ind = inds.find(i => i.type === 'foot' && i.visible !== false);
+      const vr = ts.getVisibleLogicalRange(), sp = ts.logicalToCoordinate(1) - ts.logicalToCoordinate(0);
+      if (vr && sp >= 14) {
+        const a = Math.max(0, Math.floor(vr.from)), z = Math.min(raw.length - 1, Math.ceil(vr.to));
+        const step = footStep(ind, a, z);
+        const need = [];
+        for (let i = a; i <= z && need.length < 400; i++) if (!FLOW.foot.has(`${step}|${raw[i][0]}`) || i === raw.length - 1) need.push(i);
+        if (need.length) {
+          const sp2 = need.map(barSpan);
+          const j = await getJSON(`/api/footprint?symbol=${encodeURIComponent(symbol)}&step=${step}` +
+            `&s=${sp2.map(x => x[0].toFixed(3)).join(',')}&e=${sp2.map(x => x[1].toFixed(3)).join(',')}`);
+          if (id !== reqId) return;
+          (j.bars || []).forEach((bar, k) => FLOW.foot.set(`${step}|${raw[need[k]][0]}`, bar));
+          if (FLOW.foot.size > 20000) FLOW.foot.clear();
+          bump();
+        }
+      }
+    }
+  } catch (e) { /* server busy; next tick retries */ }
+  finally { FLOW.busy = false; }
+}
+setInterval(flowTick, 700);
+function footStep(ind, a, z) {
+  if (ind.step !== 'auto' && Number(ind.step) > 0) return Number(ind.step);
+  let hi = -Infinity, lo = Infinity;
+  for (let i = a; i <= z; i++) { if (raw[i][2] > hi) hi = raw[i][2]; if (raw[i][3] < lo) lo = raw[i][3]; }
+  const ph = paneH() * paneTop(), y0 = series.priceToCoordinate(hi), y1 = series.priceToCoordinate(lo);
+  const pxPerPrice = y0 != null && y1 != null && hi > lo ? Math.abs(y1 - y0) / (hi - lo) : ph / Math.max(1e-9, hi - lo);
+  return niceStep(16 / Math.max(1e-9, pxPerPrice));                      // about 16 px per price row
+}
+function valueArea(tot, pct) {
+  const T = tot.reduce((x, y) => x + y, 0); if (!T) return { poc: -1, lo: 0, hi: -1 };
+  let poc = 0; tot.forEach((v, k) => { if (v > tot[poc]) poc = k; });
+  let lo = poc, hi = poc, vol = tot[poc];
+  while (vol < T * pct / 100 && (lo > 0 || hi < tot.length - 1)) {
+    const up = hi + 1 < tot.length ? tot[hi + 1] : -1, dn = lo > 0 ? tot[lo - 1] : -1;
+    if (up >= dn) { hi++; vol += up; } else { lo--; vol += dn; }
+  }
+  return { poc, lo, hi };
+}
+function profStats(ind, pr) {
+  if (!pr || !pr.ticks) return null;
+  const tot = pr.buy.map((v, k) => v + pr.sell[k]), va = valueArea(tot, ind.va || 70);
+  const P = k => (pr.base + k + 0.5) * pr.step;
+  return { tot, ...va, pocP: P(va.poc), vah: (pr.base + va.hi + 1) * pr.step, val: (pr.base + va.lo) * pr.step };
+}
+function drawOneProfile(ind, pr, xa, xb, maxW, fromRight, pw) {
+  const st = profStats(ind, pr); if (!st) return;
+  const mx = Math.max(...st.tot) || 1;
+  for (let k = 0; k < st.tot.length; k++) {
+    if (!st.tot[k]) continue;
+    const ya = series.priceToCoordinate((pr.base + k + 1) * pr.step), yb = series.priceToCoordinate((pr.base + k) * pr.step);
+    if (ya == null || yb == null) continue;
+    let y = Math.min(ya, yb), h = Math.abs(yb - ya); if (h > 3) { y += 0.5; h -= 1; }
+    const inVA = k >= st.lo && k <= st.hi, al = inVA ? 0.55 : 0.22;
+    const lb = pr.buy[k] / mx * maxW, ls = pr.sell[k] / mx * maxW;
+    if (fromRight) {
+      ctx.fillStyle = rgba(ind.cUp, al); ctx.fillRect(xb - lb, y, lb, h);
+      ctx.fillStyle = rgba(ind.cDn, al); ctx.fillRect(xb - lb - ls, y, ls, h);
+    } else {
+      ctx.fillStyle = rgba(ind.cUp, al); ctx.fillRect(xa, y, lb, h);
+      ctx.fillStyle = rgba(ind.cDn, al); ctx.fillRect(xa + lb, y, ls, h);
+    }
+  }
+  const line = (pv, dash, col) => {
+    const y = series.priceToCoordinate(pv); if (y == null) return;
+    ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash(dash);
+    ctx.beginPath(); ctx.moveTo(Math.max(0, xa), Math.round(y) + 0.5); ctx.lineTo(Math.min(pw, xb), Math.round(y) + 0.5); ctx.stroke();
+    ctx.setLineDash([]);
+  };
+  line(st.pocP, [], ind.cPoc);
+  if (ind.showVA) { line(st.vah, [4, 3], rgba(ind.cUp, 0.9)); line(st.val, [4, 3], rgba(ind.cUp, 0.9)); }
+}
+function drawProfiles(pw, ph) {
+  const bottom = ph * paneTop();
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pw, bottom); ctx.clip();
+  inds.filter(i => i.type === 'vprof' && i.visible !== false).forEach(ind => {
+    const rows = Math.max(4, Math.min(200, ind.rows | 0)), wf = Math.max(5, Math.min(100, ind.width | 0)) / 100;
+    if (ind.mode === 'visible') {
+      const pr = FLOW.prof.get(ind.visKey); if (pr) drawOneProfile(ind, pr, 0, pw, pw * wf, true, pw);
+      return;
+    }
+    let ses = sessionsInView(ind);
+    if (ind.last !== 'all') ses = ses.slice(-Math.max(1, Number(ind.last) || 1));
+    for (const se of ses) {
+      const pr = FLOW.prof.get(`ses|${se.t0}|${rows}|${ind.day}`); if (!pr) continue;
+      const xa = l2x(t2l(se.t0)), xb = l2x(se.b + 0.5);
+      if (xa == null || xb == null) continue;
+      drawOneProfile(ind, pr, xa, xb, Math.max(10, (xb - xa) * wf), false, pw);
+    }
+  });
+  ctx.restore();
+}
+function drawFootprint(pw, ph) {
+  const ind = inds.find(i => i.type === 'foot' && i.visible !== false); if (!ind || !raw.length) return;
+  const vr = ts.getVisibleLogicalRange(); if (!vr) return;
+  const sp = ts.logicalToCoordinate(1) - ts.logicalToCoordinate(0); if (!(sp >= 14)) return;
+  const a = Math.max(0, Math.floor(vr.from)), z = Math.min(raw.length - 1, Math.ceil(vr.to)), step = footStep(ind, a, z);
+  FLOW.footStep = step;
+  const bottom = ph * paneTop(), T = TH(), imb = Math.max(1.1, Number(ind.imb) || 3);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pw, bottom); ctx.clip();
+  ctx.textBaseline = 'middle';
+  for (let i = a; i <= z; i++) {
+    const fp = FLOW.foot.get(`${step}|${raw[i][0]}`); if (!fp) continue;
+    const [base, buy, sell] = fp, xc = ts.logicalToCoordinate(i); if (xc == null) continue;
+    const w = Math.max(6, sp * 0.92), x0 = xc - w / 2;
+    const tot = buy.map((v, k) => v + sell[k]); let poc = 0; tot.forEach((v, k) => { if (v > tot[poc]) poc = k; });
+    const mxd = Math.max(1, ...buy.map((v, k) => Math.abs(v - sell[k])));
+    let yLow = -Infinity;
+    if (sp >= 34) {
+      for (let k = 0; k < buy.length; k++) {
+        if (!tot[k]) continue;
+        const ya = series.priceToCoordinate((base + k + 1) * step), yb = series.priceToCoordinate((base + k) * step);
+        if (ya == null || yb == null) continue;
+        const y = Math.min(ya, yb), h = Math.max(1, Math.abs(yb - ya));
+        yLow = Math.max(yLow, y + h);
+        const d = buy[k] - sell[k];
+        ctx.fillStyle = rgba(T.bg, 0.82); ctx.fillRect(x0, y, w, h);
+        ctx.fillStyle = rgba(d >= 0 ? ind.cBuy : ind.cSell, 0.12 + 0.45 * Math.abs(d) / mxd); ctx.fillRect(x0, y, w, h);
+        if (k === poc) { ctx.strokeStyle = T.text; ctx.lineWidth = 1; ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y) + 0.5, Math.round(w) - 1, Math.round(h) - 1); }
+        if (h >= 9) {
+          const fs = Math.min(11, Math.floor(h - 2)); ctx.font = `${fs}px sans-serif`;
+          // diagonal imbalance, like TradingView: buys at a price vs sells one row lower (and the reverse)
+          const bImb = buy[k] > 0 && buy[k] >= imb * Math.max(1, k > 0 ? sell[k - 1] : 0);
+          const sImb = sell[k] > 0 && sell[k] >= imb * Math.max(1, k + 1 < buy.length ? buy[k + 1] : 0);
+          if (ind.show === 'bidask') {
+            ctx.textAlign = 'right'; ctx.fillStyle = sImb ? ind.cSell : T.text; ctx.font = `${sImb ? 'bold ' : ''}${fs}px sans-serif`;
+            ctx.fillText(String(sell[k]), xc - 3, y + h / 2);
+            ctx.textAlign = 'left'; ctx.fillStyle = bImb ? ind.cBuy : T.text; ctx.font = `${bImb ? 'bold ' : ''}${fs}px sans-serif`;
+            ctx.fillText(String(buy[k]), xc + 3, y + h / 2);
+            ctx.textAlign = 'center'; ctx.fillStyle = T.paneLbl; ctx.font = `${fs}px sans-serif`; ctx.fillText('x', xc, y + h / 2);
+          } else {
+            ctx.textAlign = 'center'; ctx.fillStyle = ind.show === 'delta' ? (d >= 0 ? ind.cBuy : ind.cSell) : T.text;
+            ctx.fillText(String(ind.show === 'delta' ? d : tot[k]), xc, y + h / 2);
+          }
+          ctx.textAlign = 'left';
+        }
+      }
+    } else {
+      const yb = series.priceToCoordinate(raw[i][3]); if (yb != null) yLow = yb;
+    }
+    // bar delta under the candle
+    const D = buy.reduce((x, y) => x + y, 0) - sell.reduce((x, y) => x + y, 0);
+    if (isFinite(yLow)) {
+      ctx.font = `${sp >= 34 ? 11 : 9}px sans-serif`; ctx.textAlign = 'center';
+      ctx.fillStyle = D >= 0 ? ind.cBuy : ind.cSell; ctx.fillText((D > 0 ? '+' : '') + D, xc, yLow + 9);
+      ctx.textAlign = 'left';
+    }
+  }
+  ctx.textBaseline = 'alphabetic';
+  ctx.restore();
+}
+/* CVD pane: running total of (buys - sells) per bar, reset each day (optional); or the per-bar delta as a histogram */
+function cvdCalc(ind) {
+  const n = raw.length, out = new Array(n).fill(NaN), col = new Array(n);
+  const A = dayAnchor(ind);
+  let acc = 0, day = null;
+  for (let i = 0; i < n; i++) {
+    const f = FLOW.delta.get(raw[i][0]);
+    if (ind.reset === 'session') { const d = periodStart(raw[i][5], 86400, A); if (d !== day) { day = d; acc = 0; } }
+    if (!f) continue;
+    const dl = f[0] - f[1];
+    if (ind.show === 'delta') { out[i] = dl; col[i] = dl >= 0 ? ind.cUp : ind.cDn; }
+    else { acc += dl; out[i] = acc; }
+  }
+  return [out, col];
+}
 function isDoji(b) {
   const body = Math.abs(b.close - b.open);
   return b.high - Math.max(b.open, b.close) > body && Math.min(b.open, b.close) - b.low > body;
@@ -1085,6 +1337,14 @@ function macdMarkers(ind) {
 }
 function fillPane(ind, first) {
   const n = raw.length;
+  if (ind.type === 'cvd') {
+    const s = ind.series[0]; if (!s) return;
+    const [v, col] = cvdCalc(ind); ind.vals = [v];
+    if (ind.cvdVer === FLOW.deltaVer && first != null) return;             // nothing new from the server yet
+    ind.cvdVer = FLOW.deltaVer;
+    s.setData(raw.map((r, i) => isNaN(v[i]) ? null : ind.show === 'delta' ? { time: r[0], value: v[i], color: col[i] } : { time: r[0], value: v[i] }).filter(Boolean));
+    return;
+  }
   if (ind.type === 'atr') {
     const s = ind.series[0]; if (!s) return;
     ind.vals = atrCalc(ind); s.applyOptions({ priceFormat: paneFmt() });
@@ -1122,7 +1382,7 @@ function fillPane(ind, first) {
   }
 }
 // Pane layout: MACD and ATR each get a pane at the bottom (stacked); volume sits at the bottom of the price area.
-const PANE_TYPES = ['macd', 'atr'];
+const PANE_TYPES = ['macd', 'atr', 'cvd'];
 function paneLayout() {
   const ps = PANE_TYPES.map(t => inds.find(i => i.type === t && i.visible !== false && i.series.length)).filter(Boolean);
   const h = ps.length === 1 ? 0.26 : ps.length ? 0.2 : 0;
@@ -1236,6 +1496,9 @@ function label(ind) {
   if (ind.type === 'pdhl') return 'Prev day H/L';
   if (ind.type === 'vwap') return 'VWAP';
   if (ind.type === 'atr') return `ATR ${ind.len}${ind.src === 'ha' ? ' (HA)' : ''}`;
+  if (ind.type === 'vprof') return ind.mode === 'visible' ? 'Visible range volume profile' : 'Session volume profile';
+  if (ind.type === 'foot') return 'Footprint';
+  if (ind.type === 'cvd') return ind.show === 'delta' ? 'Volume delta (ticks)' : 'Cumulative volume delta (ticks)';
   if (ind.type === 'hdoji') return 'Doji boxes';
   if (ind.type === 'stretch') return 'Stretch';
   return ind.type === 'bb' ? `BB ${ind.len} ${ind.mult}` : `${ind.type.toUpperCase()} ${ind.len}`;
@@ -1249,6 +1512,13 @@ function makeSeries(ind) {
     ind.series.push(chart.addLineSeries({ ...base, color: ind.cMacd, lineWidth: 1, lastValueVisible: true }));
     ind.series.push(chart.addLineSeries({ ...base, color: ind.cSig, lineWidth: 1, lastValueVisible: true }));
     ind.dojiN = -1; layoutPanes(); return;
+  }
+  if (ind.type === 'vprof' || ind.type === 'foot') { bump(); return; }           // drawn on the overlay
+  if (ind.type === 'cvd') {
+    const base = { priceScaleId: 'cvd', visible: ind.visible !== false, priceLineVisible: false, lastValueVisible: true };
+    ind.series.push(ind.show === 'delta' ? chart.addHistogramSeries({ ...base, priceFormat: { type: 'volume' } })
+      : chart.addLineSeries({ ...base, color: ind.color, lineWidth: 2, crosshairMarkerVisible: false, priceFormat: { type: 'volume' } }));
+    ind.cvdVer = -1; layoutPanes(); return;
   }
   if (ind.type === 'atr') {
     ind.series.push(chart.addLineSeries({ priceScaleId: 'atr', color: ind.color, lineWidth: 1, visible: ind.visible !== false,
@@ -1301,7 +1571,8 @@ function makeSeries(ind) {
   }
 }
 function fullData(ind) {
-  if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr') return fillPane(ind);
+  if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind);
+  if (ind.type === 'vprof' || ind.type === 'foot') return;
   if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, 0); }
   if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji') return;
   ind.vals = calc(ind);
@@ -1312,7 +1583,8 @@ function fullData(ind) {
   });
 }
 function tailData(ind, first) {
-  if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr') return fillPane(ind, first);
+  if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind, first);
+  if (ind.type === 'vprof' || ind.type === 'foot') return;
   if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, first); }
   if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji') return;
   ind.vals = calc(ind);
@@ -1461,6 +1733,42 @@ function renderPanel() {
       `<label style="display:flex;align-items:center;gap:4px" title="Any other length, e.g. 10m or 2h. Press Enter."><input type="checkbox" data-k="on_custom" ${ind.on_custom ? 'checked' : ''}>` +
       `<input type="text" data-k="iv" value="${ind.iv}" placeholder="custom" style="width:58px;background:var(--bg);color:var(--text);` +
       `border:1px solid var(--line);border-radius:4px;padding:3px 5px"><input type="color" data-k="c_custom" value="${ind.c_custom}"></label></div>`;
+    else if (ind.type === 'vprof') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Volume profile</b>` +
+      `<label>Type <select data-k="mode">` + opt('mode', 'session', 'Session (per day)') + opt('mode', 'visible', 'Visible range') + `</select></label>` +
+      `<label title="When a new session (day) starts">Day starts <select data-k="day">` +
+      opt('day', 'broker', 'Broker midnight') + opt('day', 'ist', 'India midnight') + opt('day', 'ny', '5 PM New York') + `</select></label>` +
+      `<label title="Profiles of how many sessions">Sessions <select data-k="last">` + ['1', '2', '3', 'all'].map(v => opt('last', v, v === 'all' ? 'All on screen' : 'Last ' + v)).join('') + `</select></label>` +
+      `<label title="Number of price rows">Rows <input type="number" min="4" max="200" step="1" data-k="rows" value="${ind.rows}"></label>` +
+      `<label title="Value area: the price range holding this % of the volume around the POC">Value area <input type="number" min="10" max="99" step="1" data-k="va" value="${ind.va}">%</label>` +
+      `<label title="Width of the histogram (% of the session or of the chart)">Width <input type="number" min="5" max="100" step="5" data-k="width" value="${ind.width}">%</label>` +
+      `<label><input type="checkbox" data-k="showVA" ${ind.showVA ? 'checked' : ''}> VAH/VAL lines</label>` +
+      `<label>Up <input type="color" data-k="cUp" value="${ind.cUp}"></label>` +
+      `<label>Down <input type="color" data-k="cDn" value="${ind.cDn}"></label>` +
+      `<label>POC <input type="color" data-k="cPoc" value="${ind.cPoc}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'foot') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Footprint</b>` +
+      `<label title="What each price row shows">Show <select data-k="show">` + opt('show', 'bidask', 'Sells x Buys') + opt('show', 'delta', 'Delta') + opt('show', 'total', 'Total') + `</select></label>` +
+      `<label title="Price per row. Auto follows the zoom.">Row size <select data-k="step">` +
+      ['auto', '0.05', '0.1', '0.25', '0.5', '1', '2', '5'].map(v => opt('step', v, v === 'auto' ? 'Auto' : v)).join('') + `</select></label>` +
+      `<label title="Buys this many times the sells one row lower (or the reverse) are shown bold">Imbalance <input type="number" min="1.1" max="20" step="0.5" data-k="imb" value="${ind.imb}">x</label>` +
+      `<label>Buy <input type="color" data-k="cBuy" value="${ind.cBuy}"></label>` +
+      `<label>Sell <input type="color" data-k="cSell" value="${ind.cSell}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'cvd') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Delta</b>` +
+      `<label>Show <select data-k="show">` + opt('show', 'cvd', 'Cumulative (CVD)') + opt('show', 'delta', 'Per-bar delta') + `</select></label>` +
+      `<label>Reset <select data-k="reset">` + opt('reset', 'session', 'Every day') + opt('reset', 'none', 'Never') + `</select></label>` +
+      `<label title="When a new session (day) starts">Day starts <select data-k="day">` +
+      opt('day', 'broker', 'Broker midnight') + opt('day', 'ist', 'India midnight') + opt('day', 'ny', '5 PM New York') + `</select></label>` +
+      `<label>Line <input type="color" data-k="color" value="${ind.color}"></label>` +
+      `<label>Up <input type="color" data-k="cUp" value="${ind.cUp}"></label>` +
+      `<label>Down <input type="color" data-k="cDn" value="${ind.cDn}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
     else if (ind.type === 'pdhl') row.innerHTML =
       `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
       `<b style="width:auto">Prev day H/L</b>` + `<label title="When a new day starts for these levels">Day starts <select data-k="day">` +
@@ -1551,7 +1859,10 @@ function renderPanel() {
         } else if (ind.type === 'pivot' || ind.type === 'pdhl') {
           if (k === 'visible') ind.series.forEach(x => x.applyOptions({ visible: ind.visible }));
           else { makeSeries(ind); computePivots(ind); fillPivots(ind, 0); }
-        } else if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr') {
+        } else if (ind.type === 'vprof' || ind.type === 'foot') {
+          if (k === 'rows' || k === 'day' || k === 'mode' || k === 'step') { FLOW.prof.clear(); ind.visKey = ''; }
+          bump(); flowTick();
+        } else if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') {
           if (k === 'visible') { ind.series.forEach(x => x.applyOptions({ visible: ind.visible })); layoutPanes(); }
           else { makeSeries(ind); if (raw.length) fillPane(ind); }
         } else if (ind.type === 'vwap') {
@@ -1666,6 +1977,28 @@ function legend(idx) {
     const v = i.vals[0][idx];
     html += `<div><span style="color:${i.color}">${label(i)}</span> ${isNaN(v) ? '-' : v.toFixed(Math.min(8, digits + 1))}</div>`;
   });
+  inds.filter(i => i.type === 'vprof' && i.visible !== false).forEach(i => {
+    let pr = null;
+    if (i.mode === 'visible') pr = FLOW.prof.get(i.visKey);
+    else if (raw[idx]) pr = FLOW.prof.get(`ses|${periodStart(raw[idx][5], 86400, dayAnchor(i))}|${Math.max(4, Math.min(200, i.rows | 0))}|${i.day}`);
+    const st = profStats(i, pr);
+    html += `<div><span style="color:var(--text)">${label(i)}</span> ` + (st
+      ? `<span style="color:${i.cPoc}">POC</span> ${fmt(st.pocP)} &middot; VAH ${fmt(st.vah)} &middot; VAL ${fmt(st.val)} &middot; ${pr.ticks.toLocaleString()} ticks` +
+        (pr.covered === false ? ' <span style="color:var(--muted)">(only the part inside the 3-day tick history)</span>' : '')
+      : '<span style="color:var(--muted)">loading / no ticks for this range</span>') + '</div>';
+  });
+  inds.filter(i => i.type === 'foot' && i.visible !== false).forEach(i => {
+    const sp = ts.logicalToCoordinate(1) - ts.logicalToCoordinate(0), fp = raw[idx] && FLOW.foot.get(`${FLOW.footStep}|${raw[idx][0]}`);
+    const B = fp ? fp[1].reduce((x, y) => x + y, 0) : 0, S_ = fp ? fp[2].reduce((x, y) => x + y, 0) : 0;
+    html += `<div><span style="color:var(--text)">Footprint</span> ` + (!(sp >= 14) ? '<span style="color:var(--muted)">zoom in to see order flow</span>'
+      : fp ? `<span style="color:${i.cBuy}">buys ${B}</span> &middot; <span style="color:${i.cSell}">sells ${S_}</span> &middot; delta <b style="color:${B >= S_ ? i.cBuy : i.cSell}">${B - S_ > 0 ? '+' : ''}${B - S_}</b>` +
+        (sp < 34 ? ' <span style="color:var(--muted)">(zoom in more for prices)</span>' : '')
+      : '<span style="color:var(--muted)">no ticks for this candle</span>') + '</div>';
+  });
+  inds.filter(i => i.type === 'cvd' && i.visible !== false && i.vals && raw[idx]).forEach(i => {
+    const v = i.vals[0][idx];
+    html += `<div><span style="color:${i.color}">${i.show === 'delta' ? 'Delta' : 'CVD'}</span> ${isNaN(v) ? '<span style="color:var(--muted)">no ticks</span>' : (v > 0 ? '+' : '') + v.toLocaleString()}</div>`;
+  });
   inds.filter(i => i.type === 'vol' && i.visible !== false && raw[idx]).forEach(i => {
     html += `<div><span style="color:var(--text)">Vol</span> <span style="color:${volColor(i, idx)}">${(raw[idx][6] || 0).toLocaleString()}</span></div>`;
   });
@@ -1679,7 +2012,7 @@ function legend(idx) {
     });
     html += `<div><span style="color:var(--text)">Doji ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
   });
-  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
+  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'vprof', 'foot', 'cvd'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
     const v = i.vals.map(a => fmt(a[idx])).join(' / ');
     html += `<div><span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${v}</span></div>`;
   });
@@ -1748,7 +2081,7 @@ async function load() {
   if (ctype === 'renko' || ctype === 'kagi') box = store.get(`gc_box_${symbol}_${ctype}`, symMeta ? symMeta.box : box);
   syncControls();
   const id = ++reqId;
-  raw = []; ha = [];
+  raw = []; ha = []; flowReset();
   $('msg').style.display = 'flex';
   $('msg').textContent = kind === 'time' && tfSec >= 60 && tfSec % 60 === 0 ? `Loading ${symbol} bars from ${SRC}...`
     : `Loading ${symbol} ticks... (the first time for a symbol can take a few seconds)`;
@@ -1762,6 +2095,7 @@ async function load() {
     refreshBos();
     setStatus(j.status);
     hoverIdx = null; legend(null); bump();
+    setTimeout(flowTick, 50);
     const n = ha.length;
     if (n) ts.setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 10 });
     $('msg').style.display = n ? 'none' : 'flex';
@@ -2108,6 +2442,8 @@ function render() {
     drawPivots(pw);
     drawPanes(pw, ph);
     drawHDoji(pw, ph);
+    drawProfiles(pw, ph);
+    drawFootprint(pw, ph);
     const all = pending ? drawings.concat([pending]) : drawings;
     for (const d of all) drawOne(d, pw, d.id === sel || d === pending);
     drawRemoteCross(pw, ph);
@@ -2418,7 +2754,7 @@ $('boxin').addEventListener('keydown', e => {
     tzChanged();
     if (SRC !== 'MT5') {                                    // MACD + volume are only on the MT5 (forex) chart for now
       document.querySelectorAll('.mt5only').forEach(b => b.style.display = 'none');
-      inds = inds.filter(i => i.type !== 'macd' && i.type !== 'vol' && i.type !== 'hdoji');
+      inds = inds.filter(i => !['macd', 'vol', 'hdoji', 'vprof', 'foot', 'cvd'].includes(i.type));
     }
     const view = store.get('gc_view' + WK, null) || { ...store.get('gc_view', {}), ...(WIN ? { tf: '5m' } : {}) };
     if (URLQ.get('tf')) view.tf = URLQ.get('tf');
