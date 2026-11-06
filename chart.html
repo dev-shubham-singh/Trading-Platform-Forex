@@ -178,6 +178,7 @@
     <button data-add="macd" class="mt5only">MACD + doji</button>
     <button data-add="vol" class="mt5only">Volume</button>
     <button data-add="hdoji" class="mt5only">Doji boxes (5m, 15m, 1h...)</button>
+    <button data-add="hswitch">Heikin Ashi switch boxes</button>
     <button data-add="vprof" class="mt5only">Volume profile</button>
     <button data-add="foot" class="mt5only">Footprint (order flow)</button>
     <button data-add="cvd" class="mt5only">Cumulative delta (CVD)</button>
@@ -374,6 +375,7 @@ function styleSeries() {
 
 /* ---------------- indicators ---------------- */
 const DOJI_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h'];
+const SW_TFS = ['5s', '15s', '30s', '1m', '3m', '5m', '15m', '30m', '1h', '4h'];
 const IND_DEFAULTS = {
   ema: { len: 21, color: '#f7c948' }, smma: { len: 50, color: '#e040fb' },
   sma: { len: 20, color: '#26c6da' }, bb: { len: 20, mult: 2, color: '#2962ff' },
@@ -391,6 +393,10 @@ const IND_DEFAULTS = {
            cUp: '#1592e6', cDn: '#fbc123', cPoc: '#ff5252' },
   foot: { step: 'auto', show: 'bidask', imb: 3, cBuy: '#26a69a', cSell: '#ef5350' },
   cvd: { show: 'cvd', reset: 'session', day: 'broker', color: '#ffb74d', cUp: '#26a69a', cDn: '#ef5350' },
+  hswitch: { doji: 'ha', last: '5', minRun: 1, alpha: '0.12', border: 1, forming: true, labels: true, iv: '', on_custom: false, c_custom: '#ffffff',
+             on_5s: false, c_5s: '#b0bec5', on_15s: true, c_15s: '#80deea', on_30s: false, c_30s: '#a5d6a7', on_1m: false, c_1m: '#c5e1a5',
+             on_3m: false, c_3m: '#fff59d', on_5m: true, c_5m: '#ffcc80', on_15m: false, c_15m: '#f48fb1', on_30m: false, c_30m: '#ce93d8',
+             on_1h: true, c_1h: '#90caf9', on_4h: false, c_4h: '#bcaaa4' },
   hdoji: { doji: 'ha', last: '3', alpha: '0.12', border: 1, forming: true, labels: true, iv: '', on_custom: false, c_custom: '#ffffff',
            on_1m: false, c_1m: '#b0bec5', on_3m: false, c_3m: '#80deea', on_5m: true, c_5m: '#ffd54f',
            on_15m: true, c_15m: '#ce93d8', on_30m: false, c_30m: '#a5d6a7', on_1h: true, c_1h: '#4fc3f7',
@@ -890,6 +896,7 @@ function refreshBos() {
   refreshPivots();
   const markers = [];
   inds.filter(i => i.type === 'hdoji').forEach(hdojiCalc);
+  inds.filter(i => i.type === 'hswitch').forEach(hswitchCalc);
   inds.filter(i => i.type === 'hl').forEach(ind => {
     hlCalc(ind); fillHL(ind);
     if (ind.visible === false) return;
@@ -1451,6 +1458,50 @@ function hdojiCalc(ind) {
   }
   ind.hd.sort((x, y) => y.T - x.T);                          // big timeframes first, small ones drawn on top
 }
+/* ---- Heikin Ashi switch boxes ----
+   A switch is a candle whose colour flips: green after red, or red after green (optionally only after at least
+   N candles of the old colour). For each ticked timeframe its candles are built from the chart's bars (real
+   prices, then Heikin Ashi unless "Normal" is chosen) and every switch candle is boxed over the chart candles
+   that make it up - the last N per timeframe. A timeframe equal to the chart's boxes the chart candles themselves. */
+function swTfs(ind) {
+  const out = SW_TFS.filter(t => ind['on_' + t]).map(t => ({ iv: t, color: ind['c_' + t] }));
+  if (ind.on_custom && ind.iv && !out.some(o => o.iv === ind.iv)) out.push({ iv: ind.iv, color: ind.c_custom });
+  return out;
+}
+function hswitchCalc(ind) {
+  const n = raw.length, minRun = Math.max(1, ind.minRun | 0);
+  ind.hd = []; ind.hdTf = [];
+  for (const tf of swTfs(ind)) {
+    const iv = parseIv(tf.iv), info = { iv: tf.iv, color: tf.color, all: [], warn: '' };
+    ind.hdTf.push(info);
+    if (!iv || iv.kind !== 'time') { info.warn = 'not a time length'; continue; }
+    if (kind === 'time' && iv.n < tfSec) { info.warn = 'shorter than the chart interval'; continue; }
+    const T = iv.n, per = [];
+    for (let i = 0; i < n; i++) {
+      const r = raw[i], st = periodStart(r[5], T, anchor), p = per[per.length - 1];
+      if (!p || st > p.start) per.push({ start: st, a: i, b: i, o: r[1], h: r[2], l: r[3], c: r[4] });
+      else { p.b = i; if (r[2] > p.h) p.h = r[2]; if (r[3] < p.l) p.l = r[3]; p.c = r[4]; }
+    }
+    let hO = NaN, hC = NaN, prevUp = null, run = 0;
+    per.forEach((p, k) => {
+      const c = (p.o + p.h + p.l + p.c) / 4, o = isNaN(hO) ? (p.o + p.c) / 2 : (hO + hC) / 2;
+      hO = o; hC = c;
+      const bar = ind.doji === 'candle' ? { open: p.o, high: p.h, low: p.l, close: p.c }
+        : { open: o, close: c, high: Math.max(p.h, o, c), low: Math.min(p.l, o, c) };
+      if (bar.close === bar.open) return;                       // a flat candle has no colour: neither a switch nor a run break
+      const up = bar.close > bar.open, partial = k === 0 && raw[0][5] > p.start;
+      if (prevUp !== null && up !== prevUp && run >= minRun && !partial)
+        info.all.push({ iv: tf.iv, color: tf.color, T, start: p.start, a: p.a, b: p.b, hi: bar.high, lo: bar.low, up,
+                        txt: up ? 'switch \u25B2' : 'switch \u25BC', forming: k === per.length - 1 });
+      run = prevUp === up ? run + 1 : 1; prevUp = up;
+    });
+    const done = info.all.filter(d => !d.forming), cur = info.all.find(d => d.forming);
+    const keep = ind.last === 'all' ? done : done.slice(-Math.max(1, Number(ind.last) || 5));
+    info.shown = keep.concat(cur && ind.forming ? [cur] : []);
+    ind.hd.push(...info.shown);
+  }
+  ind.hd.sort((x, y) => y.T - x.T);
+}
 const hhmm = sec => { const d = new Date(disp(sec) * 1000); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
 function drawHDoji(pw, ph) {
   const r = ts.getVisibleLogicalRange(); if (!r) return;
@@ -1458,7 +1509,7 @@ function drawHDoji(pw, ph) {
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pw, bottom); ctx.clip();
   ctx.font = '11px sans-serif'; ctx.textBaseline = 'middle';
   const placed = [];                                            // label boxes drawn so far (to avoid overlaps)
-  inds.filter(i => i.type === 'hdoji' && i.visible !== false && i.hd).forEach(ind => {
+  inds.filter(i => (i.type === 'hdoji' || i.type === 'hswitch') && i.visible !== false && i.hd).forEach(ind => {
     const alpha = Math.min(0.8, Math.max(0, parseFloat(ind.alpha) || 0.2)), bw = Number(ind.border) || 2;
     for (const d of ind.hd) {
       if (d.b < r.from - 1 || d.a > r.to + 1) continue;
@@ -1472,19 +1523,22 @@ function drawHDoji(pw, ph) {
       ctx.strokeStyle = rgba(d.color, 0.9); ctx.lineWidth = bw; ctx.setLineDash(d.forming ? [5, 4] : []);
       ctx.strokeRect(Math.round(x) + (bw % 2) / 2, Math.round(y) + (bw % 2) / 2, Math.round(w), Math.round(h)); ctx.setLineDash([]);
       if (ind.labels) {
-        const txt = `${d.iv} doji ${hhmm(d.start)}${d.forming ? ' forming' : ''}`, tw = ctx.measureText(txt).width + 8;
+        const txt = `${d.iv} ${d.txt || 'doji'} ${hhmm(d.start)}${d.forming ? ' forming' : ''}`, tw = ctx.measureText(txt).width + 8;
         if (tw <= w + 40) {                                   // skip labels that would swamp a narrow box (zoomed out)
           let ly = y - 9 - bw < 8 ? y + 9 + bw : y - 9 - bw;
           const hit = q => x < q.x + q.w && q.x < x + tw && Math.abs(ly - q.y) < 17;
           for (let k = 0; k < 8 && placed.some(hit); k++) ly -= 17;     // stack labels that would overlap
-          placed.push({ x, y: ly, w: tw });
-          ctx.fillStyle = TH().lblBg; ctx.fillRect(x, ly - 8, tw, 16);
-          ctx.strokeStyle = rgba(d.color, 0.7); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x) + 0.5, Math.round(ly - 8) + 0.5, Math.round(tw), 16);
-          ctx.fillStyle = d.color; ctx.fillText(txt, x + 4, ly + 0.5);
+          placed.push({ x, y: ly, w: tw, txt, color: d.color });
         }
       }
     }
   });
+  // labels last, so no box border is drawn across a label
+  for (const q of placed) {
+    ctx.fillStyle = TH().lblBg; ctx.fillRect(q.x, q.y - 8, q.w, 16);
+    ctx.strokeStyle = rgba(q.color, 0.7); ctx.lineWidth = 1; ctx.strokeRect(Math.round(q.x) + 0.5, Math.round(q.y - 8) + 0.5, Math.round(q.w), 16);
+    ctx.fillStyle = q.color; ctx.fillText(q.txt, q.x + 4, q.y + 0.5);
+  }
   ctx.restore(); ctx.textBaseline = 'alphabetic';
 }
 function label(ind) {
@@ -1500,6 +1554,7 @@ function label(ind) {
   if (ind.type === 'foot') return 'Footprint';
   if (ind.type === 'cvd') return ind.show === 'delta' ? 'Volume delta (ticks)' : 'Cumulative volume delta (ticks)';
   if (ind.type === 'hdoji') return 'Doji boxes';
+  if (ind.type === 'hswitch') return 'HA switch boxes';
   if (ind.type === 'stretch') return 'Stretch';
   return ind.type === 'bb' ? `BB ${ind.len} ${ind.mult}` : `${ind.type.toUpperCase()} ${ind.len}`;
 }
@@ -1539,7 +1594,7 @@ function makeSeries(ind) {
       lastValueVisible: false, priceFormat: { type: 'volume' } }));
     layoutPanes(); return;
   }
-  if (ind.type === 'hl' || ind.type === 'hdoji') { ind.hlN = 0; return; }       // lanes are created by fillHL as needed
+  if (ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch') { ind.hlN = 0; return; }       // lanes are created by fillHL as needed
   if (ind.type === 'pivot' || ind.type === 'pdhl') {
     ind.pnames = pivotNames(ind);
     ind.pnames.forEach(n => {
@@ -1574,7 +1629,7 @@ function fullData(ind) {
   if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind);
   if (ind.type === 'vprof' || ind.type === 'foot') return;
   if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, 0); }
-  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji') return;
+  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch') return;
   ind.vals = calc(ind);
   ind.series.forEach((s, j) => {
     const v = ind.vals[j], d = [];
@@ -1586,7 +1641,7 @@ function tailData(ind, first) {
   if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind, first);
   if (ind.type === 'vprof' || ind.type === 'foot') return;
   if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, first); }
-  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji') return;
+  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch') return;
   ind.vals = calc(ind);
   ind.series.forEach((s, j) => {
     const v = ind.vals[j];
@@ -1600,7 +1655,7 @@ function addInd(type) {
   const ind = { id: Date.now() + Math.random(), type, src: 'ha', width: type === 'bb' ? 1 : 2,
                 visible: true, ...IND_DEFAULTS[type], series: [], vals: null, res: null };
   inds.push(ind); makeSeries(ind); if (raw.length) fullData(ind);
-  if (type === 'bos' || type === 'stretch' || type === 'pivot' || type === 'pdhl' || type === 'hl' || type === 'hdoji') refreshBos();
+  if (type === 'bos' || type === 'stretch' || type === 'pivot' || type === 'pdhl' || type === 'hl' || type === 'hdoji' || type === 'hswitch') refreshBos();
   saveInds(); renderPanel(); legend(null);
 }
 function renderPanel() {
@@ -1733,6 +1788,28 @@ function renderPanel() {
       `<label style="display:flex;align-items:center;gap:4px" title="Any other length, e.g. 10m or 2h. Press Enter."><input type="checkbox" data-k="on_custom" ${ind.on_custom ? 'checked' : ''}>` +
       `<input type="text" data-k="iv" value="${ind.iv}" placeholder="custom" style="width:58px;background:var(--bg);color:var(--text);` +
       `border:1px solid var(--line);border-radius:4px;padding:3px 5px"><input type="color" data-k="c_custom" value="${ind.c_custom}"></label></div>`;
+    else if (ind.type === 'hswitch') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide all switch boxes">` +
+      `<b style="width:auto">HA switch boxes</b>` +
+      `<label title="Which candles to check for a colour change">Candles <select data-k="doji">` +
+      opt('doji', 'ha', 'Heikin Ashi') + opt('doji', 'candle', 'Normal') + `</select></label>` +
+      `<label title="How many past switches to show for each timeframe">Show last <select data-k="last">` +
+      ['1', '2', '3', '5', '7', '10', '15', 'all'].map(v => opt('last', v, v === 'all' ? 'All' : v)).join('') + `</select></label>` +
+      `<label title="Only count a switch after at least this many candles of the other colour (1 = every colour change)">After at least ` +
+      `<input type="number" min="1" max="20" step="1" data-k="minRun" value="${ind.minRun}"> candles</label>` +
+      `<label title="How strongly the boxes are filled">Fill <select data-k="alpha">` +
+      opt('alpha', '0', 'None') + opt('alpha', '0.06', 'Very light') + opt('alpha', '0.12', 'Light') + opt('alpha', '0.2', 'Medium') + opt('alpha', '0.32', 'Strong') +
+      opt('alpha', '0.5', 'Very strong') + `</select></label>` +
+      `<label>Border <select data-k="border">${[1, 2, 3, 4].map(w => `<option ${w == ind.border ? 'selected' : ''}>${w}</option>`).join('')}</select></label>` +
+      `<label title="Also box the candle still forming (dashed) when it has switched colour so far"><input type="checkbox" data-k="forming" ${ind.forming ? 'checked' : ''}> Forming</label>` +
+      `<label><input type="checkbox" data-k="labels" ${ind.labels ? 'checked' : ''}> Labels</label>` +
+      `<button class="x" title="Remove">Remove</button>` +
+      `<div style="flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px 14px;padding:6px 0 2px 22px">` +
+      SW_TFS.map(t => `<label style="display:flex;align-items:center;gap:4px"><input type="checkbox" data-k="on_${t}" ${ind['on_' + t] ? 'checked' : ''}>` +
+        `<b style="width:auto;color:${ind['c_' + t]}">${t}</b><input type="color" data-k="c_${t}" value="${ind['c_' + t]}"></label>`).join('') +
+      `<label style="display:flex;align-items:center;gap:4px" title="Any other length, e.g. 10s, 10m or 2h. Press Enter."><input type="checkbox" data-k="on_custom" ${ind.on_custom ? 'checked' : ''}>` +
+      `<input type="text" data-k="iv" value="${ind.iv}" placeholder="custom" style="width:58px;background:var(--bg);color:var(--text);` +
+      `border:1px solid var(--line);border-radius:4px;padding:3px 5px"><input type="color" data-k="c_custom" value="${ind.c_custom}"></label></div>`;
     else if (ind.type === 'vprof') row.innerHTML =
       `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
       `<b style="width:auto">Volume profile</b>` +
@@ -1824,8 +1901,8 @@ function renderPanel() {
     row.querySelectorAll('[data-k]').forEach(el => {
       el.addEventListener(el.type === 'number' || el.type === 'color' ? 'input' : 'change', () => {
         const k = el.dataset.k;
-        if (ind.type === 'hdoji' && k === 'iv' && !el.value.trim()) { ind.iv = ''; ind.on_custom = false; }
-        else if ((ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji') && k === 'iv') {
+        if ((ind.type === 'hdoji' || ind.type === 'hswitch') && k === 'iv' && !el.value.trim()) { ind.iv = ''; ind.on_custom = false; }
+        else if ((ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch') && k === 'iv') {
           const iv = parseIv(el.value), ok = iv && iv.kind === 'time';
           el.style.borderColor = ok ? '' : 'var(--down)';
           el.title = ok ? '' : 'Use a time length: 1m, 5m, 15m, 1h, 4h, 1d (tick counts are not allowed here)';
@@ -1848,7 +1925,7 @@ function renderPanel() {
           }
           refreshBos();
           if (k === 'trade') { saveInds(); renderPanel(); legend(null); return; }
-        } else if (ind.type === 'hdoji') {
+        } else if (ind.type === 'hdoji' || ind.type === 'hswitch') {
           if (k === 'iv' && ind.iv) ind.on_custom = true;
           refreshBos();
           if (k.startsWith('c_') || k.startsWith('on_') || k === 'iv') { saveInds(); renderPanel(); legend(null); return; }
@@ -2012,7 +2089,18 @@ function legend(idx) {
     });
     html += `<div><span style="color:var(--text)">Doji ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
   });
-  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'vprof', 'foot', 'cvd'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
+  inds.filter(i => i.type === 'hswitch' && i.visible !== false && i.hdTf).forEach(i => {
+    const parts = i.hdTf.map(t => {
+      if (t.warn) return `<span style="color:${t.color}">${t.iv}</span> <span style="color:var(--muted)">${t.warn}</span>`;
+      const here = raw[idx] && t.all.find(d => idx >= d.a && idx <= d.b);
+      const arrow = d => `<span style="color:${d.up ? 'var(--up)' : 'var(--down)'}">${d.up ? '&#9650;' : '&#9660;'}</span>`;
+      const last = t.all.filter(d => !d.forming).slice(-3).map(d => `${arrow(d)}${hhmm(d.start)}`);
+      return `<b style="color:${t.color}">${t.iv}</b> ` + (here ? `<b style="color:${t.color}">&#9632; this candle switched ${arrow(here)}${here.forming ? ' so far' : ''}</b> ` : '') +
+        (last.length ? last.join(' ') : 'none');
+    });
+    html += `<div><span style="color:var(--text)">Switch ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
+  });
+  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'hswitch', 'vprof', 'foot', 'cvd'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
     const v = i.vals.map(a => fmt(a[idx])).join(' / ');
     html += `<div><span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${v}</span></div>`;
   });
