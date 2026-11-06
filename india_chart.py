@@ -719,11 +719,12 @@ class HistBuilder(TimeBuilder):
                 t = (t // 86400) * 86400 + self.a // 1000
             k = bucket(t * 1000, self.ms, self.a, 86_400_000) // 1000
             o, h, l, cl = float(c[1]), float(c[2]), float(c[3]), float(c[4])
+            v = float(c[5]) if len(c) > 5 and c[5] is not None else 0.0     # traded volume (for volume candles / VWAP)
             r = rows[-1] if rows else None
             if r and r[0] == k:
-                r[2] = max(r[2], h); r[3] = min(r[3], l); r[4] = cl
+                r[2] = max(r[2], h); r[3] = min(r[3], l); r[4] = cl; r[6] += v
             else:
-                rows.append([k, o, h, l, cl, k])
+                rows.append([k, o, h, l, cl, k, v])
         return rows
 
     def rebuild(self, full=False):

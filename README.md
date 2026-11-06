@@ -24,6 +24,8 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
 - Indicators: EMA, SMMA, SMA, Bollinger Bands, pivot points (any period, R3/S3, history),
   candle high/low liquidity sweeps, previous day high/low/close, VWAP with deviation bands, ATR (own pane)
 - Strategy indicators: Heikin Ashi BOS bias (two pullback cycles), EMA/SMMA stretch reversal / momentum / limit-breakout
+- **Volume candles** (tick box next to the chart type): Heikin Ashi or normal candles whose width shows volume;
+  **Line** chart type (traditional close line)
 - **Heikin Ashi switch boxes**: every colour flip (green after red / red after green) on any timeframes at once
   (5s–4h + custom), boxed over the chart candles inside it, last N switches per timeframe
 - Gold/forex chart only: MACD pane with doji dots, tick volume, multi-timeframe **doji boxes** (1m–4h, Heikin Ashi or normal)
