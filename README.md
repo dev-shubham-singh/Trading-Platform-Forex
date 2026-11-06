@@ -1,7 +1,8 @@
 # Heikin Ashi trading chart (MT5 / Exness + Fyers)
 
 A TradingView-style chart that runs on your own PC, built for scalping XAU/USD on 15-second Heikin Ashi candles,
-with custom strategy indicators and backtests. It **reads prices only and places no orders**.
+with custom strategy indicators and backtests. It reads prices, and places an order **only** when you press Confirm
+in the Buy / Sell panel of the gold/forex chart (set `ALLOW_TRADING = False` in `gold_chart.py` to turn that off).
 
 ## Two charts
 
@@ -32,6 +33,18 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
 - Gold/forex chart only, order flow from MT5 ticks (buy/sell by the tick rule, like TradingView on CFD symbols):
   session / visible-range **volume profile** (POC, value area, VAH/VAL), **footprint** (sells x buys per price, imbalances,
   bar delta), **cumulative volume delta** / per-bar delta pane
+
+## Buy / Sell with risk-based lot size (gold/forex chart)
+- **Buy** / **Sell** (top bar) opens a plan; nothing is sent until **Confirm**, and only with "Live orders on" ticked.
+- Risk per trade: % of balance or a fixed amount (account currency).
+- **Auto lot**: the stop loss starts just beyond the last N candles' low (buy) / high (sell); drag the red SL line to
+  move it. Lot = risk / loss per lot at that SL, rounded down to the lot step.
+- **Fixed lot**: the SL is where your lot loses exactly your risk, so it moves with price. The **SL candle** (orange box)
+  is the most recent candle whose real low (buy) / high (sell) reached that level.
+- Optional take profit at N x risk. Open positions on the symbol show as dotted lines with live P/L.
+- The server re-checks lot limits, SL side and risk on fresh prices (refuses if the loss at SL grew over 1.25x),
+  accepts orders only from the chart page itself, and logs every order to `orders.log`.
+- MT5 must have **Algo Trading** switched on (toolbar button), or MT5 rejects the order.
 
 ## Indian chart (Fyers)
 See `FYERS_SETUP.txt`. Copy `fyers_config.example.json` to `fyers_config.json` and put in your App ID and Secret

@@ -69,6 +69,27 @@
   #chart { z-index:1; }
   #vcwrap { display:flex; align-items:center; gap:4px; color:var(--muted); cursor:pointer; white-space:nowrap; font-size:12px; }
   #vcwrap input { margin:0; cursor:pointer; }
+  .tool.tbuy { color:#fff; background:#26a69a; font-weight:600; padding:4px 12px; }
+  .tool.tsell { color:#fff; background:#ef5350; font-weight:600; padding:4px 12px; }
+  .tool.tbuy:hover { background:#1f8f84; } .tool.tsell:hover { background:#d84542; }
+  .tool.tbuy.on, .tool.tsell.on { box-shadow:0 0 0 2px var(--text) inset; }
+  #tradep { position:absolute; top:64px; left:12px; width:310px; z-index:6; background:var(--panel); color:var(--text);
+            border:1px solid var(--line); border-radius:6px; padding:8px 10px; font-size:12px; box-shadow:0 4px 16px rgba(0,0,0,.35); }
+  #tradep .tph { display:flex; align-items:center; gap:8px; margin-bottom:6px; cursor:move; user-select:none; }
+  #tradep .tph b { font-size:14px; } #tradep .tph span { color:var(--muted); flex:1; font-size:11px; }
+  #tradep .tph button { background:none; border:0; color:var(--muted); font-size:16px; cursor:pointer; }
+  #tradep .tpr { display:flex; align-items:center; gap:6px; margin:4px 0; }
+  #tradep .tpr > label { width:74px; color:var(--muted); }
+  #tradep input[type=number] { width:64px; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:3px; padding:2px 4px; }
+  #tradep select { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:3px; padding:2px; }
+  #tp_info { margin:8px 0 6px; padding:6px 8px; background:var(--bg); border-radius:4px; line-height:1.6; }
+  #tp_info .w { color:#ef5350; } #tp_info .m { color:var(--muted); }
+  #tradep .tpl { display:flex; gap:6px; align-items:center; color:var(--muted); margin:4px 0; cursor:pointer; }
+  #tradep .tpb { display:flex; gap:6px; margin-top:6px; }
+  #tradep .tpb button { flex:1; border:0; border-radius:4px; padding:7px; font-weight:600; cursor:pointer; color:#fff; }
+  #tp_go:disabled { opacity:.45; cursor:not-allowed; }
+  #tp_cancel { background:var(--line) !important; color:var(--text) !important; flex:0 0 70px !important; }
+  #tp_msg { margin-top:6px; line-height:1.4; }
   #legend { position:absolute; left:12px; top:8px; z-index:3; pointer-events:none;
             font-size:12px; color:var(--muted); line-height:1.6; }
   #legend .t { color:var(--text); font-weight:500; margin-right:8px; }
@@ -121,6 +142,9 @@
   <button class="tool" id="invbtn" title="Invert price scale (Alt+I)">Invert</button>
   <button class="tool" id="fit" title="Show all history">Fit all</button>
   <button class="tool" id="latest" title="Jump to the newest candle">Latest &rarr;</button>
+  <div class="sep mt5only"></div>
+  <button class="tool tbuy mt5only" id="buybtn" title="Plan a buy: shows your stop loss and lot size from your risk. Nothing is sent until you press Confirm.">Buy</button>
+  <button class="tool tsell mt5only" id="sellbtn" title="Plan a sell: shows your stop loss and lot size from your risk. Nothing is sent until you press Confirm.">Sell</button>
   <div class="sep"></div>
   <button class="tool" id="winbtn" title="Open another chart window (e.g. 5m) to put on your other screen">&#10697; New window</button>
   <button class="tool" id="syncbtn" title="Sync drawings, crosshair, symbol and theme between your chart windows">&#8644; Sync</button>
@@ -162,6 +186,19 @@
     <div id="chart"></div>
     <canvas id="overlay"></canvas>
     <div id="legend"></div>
+    <div id="tradep" style="display:none">
+      <div class="tph" id="tp_head" title="Drag to move this panel"><b id="tp_title">BUY</b><span id="tp_acc"></span><button id="tp_x" title="Cancel (Esc)">&times;</button></div>
+      <div class="tpr"><label>Risk / trade</label><input id="tp_rv" type="number" step="any" min="0">
+        <select id="tp_rm"><option value="pct">% of balance</option><option value="usd">fixed amount</option></select></div>
+      <div class="tpr"><label>Lot size</label><select id="tp_lm"><option value="auto">Auto from risk + SL</option><option value="fixed">Fixed lot</option></select>
+        <input id="tp_lot" type="number" step="0.01" min="0"></div>
+      <div class="tpr" id="tp_slrow"><label>Start SL at</label><span>last</span><input id="tp_slb" type="number" min="1" max="50" step="1"><span>candles' low / high</span></div>
+      <div class="tpr"><label>Take profit</label><input id="tp_rr" type="number" step="0.5" min="0"><span>&times; risk (0 = none)</span></div>
+      <div id="tp_info"></div>
+      <label class="tpl"><input type="checkbox" id="tp_live"> Live orders on: Confirm sends a real order to MT5</label>
+      <div class="tpb"><button id="tp_go"></button><button id="tp_cancel">Cancel</button></div>
+      <div id="tp_msg"></div>
+    </div>
     <div id="msg">Loading candles from MT5...</div>
     <div id="hint"></div>
   </div>
@@ -2462,6 +2499,10 @@ chartEl.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   const { x, y } = local(e);
   if (x > paneW() || y > paneH()) return;            // leave price/time scales to the chart
+  if (plan && planCur && RISK.lotMode === 'auto') {    // grab the planned stop-loss line
+    const ys = series.priceToCoordinate(planCur.sl);
+    if (ys != null && Math.abs(y - ys) < 7) { e.stopPropagation(); e.preventDefault(); lockChart(true); drag = { kind: 'plansl' }; return; }
+  }
   if (tool !== 'cursor') {
     e.stopPropagation(); e.preventDefault(); lockChart(true);
     const pt = ptAt(x, y); if (!pt) return;
@@ -2485,6 +2526,11 @@ chartEl.addEventListener('mousedown', e => { if (drag || tool !== 'cursor') e.st
 window.addEventListener('pointermove', e => {
   const { x, y } = local(e);
   if (pending) { const pt = ptAt(x, y); if (pt) pending.p2 = pt; }
+  if (drag && drag.kind === 'plansl') {
+    const p = series.coordinateToPrice(y);
+    if (p != null && plan) { const k = Math.pow(10, digits); plan.slManual = Math.round(p * k) / k; updatePlan(); bump(); }
+    return;
+  }
   if (!drag || drag.kind === 'create') return;
   const d = drag.d;
   if (drag.kind === 'handle') { const pt = ptAt(x, y); if (pt) d[drag.h] = pt; return; }
@@ -2498,6 +2544,7 @@ window.addEventListener('pointermove', e => {
 });
 window.addEventListener('pointerup', e => {
   if (!drag) return;
+  if (drag.kind === 'plansl') { drag = null; lockChart(false); return; }
   if (drag.kind === 'create') {
     const { x, y } = local(e);
     if (pending && Math.hypot(x - drag.sx, y - drag.sy) > 4) commit(pending);   // click-drag finished
@@ -2508,7 +2555,7 @@ window.addEventListener('pointerup', e => {
 });
 document.addEventListener('keydown', e => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
-  if (e.key === 'Escape') { setTool('cursor'); sel = null; lockChart(false); }
+  if (e.key === 'Escape') { setTool('cursor'); sel = null; lockChart(false); if (plan) closePlan(); }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel) { deleteSel(); e.preventDefault(); }
 });
 function deleteSel() { drawings = drawings.filter(d => d.id !== sel); sel = null; saveDrawings(); }
@@ -2579,6 +2626,8 @@ function render() {
     drawHDoji(pw, ph);
     drawProfiles(pw, ph);
     drawFootprint(pw, ph);
+    drawPositions(pw);
+    drawPlan(pw);
     const all = pending ? drawings.concat([pending]) : drawings;
     for (const d of all) drawOne(d, pw, d.id === sel || d === pending);
     drawRemoteCross(pw, ph);
@@ -2845,6 +2894,8 @@ async function setSymbol(name, fromSync) {
   $('symname').textContent = m.symbol; $('symdesc').textContent = m.desc || '';
   $('boxin').step = m.point;
   drawings = store.get('gc_draw_' + symbol, []); sel = null;
+  if (plan) closePlan();
+  ACC = null; setTimeout(accTick, 0);
   saveView();
   await load();
 }
@@ -2920,6 +2971,245 @@ $('boxin').addEventListener('keydown', e => {
   if (!(v > 0)) { $('boxin').value = box; return; }
   box = v; store.set(`gc_box_${symbol}_${ctype}`, box); saveView(); load();
 });
+
+/* ---------------- trade panel: risk-based lot size / stop loss, Buy / Sell (MT5 only) ---------------- */
+// Buy / Sell opens a plan: entry, stop loss and lot size from your risk, updated with every price tick.
+//   Auto lot:  you place the SL (starts beyond the last N candles, drag the red line) -> lot = risk / loss per lot
+//   Fixed lot: SL = the price where your fixed lot loses exactly your risk -> moves with price; the "SL candle"
+//              is the most recent candle that reached that level
+// Nothing is sent until Confirm, and only with "Live orders on". The server re-checks everything on fresh prices.
+const RISK = Object.assign({ mode: 'pct', pct: 5, usd: 1, lotMode: 'auto', lot: 0.01, rr: 0, slBars: 2, live: false },
+                           store.get('gc_risk', {}));
+let ACC = null, plan = null, planCur = null, accBusy = false, accAt = 0;
+function saveRisk() { store.set('gc_risk', RISK); }
+async function accTick() {
+  if (SRC !== 'MT5' || accBusy || !symbol) return;
+  accBusy = true;
+  try {
+    const sym = symbol, j = await (await fetch(`/api/account?symbol=${encodeURIComponent(sym)}`)).json();
+    if (sym === symbol) { ACC = j; accAt = Date.now(); }
+  } catch (e) { /* server busy; next tick retries */ }
+  finally { accBusy = false; }
+  if (plan) updatePlan();
+  bump();
+}
+setInterval(() => {                                   // quick while planning or a position is open, else every 10 s
+  const busy = plan || (ACC && ACC.positions && ACC.positions.length);
+  if (busy || Date.now() - accAt > 10000) accTick();
+}, 1500);
+setInterval(() => { if (plan) updatePlan(); }, 300);  // follow the live price
+const money = v => ACC && !ACC.error ? `${(+v).toFixed(2)} ${ACC.currency}` : (+v).toFixed(2);
+function riskAmount() { return !ACC || ACC.error ? 0 : RISK.mode === 'pct' ? ACC.balance * RISK.pct / 100 : RISK.usd; }
+function roundPx(p, dir) { const k = Math.pow(10, ACC.sym.digits); return dir > 0 ? Math.ceil(p * k - 1e-6) / k : dir < 0 ? Math.floor(p * k + 1e-6) / k : Math.round(p * k) / k; }
+function defaultSL(buy) {          // just beyond the lowest low (buy) / highest high (sell) of the last N candles
+  const n = raw.length, S = ACC.sym, px = buy ? status.bid : status.ask, need = Math.max(S.stops, S.point) * 2;
+  let v = buy ? Infinity : -Infinity;
+  for (let i = n - 1, c = 0; i >= 0 && i >= n - 200; i--, c++) {
+    v = buy ? Math.min(v, raw[i][3]) : Math.max(v, raw[i][2]);
+    if (c + 1 >= Math.max(1, RISK.slBars) && (buy ? px - v : v - px) >= need) break;
+  }
+  if (!isFinite(v)) v = buy ? px - need * 5 : px + need * 5;
+  return buy ? roundPx(v - S.point, -1) : roundPx(v + S.point, 1);    // rounded away from price: always beyond the candles
+}
+function slCandle(buy, sl) {       // the most recent candle whose real low (buy) / high (sell) reached the SL price
+  for (let i = raw.length - 1; i >= 0 && i >= raw.length - 5000; i--)
+    if (buy ? raw[i][3] <= sl : raw[i][2] >= sl) return i;
+  return -1;
+}
+function computePlan() {
+  if (!plan || !ACC || ACC.error || !ACC.sym || !status || status.bid == null) return null;
+  const S = ACC.sym, buy = plan.side === 'buy', entry = buy ? status.ask : status.bid, risk = riskAmount(), vpp = S.vpp;
+  const r = { buy, entry, risk, warn: [], ok: true };
+  if (!(vpp > 0)) { r.warn.push('MT5 did not give the value of a price move for this symbol.'); r.ok = false; return r; }
+  if (!(risk > 0)) { r.warn.push('Set your risk per trade.'); r.ok = false; return r; }
+  if (RISK.lotMode === 'fixed') {
+    r.lot = Math.max(S.vmin, Math.min(S.vmax, Math.round((+RISK.lot || S.vmin) / S.vstep) * S.vstep));
+    r.lot = +r.lot.toFixed(8);
+    const dist = risk / (r.lot * vpp);
+    r.sl = buy ? roundPx(entry - dist, 1) : roundPx(entry + dist, -1);      // rounded toward entry: never over your risk
+  } else {
+    r.sl = plan.slManual != null ? plan.slManual : defaultSL(buy);
+    const dist = Math.abs(entry - r.sl);
+    let lot = dist > 0 ? Math.floor(risk / (dist * vpp) / S.vstep + 1e-9) * S.vstep : 0;
+    lot = Math.min(S.vmax, lot);
+    if (lot < S.vmin - 1e-9) {
+      r.warn.push(`The smallest lot (${S.vmin}) would lose ${money(S.vmin * dist * vpp)} at this SL, more than your ` +
+                  `${money(risk)}. Drag the SL closer or raise your risk.`);
+      lot = S.vmin; r.ok = false;
+    }
+    r.lot = +lot.toFixed(8);
+  }
+  r.dist = Math.abs(entry - r.sl); r.loss = r.lot * r.dist * vpp;
+  if (buy ? !(r.sl < status.bid - S.stops) : !(r.sl > status.ask + S.stops)) {
+    r.warn.push(`The SL must be ${buy ? 'below' : 'above'} the price` + (S.stops ? ` by at least ${fmt(S.stops)} (broker minimum).` : '.'));
+    r.ok = false;
+  }
+  if (RISK.rr > 0) { r.tp = roundPx(buy ? entry + r.dist * RISK.rr : entry - r.dist * RISK.rr, 0); r.gain = r.lot * Math.abs(r.tp - entry) * vpp; }
+  r.slc = slCandle(buy, r.sl);
+  if (!ACC.allow) { r.warn.push('Trading is turned off in gold_chart.py (ALLOW_TRADING = False).'); r.ok = false; }
+  if (!ACC.algo) { r.warn.push("Algo Trading is OFF in MT5. Click the 'Algo Trading' button in the MT5 toolbar (it turns green)."); r.ok = false; }
+  if (ACC.accTrade === false) { r.warn.push('This MT5 account is not allowed to trade (investor / read-only login?).'); r.ok = false; }
+  return r;
+}
+function openPlan(side) {
+  if (plan && plan.side === side && !plan.sending) return closePlan();
+  plan = { side, slManual: null, sending: false };
+  $('buybtn').classList.toggle('on', side === 'buy'); $('sellbtn').classList.toggle('on', side === 'sell');
+  $('tp_title').textContent = (side === 'buy' ? 'BUY ' : 'SELL ') + symbol;
+  $('tp_title').style.color = side === 'buy' ? '#26a69a' : '#ef5350';
+  $('tp_rm').value = RISK.mode; $('tp_rv').value = RISK.mode === 'pct' ? RISK.pct : RISK.usd;
+  $('tp_lm').value = RISK.lotMode; $('tp_lot').value = RISK.lot; $('tp_slb').value = RISK.slBars; $('tp_rr').value = RISK.rr;
+  $('tp_live').checked = !!RISK.live; $('tp_msg').textContent = '';
+  $('tradep').style.display = 'block';
+  layoutPlanForm(); accTick(); updatePlan(); keepPanelOnScreen(); bump();
+}
+function closePlan() {
+  plan = null; planCur = null;
+  $('tradep').style.display = 'none'; $('buybtn').classList.remove('on'); $('sellbtn').classList.remove('on');
+  if (drag && drag.kind === 'plansl') { drag = null; lockChart(false); }
+  bump();
+}
+function layoutPlanForm() {
+  $('tp_lot').style.display = RISK.lotMode === 'fixed' ? '' : 'none';
+  $('tp_slrow').style.display = RISK.lotMode === 'auto' ? '' : 'none';
+}
+function updatePlan() {
+  if (!plan) return;
+  const old = planCur, r = planCur = computePlan(), buy = plan.side === 'buy';
+  if (!old || !r || old.sl !== r.sl || old.entry !== r.entry || old.lot !== r.lot || old.tp !== r.tp || old.slc !== r.slc) bump();
+  $('tp_acc').textContent = ACC && !ACC.error ? `Balance ${money(ACC.balance)}` : ACC && ACC.error ? ACC.error : 'reading account...';
+  let h = '';
+  if (r) {
+    const pc = ACC.balance > 0 ? ` (${(r.loss / ACC.balance * 100).toFixed(1)}% of balance)` : '';
+    h += `<div>Entry &asymp; <b>${fmt(r.entry)}</b> <span class="m">${buy ? 'ask' : 'bid'}, market price</span></div>`;
+    h += `<div>Stop loss <b style="color:#ef5350">${fmt(r.sl)}</b> <span class="m">${fmt(r.dist)} away &middot; ` +
+         (RISK.lotMode === 'fixed' ? 'moves with price' : plan.slManual != null ? 'you placed it' : 'drag the red line to move it') + '</span></div>';
+    h += r.slc >= 0
+      ? `<div>SL candle <b style="color:#ff9800">${tstr(raw[r.slc][0])}</b> <span class="m">${raw.length - 1 - r.slc} candles back, the last one whose ${buy ? 'low' : 'high'} reached your SL</span></div>`
+      : `<div>SL candle <span class="m">no candle in the last ${Math.min(raw.length, 5000)} reached this level</span></div>`;
+    h += `<div>Lot <b>${r.lot}</b> &middot; loss at SL <b style="color:#ef5350">${money(r.loss)}</b><span class="m">${pc}</span></div>`;
+    if (r.tp) h += `<div>Take profit <b style="color:#26a69a">${fmt(r.tp)}</b> &middot; gain <b style="color:#26a69a">${money(r.gain)}</b></div>`;
+    h += `<div class="m">Your risk: ${money(r.risk)}${RISK.mode === 'pct' ? ` (${RISK.pct}% of balance)` : ''}</div>`;
+    r.warn.forEach(w => h += `<div class="w">${w}</div>`);
+  } else h = '<div class="m">Waiting for the account and price from MT5...</div>';
+  if ($('tp_info').innerHTML !== h) $('tp_info').innerHTML = h;
+  const go = $('tp_go');
+  go.style.background = buy ? '#26a69a' : '#ef5350';
+  go.textContent = plan.sending ? 'Sending...' : `Confirm ${buy ? 'BUY' : 'SELL'}${r && r.lot ? ' ' + r.lot + ' lot' : ''}`;
+  go.disabled = !r || !r.ok || plan.sending || !RISK.live;
+  go.title = !RISK.live ? 'Tick "Live orders on" first' : '';
+}
+async function sendOrder() {
+  const r = computePlan();
+  if (!plan || !r || !r.ok || plan.sending || !RISK.live) return;
+  const side = plan.side, buy = side === 'buy';
+  plan.sending = true; updatePlan();
+  $('tp_msg').style.color = 'var(--muted)'; $('tp_msg').textContent = 'Sending the order to MT5...';
+  let res;
+  try {
+    res = await (await fetch('/api/order', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Chart-Token': ACC.token },
+      body: JSON.stringify({ symbol, side, volume: r.lot, sl: r.sl, tp: r.tp || 0, risk: r.loss }) })).json();
+  } catch (e) { res = { error: 'Lost connection to the chart server. Check MT5 to see if the order went through.' }; }
+  if (!plan) return;
+  plan.sending = false;
+  if (res.ok) {
+    $('tp_msg').style.color = '#26a69a';
+    $('tp_msg').textContent = `${buy ? 'Bought' : 'Sold'} ${res.volume} ${symbol} at ${fmt(res.price)}, SL ${fmt(r.sl)}` +
+      (r.tp ? `, TP ${fmt(r.tp)}` : '') + ` (ticket ${res.ticket}, risk ${money(res.risk)})`;
+    $('tp_go').disabled = true; plan.done = true;
+    accTick();
+    setTimeout(() => { if (plan && plan.done) closePlan(); }, 4000);
+  } else {
+    $('tp_msg').style.color = '#ef5350'; $('tp_msg').textContent = res.error || 'The order was not placed.';
+    updatePlan();
+  }
+}
+function keepPanelOnScreen() {
+  const P = $('tradep'), W = P.parentElement.clientWidth, H = P.parentElement.clientHeight;
+  P.style.left = Math.max(0, Math.min(W - P.offsetWidth, P.offsetLeft)) + 'px';
+  P.style.top = Math.max(0, Math.min(H - P.offsetHeight, P.offsetTop)) + 'px';
+}
+window.addEventListener('resize', () => { if (plan) keepPanelOnScreen(); });
+(function panelDrag() {                       // move the panel by its header; position is remembered
+  const P = $('tradep'), pos = store.get('gc_tradep_pos', null);
+  if (pos) { P.style.left = pos.x + 'px'; P.style.top = pos.y + 'px'; }
+  let st = null;
+  $('tp_head').addEventListener('pointerdown', e => {
+    if (e.target.tagName === 'BUTTON') return;
+    st = { x: e.clientX, y: e.clientY, l: P.offsetLeft, t: P.offsetTop }; $('tp_head').setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  $('tp_head').addEventListener('pointermove', e => {
+    if (!st) return;
+    const W = P.parentElement.clientWidth, H = P.parentElement.clientHeight;
+    P.style.left = Math.max(0, Math.min(W - P.offsetWidth, st.l + e.clientX - st.x)) + 'px';
+    P.style.top = Math.max(0, Math.min(H - P.offsetHeight, st.t + e.clientY - st.y)) + 'px';
+  });
+  $('tp_head').addEventListener('pointerup', () => { if (st) store.set('gc_tradep_pos', { x: P.offsetLeft, y: P.offsetTop }); st = null; });
+})();
+$('buybtn').onclick = () => openPlan('buy');
+$('sellbtn').onclick = () => openPlan('sell');
+$('tp_x').onclick = $('tp_cancel').onclick = closePlan;
+$('tp_go').onclick = sendOrder;
+$('tp_rm').onchange = () => { RISK.mode = $('tp_rm').value; $('tp_rv').value = RISK.mode === 'pct' ? RISK.pct : RISK.usd; saveRisk(); updatePlan(); bump(); };
+$('tp_rv').oninput = () => { const v = Number($('tp_rv').value); if (v >= 0) { RISK[RISK.mode === 'pct' ? 'pct' : 'usd'] = v; saveRisk(); updatePlan(); bump(); } };
+$('tp_lm').onchange = () => { RISK.lotMode = $('tp_lm').value; saveRisk(); layoutPlanForm(); updatePlan(); bump(); };
+$('tp_lot').oninput = () => { const v = Number($('tp_lot').value); if (v > 0) { RISK.lot = v; saveRisk(); updatePlan(); bump(); } };
+$('tp_slb').oninput = () => { const v = Math.round(Number($('tp_slb').value)); if (v >= 1) { RISK.slBars = Math.min(50, v); if (plan) plan.slManual = null; saveRisk(); updatePlan(); bump(); } };
+$('tp_rr').oninput = () => { const v = Number($('tp_rr').value); if (v >= 0) { RISK.rr = v; saveRisk(); updatePlan(); bump(); } };
+$('tp_live').onchange = () => { RISK.live = $('tp_live').checked; saveRisk(); updatePlan(); };
+function priceTag(y, pw, txt, col, solid) {
+  ctx.font = '11px sans-serif';
+  const w = ctx.measureText(txt).width + 10, x = pw - w - 4;
+  ctx.fillStyle = col; ctx.globalAlpha = solid ? 1 : 0.85; ctx.fillRect(x, y - 9, w, 18); ctx.globalAlpha = 1;
+  ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(txt, x + 5, y); ctx.textBaseline = 'alphabetic';
+}
+function hLine(y, pw, col, width, dash) {
+  ctx.strokeStyle = col; ctx.lineWidth = width; ctx.setLineDash(dash || []);
+  ctx.beginPath(); ctx.moveTo(0, Math.round(y) + 0.5); ctx.lineTo(pw, Math.round(y) + 0.5); ctx.stroke(); ctx.setLineDash([]);
+}
+function drawPlan(pw) {
+  const r = planCur; if (!plan || !r) return;
+  const ye = series.priceToCoordinate(r.entry), ys = series.priceToCoordinate(r.sl);
+  if (ye == null || ys == null) return;
+  // shaded risk (red) / reward (green) zones from the last candle to the right edge
+  const xl = Math.max(0, (l2x(raw.length - 1) || 0) - 20);
+  ctx.fillStyle = rgba('#ef5350', 0.12); ctx.fillRect(xl, Math.min(ye, ys), pw - xl, Math.abs(ys - ye));
+  if (r.tp) { const yt = series.priceToCoordinate(r.tp); if (yt != null) {
+    ctx.fillStyle = rgba('#26a69a', 0.12); ctx.fillRect(xl, Math.min(ye, yt), pw - xl, Math.abs(yt - ye));
+    hLine(yt, pw, '#26a69a', 1.5); priceTag(yt, pw, `TP ${fmt(r.tp)}  +${money(r.gain)}`, '#26a69a', true);
+  } }
+  if (r.slc >= 0) {                                   // box around the SL candle
+    const x = l2x(r.slc), x2 = l2x(r.slc + 1), b = ha[r.slc];
+    if (x != null && b) {
+      const half = Math.max(4, ((x2 != null ? x2 - x : 8) * 0.6));
+      const hi = Math.max(raw[r.slc][2], b.high), lo = Math.min(raw[r.slc][3], b.low);
+      const y1 = series.priceToCoordinate(hi), y2 = series.priceToCoordinate(lo);
+      if (y1 != null && y2 != null) {
+        ctx.strokeStyle = '#ff9800'; ctx.lineWidth = 2; ctx.strokeRect(x - half, Math.min(y1, y2) - 3, half * 2, Math.abs(y2 - y1) + 6);
+        ctx.fillStyle = '#ff9800'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('SL candle', x, r.buy ? Math.max(y1, y2) + 16 : Math.min(y1, y2) - 8); ctx.textAlign = 'left';
+        ctx.strokeStyle = rgba('#ff9800', 0.6); ctx.lineWidth = 1; ctx.setLineDash([3, 3]);   // link the candle to the SL line
+        ctx.beginPath(); ctx.moveTo(x, ys); ctx.lineTo(xl, ys); ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
+  }
+  hLine(ye, pw, '#2962ff', 1, [5, 4]);
+  priceTag(ye, pw, `${r.buy ? 'BUY' : 'SELL'} ${r.lot} @ ${fmt(r.entry)}`, '#2962ff', true);
+  hLine(ys, pw, '#ef5350', 2);
+  priceTag(ys, pw, `SL ${fmt(r.sl)}  -${money(r.loss)}` + (RISK.lotMode === 'auto' ? '  ↕ drag' : ''), '#ef5350', true);
+}
+function drawPositions(pw) {
+  if (SRC !== 'MT5' || !ACC || !ACC.positions) return;
+  for (const p of ACC.positions) {
+    const y = series.priceToCoordinate(p.open); if (y == null) continue;
+    const col = p.profit >= 0 ? '#26a69a' : '#ef5350';
+    hLine(y, pw, TH().text, 1, [2, 3]);
+    priceTag(y, pw, `${p.side.toUpperCase()} ${p.volume}  ${p.profit >= 0 ? '+' : ''}${money(p.profit)}`, col, false);
+    if (p.sl) { const ys = series.priceToCoordinate(p.sl); if (ys != null) { hLine(ys, pw, '#ef5350', 1, [2, 3]); priceTag(ys, pw, `SL ${fmt(p.sl)}`, '#ef5350', false); } }
+    if (p.tp) { const yt = series.priceToCoordinate(p.tp); if (yt != null) { hLine(yt, pw, '#26a69a', 1, [2, 3]); priceTag(yt, pw, `TP ${fmt(p.tp)}`, '#26a69a', false); } }
+  }
+}
 
 (async () => {
   try {

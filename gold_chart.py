@@ -1,7 +1,8 @@
 """
 MT5 chart server: any symbol, custom intervals, tick charts, Renko and Kagi. Opens in your browser.
 
-READS PRICES ONLY. THIS SCRIPT PLACES NO ORDERS.
+Reads prices. It places an order ONLY when you click Confirm Buy / Confirm Sell in the chart's trade panel
+(market order with stop loss, sized by your risk settings). Set ALLOW_TRADING = False below to turn that off.
 
   - Symbols: everything your MT5 terminal offers (Market Watch symbols listed first)
   - Time intervals: any length, e.g. 5s, 20s, 1m, 7m, 2h, 1d
@@ -16,6 +17,7 @@ Run:          python gold_chart.py      (close this window to stop)
 """
 
 import json
+import secrets
 import sys
 import threading
 import time
@@ -42,6 +44,10 @@ MAX_BASE_BARS = 99000    # most MT5 bars requested at once (MT5 'Max bars in cha
 PORT = 8765
 POLL_SEC = 0.25          # how often new ticks are pulled from MT5
 MAX_BARS_SENT = 60000    # newest bars sent to the browser for tick-built charts
+ALLOW_TRADING = True     # False = the chart can never send orders (Buy / Sell panel only shows the plan)
+ORDER_DEVIATION = 20     # max slippage in points for market orders
+RISK_TOLERANCE = 1.25    # refuse an order if price moved so the loss at SL is over 1.25x the risk you confirmed
+ORDER_MAGIC = 26110601   # tags this chart's orders in MT5
 # ------------------------------------------
 
 HERE = Path(__file__).resolve().parent
@@ -446,6 +452,129 @@ def status(sym):
     return {"bid": tk.bid, "ask": tk.ask, "server_ms": tk.time_msc} if tk else {}
 
 
+# ---------------- trading: account, risk, orders ----------------
+TOKEN = secrets.token_hex(16)   # the page gets it from /api/account; other websites can't read it, so can't send orders
+RETCODE_TEXT = {
+    10004: "requote, try again", 10006: "rejected by the broker", 10013: "invalid request", 10014: "invalid lot size",
+    10015: "invalid price", 10016: "invalid stop loss / take profit (too close to price?)", 10017: "trading is disabled for this account",
+    10018: "market is closed", 10019: "not enough money (free margin)", 10020: "price changed, try again",
+    10021: "no quotes, try again", 10024: "too many requests", 10026: "trading disabled by the server",
+    10027: "Algo Trading is OFF in MT5: click the 'Algo Trading' button in the MT5 toolbar so it turns green, then try again",
+    10030: "fill mode not supported", 10031: "no connection to the trade server", 10033: "too many pending orders",
+    10040: "too many open positions",
+}
+
+
+def value_per_price(sym, info, price):
+    """Account-currency loss for 1 lot when price moves 1.0 against you."""
+    try:
+        v = mt5.order_calc_profit(mt5.ORDER_TYPE_BUY, sym, 1.0, price, price - 1.0)
+        if v is not None and v < 0:
+            return -float(v)
+    except Exception:
+        pass
+    tv = getattr(info, "trade_tick_value_loss", 0) or getattr(info, "trade_tick_value", 0)
+    ts_ = getattr(info, "trade_tick_size", 0) or info.point
+    return float(tv) / float(ts_) if tv and ts_ else 0.0
+
+
+def account(sym):
+    with MT5_LOCK:
+        acc = mt5.account_info()
+        info = mt5.symbol_info(sym)
+        tk = mt5.symbol_info_tick(sym)
+        term = mt5.terminal_info()
+        pos = mt5.positions_get(symbol=sym) or ()
+        vpp = value_per_price(sym, info, tk.bid) if info and tk else 0.0
+    if not acc or not info:
+        return {"error": "MT5 account or symbol not available"}
+    algo = bool(getattr(term, "trade_allowed", True)) if term else True
+    return {
+        "token": TOKEN, "allow": ALLOW_TRADING, "algo": algo, "accTrade": bool(getattr(acc, "trade_allowed", True)),
+        "login": acc.login, "server": acc.server, "currency": acc.currency, "balance": acc.balance, "equity": acc.equity,
+        "freeMargin": getattr(acc, "margin_free", 0), "leverage": getattr(acc, "leverage", 0),
+        "sym": {"name": sym, "digits": info.digits, "point": info.point, "vmin": info.volume_min, "vmax": info.volume_max,
+                "vstep": info.volume_step, "stops": getattr(info, "trade_stops_level", 0) * info.point,
+                "contract": getattr(info, "trade_contract_size", 0), "vpp": vpp,
+                "tradeMode": getattr(info, "trade_mode", 4)},
+        "positions": [{"ticket": p.ticket, "side": "buy" if p.type == mt5.POSITION_TYPE_BUY else "sell",
+                       "volume": p.volume, "open": p.price_open, "sl": p.sl, "tp": p.tp, "profit": p.profit,
+                       "magic": p.magic, "time": p.time} for p in pos],
+    }
+
+
+def round_step(v, step):
+    return round(round(v / step) * step, 8)
+
+
+def place_order(req):
+    """Market order with stop loss (and optional take profit). Every check is repeated here, on fresh prices."""
+    if not ALLOW_TRADING:
+        return {"error": "Trading is turned off in gold_chart.py (ALLOW_TRADING = False)."}
+    sym, side = str(req.get("symbol", "")), req.get("side")
+    vol, sl, tp = float(req.get("volume", 0)), float(req.get("sl", 0)), float(req.get("tp", 0) or 0)
+    max_risk = float(req.get("risk", 0))
+    if side not in ("buy", "sell"):
+        return {"error": "side must be buy or sell"}
+    if not sl > 0:
+        return {"error": "a stop loss is required"}
+    if not max_risk > 0:
+        return {"error": "risk amount missing"}
+    with MT5_LOCK:
+        info = mt5.symbol_info(sym)
+        tk = mt5.symbol_info_tick(sym)
+        if not info or not tk:
+            return {"error": f"symbol {sym} not available"}
+        step = info.volume_step or 0.01
+        vol = round_step(vol, step)
+        if vol < info.volume_min - 1e-9 or vol > info.volume_max + 1e-9:
+            return {"error": f"lot {vol} is outside {info.volume_min} - {info.volume_max}"}
+        buy = side == "buy"
+        price = tk.ask if buy else tk.bid
+        stops = getattr(info, "trade_stops_level", 0) * info.point
+        if buy and not sl < tk.bid - stops or not buy and not sl > tk.ask + stops:
+            return {"error": f"stop loss {sl} is on the wrong side of price or closer than the broker allows ({stops:g}). Price moved? Try again."}
+        if tp and (buy and not tp > tk.ask + stops or not buy and not tp < tk.bid - stops):
+            return {"error": f"take profit {tp} is on the wrong side of price"}
+        otype = mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL
+        loss = mt5.order_calc_profit(otype, sym, vol, price, sl)
+        loss = abs(loss) if loss is not None else vol * value_per_price(sym, info, price) * abs(price - sl)
+        if loss > max_risk * RISK_TOLERANCE + 1e-9:
+            return {"error": f"price moved: the loss at your stop is now {loss:.2f} {mt5.account_info().currency}, "
+                             f"over the {max_risk:.2f} you confirmed. Check the panel and confirm again."}
+        fm = getattr(info, "filling_mode", 0)
+        fills = ([mt5.ORDER_FILLING_FOK] if fm & 1 else []) + ([mt5.ORDER_FILLING_IOC] if fm & 2 else []) + [mt5.ORDER_FILLING_RETURN]
+        res = None
+        for fill in fills:
+            res = mt5.order_send({
+                "action": mt5.TRADE_ACTION_DEAL, "symbol": sym, "volume": vol, "type": otype, "price": price,
+                "sl": round(sl, info.digits), "tp": round(tp, info.digits) if tp else 0.0, "deviation": ORDER_DEVIATION,
+                "magic": ORDER_MAGIC, "comment": "chart " + side, "type_time": mt5.ORDER_TIME_GTC, "type_filling": fill})
+            if res is None or res.retcode != 10030:
+                break
+        err = None if res else str(mt5.last_error())
+    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {side.upper()} {vol} {sym} sl={sl} tp={tp} risk={loss:.2f} -> "
+    if res is None:
+        msg = f"MT5 did not accept the order: {err}"
+        log_order(line + msg)
+        return {"error": msg}
+    if res.retcode == mt5.TRADE_RETCODE_DONE or res.retcode == 10008:
+        log_order(line + f"done ticket={res.order} price={res.price}")
+        return {"ok": True, "ticket": res.order, "price": res.price, "volume": res.volume, "risk": loss}
+    msg = f"{RETCODE_TEXT.get(res.retcode, 'rejected')} (code {res.retcode}{', ' + res.comment if res.comment else ''})"
+    log_order(line + msg)
+    return {"error": msg}
+
+
+def log_order(line):
+    print(line)
+    try:
+        with open(HERE / "orders.log", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
 # ---------------- order flow (tick rule) ----------------
 def nice_step(x, point):
     """Round a price step to 1 / 2 / 2.5 / 5 x 10^k, never below the symbol's point."""
@@ -663,6 +792,31 @@ def make_handler(default_sym):
                     since = q.get("since")
                     rows, extra = get_bars(sym, kind, p, float(since) if since is not None else None)
                     return self.js({"symbol": sym, "kind": kind, "p": p, "bars": rows, "status": status(sym), **extra})
+                if url.path == "/api/account":
+                    ensure_symbol(sym)
+                    return self.js(account(sym))
+                self.send_error(404)
+            except Exception as e:
+                self.js({"error": str(e)}, 500)
+
+        def do_POST(self):
+            url = urlparse(self.path)
+            try:
+                # Only this chart page may send orders: right host (no DNS tricks), same origin, JSON, secret token.
+                host = self.headers.get("Host", "")
+                origin = self.headers.get("Origin")
+                ok_hosts = (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
+                if (host not in ok_hosts or (origin and origin not in tuple("http://" + h for h in ok_hosts))
+                        or not self.headers.get("Content-Type", "").startswith("application/json")
+                        or not secrets.compare_digest(self.headers.get("X-Chart-Token", ""), TOKEN)):
+                    return self.js({"error": "refused: not from this chart page"}, 403)
+                n = int(self.headers.get("Content-Length", "0"))
+                if n > 10000:
+                    return self.js({"error": "request too large"}, 400)
+                body = json.loads(self.rfile.read(n) or b"{}")
+                if url.path == "/api/order":
+                    ensure_symbol(str(body.get("symbol", "")))
+                    return self.js(place_order(body))
                 self.send_error(404)
             except Exception as e:
                 self.js({"error": str(e)}, 500)
