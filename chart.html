@@ -4,11 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MT5 Chart</title>
-<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="/lightweight-charts.js"></script>
+<script>window.LightweightCharts || document.write('<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"><\/script>');</script>
 <script>window.LightweightCharts || document.write('<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"><\/script>');</script>
 <style>
   :root { --bg:#131722; --panel:#1e222d; --line:#2a2e39; --text:#d1d4dc; --muted:#787b86;
           --up:#26a69a; --down:#ef5350; --accent:#2962ff; }
+  :root[data-theme=light] { --bg:#ffffff; --panel:#f0f3fa; --line:#e0e3eb; --text:#131722; --muted:#6a6d78; }
+  :root[data-theme=light] .pop { box-shadow:0 8px 24px rgba(0,0,0,.15); }
   * { box-sizing:border-box; }
   html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
                font:13px -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
@@ -113,6 +116,10 @@
   <button class="tool" id="invbtn" title="Invert price scale (Alt+I)">Invert</button>
   <button class="tool" id="fit" title="Show all history">Fit all</button>
   <button class="tool" id="latest" title="Jump to the newest candle">Latest &rarr;</button>
+  <div class="sep"></div>
+  <button class="tool" id="winbtn" title="Open another chart window (e.g. 5m) to put on your other screen">&#10697; New window</button>
+  <button class="tool" id="syncbtn" title="Sync drawings, crosshair, symbol and theme between your chart windows">&#8644; Sync</button>
+  <button class="tool" id="themebtn" title="Switch between dark and light mode">&#9788; Light</button>
   <div class="quote">
     <span id="bias" style="display:none;padding:3px 10px;border-radius:4px;font-weight:600"></span>
     <span>Bid <b id="bid">-</b></span>
@@ -165,6 +172,9 @@
     <button data-add="stretch">Stretch reversal</button>
     <button data-add="pivot">Pivot points</button>
     <button data-add="hl">Candle high/low sweeps</button>
+    <button data-add="pdhl">Previous day high/low</button>
+    <button data-add="vwap">VWAP</button>
+    <button data-add="atr">ATR</button>
     <button data-add="macd" class="mt5only">MACD + doji</button>
     <button data-add="vol" class="mt5only">Volume</button>
     <button data-add="hdoji" class="mt5only">Doji boxes (5m, 15m, 1h...)</button>
@@ -206,11 +216,17 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
 };
+// Each extra window (?w=2, ?w=3 ...) keeps its own interval / chart type / indicators; drawings are per symbol and shared.
+const URLQ = new URLSearchParams(location.search);
+const WIN = (URLQ.get('w') || '').replace(/\D/g, ''), WK = WIN ? '_w' + WIN : '';
+// Redraw only when something changed (saves CPU / battery): anything that can move the overlay calls bump().
+let needDraw = true;
+function bump() { needDraw = true; }
 
 /* ---------------- chart ---------------- */
 const chart = LightweightCharts.createChart($('chart'), {
   autoSize: true,
-  layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc', fontSize: 12 },
+  layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc', fontSize: 12 },   // see applyTheme()
   grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
   crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
   rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.08, bottom: 0.08 } },
@@ -279,6 +295,26 @@ function axisLabel(t, type) {
   return type === 4 ? `${hm}:${p2(d.getUTCSeconds())}` : hm;
 }
 const ts = chart.timeScale();
+ts.subscribeVisibleLogicalRangeChange(bump);
+/* ---- dark / light mode ---- */
+const THEMES = {
+  dark: { bg: '#131722', text: '#d1d4dc', grid: '#1e222d', border: '#2a2e39', sep: '#2a2e39', paneLbl: '#868993',
+          lblBg: 'rgba(19,23,34,0.75)', handleFill: '#131722', handleStroke: '#ffffff' },
+  light: { bg: '#ffffff', text: '#131722', grid: '#f0f3fa', border: '#e0e3eb', sep: '#c9ccd6', paneLbl: '#6a6d78',
+           lblBg: 'rgba(255,255,255,0.88)', handleFill: '#ffffff', handleStroke: '#131722' },
+};
+let theme = store.get('gc_theme', 'dark') === 'light' ? 'light' : 'dark';
+const TH = () => THEMES[theme];
+function applyTheme() {
+  const T = TH();
+  document.documentElement.dataset.theme = theme;
+  chart.applyOptions({ layout: { background: { type: 'solid', color: T.bg }, textColor: T.text },
+    grid: { vertLines: { color: T.grid }, horzLines: { color: T.grid } },
+    rightPriceScale: { borderColor: T.border }, timeScale: { borderColor: T.border } });
+  const b = document.getElementById('themebtn'); if (b) b.innerHTML = theme === 'dark' ? '&#9788; Light' : '&#9790; Dark';
+  bump();
+}
+applyTheme();
 const series = chart.addCandlestickSeries({
   upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
   wickUpColor: '#26a69a', wickDownColor: '#ef5350',
@@ -344,6 +380,10 @@ const IND_DEFAULTS = {
   macd: { fast: 12, slow: 26, sig: 9, src: 'ha', doji: 'ha', cDoji: '#f7c948', cMacd: '#2962ff', cSig: '#ff6d00',
           cUp: '#26a69a', cUp2: '#b2dfdb', cDn: '#ff5252', cDn2: '#ffcdd2' },
   vol: { by: 'real', cUp: '#26a69a', cDn: '#ef5350' },
+  pdhl: { day: 'broker', close: false, history: true, labels: true, prices: true, fit: true, style: 'dashed',
+          cH: '#ef5350', cL: '#26a69a', cC: '#9598a1', width: 1 },
+  vwap: { day: 'broker', bands: 1, mult: 1, color: '#2962ff', cBand: '#7e57c2', width: 2 },
+  atr: { len: 14, src: 'real', smooth: 'rma', color: '#f06292' },
   hdoji: { doji: 'ha', last: '3', alpha: '0.12', border: 1, forming: true, labels: true, iv: '', on_custom: false, c_custom: '#ffffff',
            on_1m: false, c_1m: '#b0bec5', on_3m: false, c_3m: '#80deea', on_5m: true, c_5m: '#ffd54f',
            on_15m: true, c_15m: '#ce93d8', on_30m: false, c_30m: '#a5d6a7', on_1h: true, c_1h: '#4fc3f7',
@@ -355,7 +395,7 @@ const IND_DEFAULTS = {
              lines: true, zones: true, c1: '#42a5f5', c2: '#81c784', c3: '#2e7d32',
              sellColor: '#ef5350', buyColor: '#26a69a' },
 };
-let inds = store.get('gc_inds', []).map(x => {
+let inds = store.get('gc_inds' + WK, store.get('gc_inds', [])).map(x => {
   x = Object.fromEntries(Object.entries(x).filter(([k, v]) => v === null || typeof v !== 'object'));   // drop old saved data
   if (x.type === 'hdoji') {                                          // move the first version's strong colours to the lighter ones
     const OLD = { c_5m: '#ffd600', c_15m: '#e040fb', c_30m: '#69f0ae', c_1h: '#40c4ff', c_4h: '#ff9100' };
@@ -635,12 +675,47 @@ function pivotCalc(rows, T, type, nlev, A = 0) {     // rows: [id, open, high, l
   return out;
 }
 function pivotNames(ind) {                  // level names for this type, top to bottom: R3, R2, R1, P, S1, ...
+  if (ind.type === 'pdhl') return ['PDH', ...(ind.close ? ['PDC'] : []), 'PDL'];
   const order = ['R5', 'R4', 'R3', 'R2', 'R1', 'P', 'S1', 'S2', 'S3', 'S4', 'S5'];
   const have = pivotLevels(ind.ptype, 2, 1, 1.5, 1.5);
   return order.filter(n => n in have && (n === 'P' || Number(n.slice(1)) <= ind.nlev));
 }
-function pivotColor(ind, n) { return n === 'P' ? ind.cP : n[0] === 'R' ? ind.cR : ind.cS; }
+function pivotColor(ind, n) {
+  if (ind.type === 'pdhl') return n === 'PDH' ? ind.cH : n === 'PDL' ? ind.cL : ind.cC;
+  return n === 'P' ? ind.cP : n[0] === 'R' ? ind.cR : ind.cS;
+}
+// Day start for "previous day" and VWAP, as seconds after midnight on the broker clock.
+//   broker = the server's own day (Exness: 00:00 UTC = 5:30 AM India; Fyers: the 9:15 session)
+//   ist    = midnight India time;   ny = 5 PM New York (the usual forex trading day)
+function dayAnchor(ind) {
+  if (ind.day === 'ist' || ind.day === 'ny') {
+    const zone = ind.day === 'ist' ? 'Asia/Kolkata' : 'America/New_York', local = ind.day === 'ist' ? 0 : 17 * 3600;
+    const off = tzOffset(zone, Date.now() / 1000);
+    return (((local - off + srvOffset) % 86400) + 86400) % 86400;
+  }
+  return anchor;
+}
+function pdhlCalc(ind) {
+  const A = dayAnchor(ind), per = [], out = [], names = pivotNames(ind);
+  for (const r of raw) {
+    const st = periodStart(r[5], 86400, A), p = per[per.length - 1];
+    if (!p || st > p.start) per.push({ start: st, h: r[2], l: r[3], c: r[4] });
+    else { if (r[2] > p.h) p.h = r[2]; if (r[3] < p.l) p.l = r[3]; p.c = r[4]; }
+  }
+  for (let k = 1; k < per.length; k++) {
+    if (k === 1 && raw[0][5] > per[0].start) continue;        // the first day is only partly loaded
+    const pr = per[k - 1], map = { PDH: pr.h, PDL: pr.l, PDC: pr.c };
+    const lv = names.map(n => [n, map[n]]);
+    out.push({ start: per[k].start, end: per[k].start + 86400, lv, map: Object.fromEntries(lv) });
+  }
+  return out;
+}
 function computePivots(ind) {
+  if (ind.type === 'pdhl') {
+    ind.piv = raw.length ? pdhlCalc(ind) : [];
+    ind.pivWarn = kind === 'time' && tfSec >= 86400 ? 'use an interval shorter than 1 day' : '';
+    return;
+  }
   const iv = parseIv(ind.iv);
   ind.piv = iv && iv.kind === 'time' && raw.length ? pivotCalc(raw, iv.n, ind.ptype, ind.nlev, anchor) : [];
   ind.pivWarn = kind === 'time' && iv && iv.n < tfSec ? `pivot period ${ind.iv} is shorter than the chart interval ${tf}` : '';
@@ -689,12 +764,15 @@ function fillPivots(ind, from) {
   }
   ind.series.forEach((s, j) => s.setData(data[j]));
   ind.pivCount = piv.length;
+  // only the series holding the current period shows a price label on the scale (the other one is stale)
+  const curPar = Math.max(0, piv.length - 1) % 2;
+  ind.series.forEach((s, j) => s.applyOptions({ lastValueVisible: ind.prices !== false && j % 2 === curPar }));
 }
 function refreshPivots() {
-  inds.filter(i => i.type === 'pivot').forEach(ind => { computePivots(ind); fillPivots(ind, 0); });
+  inds.filter(i => i.type === 'pivot' || i.type === 'pdhl').forEach(ind => { computePivots(ind); fillPivots(ind, 0); });
 }
 function tailPivots(first) {                // live: extend the lines to new bars, redraw fully at a new period
-  inds.filter(i => i.type === 'pivot').forEach(ind => {
+  inds.filter(i => i.type === 'pivot' || i.type === 'pdhl').forEach(ind => {
     computePivots(ind);
     fillPivots(ind, ind.piv.length !== ind.pivCount ? 0 : first);
   });
@@ -801,6 +879,7 @@ function tstr(t) {                       // t = chart time (id)
   return kind === 'time' && tfSec >= 3600 ? iso.slice(5, 16).replace('T', ' ') : iso.slice(11, 19);
 }
 function refreshBos() {
+  bump();
   refreshPivots();
   const markers = [];
   inds.filter(i => i.type === 'hdoji').forEach(hdojiCalc);
@@ -910,6 +989,73 @@ function macdCalc(ind) {
   if (first >= 0) ema(m.slice(first), Math.max(1, ind.sig | 0)).forEach((v, j) => { sg[first + j] = v; });
   return [m.map((v, i) => v - sg[i]), m, sg];
 }
+/* ---- VWAP: resets at each day start; bands = VWAP +/- k standard deviations (volume weighted) ----
+   Typical price (H+L+C)/3 of real candles, weighted by MT5 tick volume (equal weights if no volume). Drawn per day
+   with the same two-series trick as pivots so days don't join with a slanted line. */
+function vwapCalc(ind) {
+  const n = raw.length, A = dayAnchor(ind), nb = Math.max(0, Math.min(3, ind.bands | 0)), m = Number(ind.mult) || 1;
+  const vw = new Array(n).fill(NaN), up = [], dn = [], day = new Array(n);
+  for (let b = 0; b < nb; b++) { up.push(new Array(n).fill(NaN)); dn.push(new Array(n).fill(NaN)); }
+  let d = -1, last = null, pv = 0, vv = 0, p2v = 0;
+  ind.noVol = !raw.some(r => r[6] > 0);
+  for (let i = 0; i < n; i++) {
+    const r = raw[i], st = periodStart(r[5], 86400, A);
+    if (st !== last) { last = st; d++; pv = vv = p2v = 0; }
+    day[i] = d;
+    const tp = (r[2] + r[3] + r[4]) / 3, v = ind.noVol ? 1 : (r[6] > 0 ? r[6] : 0);
+    pv += tp * v; vv += v; p2v += tp * tp * v;
+    if (vv > 0) {
+      const mean = pv / vv, sd = Math.sqrt(Math.max(0, p2v / vv - mean * mean));
+      vw[i] = mean;
+      for (let b = 0; b < nb; b++) { up[b][i] = mean + (b + 1) * m * sd; dn[b][i] = mean - (b + 1) * m * sd; }
+    }
+  }
+  ind.dayIdx = day;
+  const lines = [vw];
+  for (let b = 0; b < nb; b++) lines.push(up[b], dn[b]);
+  return lines;
+}
+function lineColor(ind, j) { return ind.type === 'vwap' && j > 0 ? ind.cBand : ind.color; }
+function runFill(ind, from) {                 // per-day lines: two series per line, transparent joins
+  const n = raw.length, d = ind.dayIdx || [], L = ind.vals.length;
+  if (!ind.series.length || !n) return;
+  if (from > 0 && from < n && ind.runDay === d[n - 1] && d[from] === d[n - 1]) {      // live: same day
+    const par = d[n - 1] % 2;
+    for (let i = from; i < n; i++)
+      for (let j = 0; j < L; j++) { const v = ind.vals[j][i]; if (!isNaN(v)) ind.series[j * 2 + par].update({ time: raw[i][0], value: v, color: lineColor(ind, j) }); }
+    return;
+  }
+  const data = ind.series.map(() => []);
+  let a = 0;
+  for (let i = 1; i <= n; i++) {
+    if (i < n && d[i] === d[a]) continue;
+    const b = i - 1, par = d[a] % 2;
+    for (let j = 0; j < L; j++) {
+      const arr = data[j * 2 + par], vals = ind.vals[j], col = lineColor(ind, j);
+      let f = a; while (f <= b && isNaN(vals[f])) f++;
+      if (f > b) continue;
+      const lastT = arr.length ? arr[arr.length - 1].time : -Infinity;
+      if (f > 0 && raw[f - 1][0] > lastT) arr.push({ time: raw[f - 1][0], value: vals[f], color: PIVOT_CLEAR });
+      for (let k = f; k <= b; k++) if (!isNaN(vals[k])) arr.push({ time: raw[k][0], value: vals[k], color: col });
+      if (b + 1 < n) arr.push({ time: raw[b + 1][0], value: vals[b], color: PIVOT_CLEAR });
+    }
+    a = i;
+  }
+  ind.series.forEach((s, j) => s.setData(data[j]));
+  ind.runDay = d[n - 1];
+  const curPar = d[n - 1] % 2;
+  ind.series.forEach((s, j) => s.applyOptions({ lastValueVisible: j % 2 === curPar && j < 2 }));
+}
+/* ---- ATR (own pane): true range smoothed (RMA = Wilder, like TradingView's default) ---- */
+function atrCalc(ind) {
+  const n = raw.length, len = Math.max(1, ind.len | 0), tr = new Array(n);
+  const B = i => ind.src === 'ha' ? ha[i] : { high: raw[i][2], low: raw[i][3], close: raw[i][4] };
+  for (let i = 0; i < n; i++) {
+    const b = B(i), pc = i ? B(i - 1).close : NaN;
+    tr[i] = i ? Math.max(b.high - b.low, Math.abs(b.high - pc), Math.abs(b.low - pc)) : b.high - b.low;
+  }
+  return [ind.smooth === 'sma' ? sma(tr, len) : ind.smooth === 'ema' ? ema(tr, len) : smma(tr, len)];
+}
 function isDoji(b) {
   const body = Math.abs(b.close - b.open);
   return b.high - Math.max(b.open, b.close) > body && Math.min(b.open, b.close) - b.low > body;
@@ -939,6 +1085,14 @@ function macdMarkers(ind) {
 }
 function fillPane(ind, first) {
   const n = raw.length;
+  if (ind.type === 'atr') {
+    const s = ind.series[0]; if (!s) return;
+    ind.vals = atrCalc(ind); s.applyOptions({ priceFormat: paneFmt() });
+    const v = ind.vals[0];
+    if (first == null) s.setData(raw.map((r, i) => isNaN(v[i]) ? null : { time: r[0], value: v[i] }).filter(Boolean));
+    else for (let i = first; i < n; i++) if (!isNaN(v[i])) s.update({ time: raw[i][0], value: v[i] });
+    return;
+  }
   if (ind.type === 'vol') {
     const s = ind.series[0]; if (!s) return;
     if (first == null) s.setData(raw.map((r, i) => ({ time: r[0], value: r[6] || 0, color: volColor(ind, i) })));
@@ -967,26 +1121,34 @@ function fillPane(ind, first) {
     if (ind.dojiN !== n) macdMarkers(ind);
   }
 }
-// Pane layout: MACD gets the bottom ~26% of the chart; volume sits at the bottom of the price area.
-const MACD_TOP = 0.74;
+// Pane layout: MACD and ATR each get a pane at the bottom (stacked); volume sits at the bottom of the price area.
+const PANE_TYPES = ['macd', 'atr'];
+function paneLayout() {
+  const ps = PANE_TYPES.map(t => inds.find(i => i.type === t && i.visible !== false && i.series.length)).filter(Boolean);
+  const h = ps.length === 1 ? 0.26 : ps.length ? 0.2 : 0;
+  return { ps, h, top0: 1 - h * ps.length };
+}
+function paneTop() { return paneLayout().top0; }
 function layoutPanes() {
-  const macd = inds.some(i => i.type === 'macd' && i.visible !== false && i.series.length);
+  const { ps, h, top0 } = paneLayout();
   const vol = inds.some(i => i.type === 'vol' && i.visible !== false && i.series.length);
-  const mainBottom = macd ? 1 - MACD_TOP + 0.04 : vol ? 0.2 : 0.08;
+  const mainBottom = ps.length ? 1 - top0 + 0.04 : vol ? 0.2 : 0.08;
   chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.08, bottom: mainBottom } });
-  if (inds.some(i => i.type === 'macd' && i.series.length))
-    chart.priceScale('macd').applyOptions({ scaleMargins: { top: MACD_TOP + 0.02, bottom: 0.03 } });
+  ps.forEach((ind, k) => chart.priceScale(ind.type).applyOptions({
+    scaleMargins: { top: top0 + k * h + 0.025, bottom: Math.max(0, 1 - (top0 + (k + 1) * h)) + 0.02 } }));
   if (inds.some(i => i.type === 'vol' && i.series.length))
-    chart.priceScale('vol').applyOptions({ scaleMargins: macd ? { top: MACD_TOP - 0.17, bottom: 1 - MACD_TOP + 0.01 } : { top: 0.82, bottom: 0 } });
+    chart.priceScale('vol').applyOptions({ scaleMargins: ps.length ? { top: top0 - 0.17, bottom: 1 - top0 + 0.01 } : { top: 0.82, bottom: 0 } });
+  bump();
 }
 function drawPanes(pw, ph) {
-  const ind = inds.find(i => i.type === 'macd' && i.visible !== false && i.series.length);
-  if (!ind) return;
-  const y = Math.round(ph * MACD_TOP) + 0.5;
-  ctx.strokeStyle = '#2a2e39'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(pw, y); ctx.stroke();
-  ctx.font = '11px sans-serif'; ctx.fillStyle = '#868993';
-  ctx.fillText(`${label(ind)}${ind.doji !== 'off' ? `  ·  doji dots: ${ind.doji === 'candle' ? 'normal candles' : 'Heikin Ashi'}` : ''}`, 6, y + 14);
+  const { ps, h, top0 } = paneLayout();
+  ps.forEach((ind, k) => {
+    const y = Math.round(ph * (top0 + k * h)) + 0.5;
+    ctx.strokeStyle = TH().sep; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(pw, y); ctx.stroke();
+    ctx.font = '11px sans-serif'; ctx.fillStyle = TH().paneLbl;
+    ctx.fillText(`${label(ind)}${ind.type === 'macd' && ind.doji !== 'off' ? `  ·  doji dots: ${ind.doji === 'candle' ? 'normal candles' : 'Heikin Ashi'}` : ''}`, 6, y + 14);
+  });
 }
 /* ---- Doji boxes for higher timeframes ----
    For every ticked timeframe (5m, 15m, 1h, ...) candles of that length are built from the chart's own bars (real
@@ -1032,7 +1194,7 @@ function hdojiCalc(ind) {
 const hhmm = sec => { const d = new Date(disp(sec) * 1000); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
 function drawHDoji(pw, ph) {
   const r = ts.getVisibleLogicalRange(); if (!r) return;
-  const bottom = inds.some(i => i.type === 'macd' && i.visible !== false && i.series.length) ? ph * MACD_TOP : ph;
+  const bottom = ph * paneTop();
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pw, bottom); ctx.clip();
   ctx.font = '11px sans-serif'; ctx.textBaseline = 'middle';
   const placed = [];                                            // label boxes drawn so far (to avoid overlaps)
@@ -1056,7 +1218,7 @@ function drawHDoji(pw, ph) {
           const hit = q => x < q.x + q.w && q.x < x + tw && Math.abs(ly - q.y) < 17;
           for (let k = 0; k < 8 && placed.some(hit); k++) ly -= 17;     // stack labels that would overlap
           placed.push({ x, y: ly, w: tw });
-          ctx.fillStyle = 'rgba(19,23,34,0.75)'; ctx.fillRect(x, ly - 8, tw, 16);
+          ctx.fillStyle = TH().lblBg; ctx.fillRect(x, ly - 8, tw, 16);
           ctx.strokeStyle = rgba(d.color, 0.7); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x) + 0.5, Math.round(ly - 8) + 0.5, Math.round(tw), 16);
           ctx.fillStyle = d.color; ctx.fillText(txt, x + 4, ly + 0.5);
         }
@@ -1071,6 +1233,9 @@ function label(ind) {
   if (ind.type === 'hl') return `H/L ${ind.iv}`;
   if (ind.type === 'macd') return `MACD ${ind.src === 'real' ? 'close' : 'HA close'} ${ind.fast} ${ind.slow} ${ind.sig}`;
   if (ind.type === 'vol') return 'Volume';
+  if (ind.type === 'pdhl') return 'Prev day H/L';
+  if (ind.type === 'vwap') return 'VWAP';
+  if (ind.type === 'atr') return `ATR ${ind.len}${ind.src === 'ha' ? ' (HA)' : ''}`;
   if (ind.type === 'hdoji') return 'Doji boxes';
   if (ind.type === 'stretch') return 'Stretch';
   return ind.type === 'bb' ? `BB ${ind.len} ${ind.mult}` : `${ind.type.toUpperCase()} ${ind.len}`;
@@ -1085,18 +1250,33 @@ function makeSeries(ind) {
     ind.series.push(chart.addLineSeries({ ...base, color: ind.cSig, lineWidth: 1, lastValueVisible: true }));
     ind.dojiN = -1; layoutPanes(); return;
   }
+  if (ind.type === 'atr') {
+    ind.series.push(chart.addLineSeries({ priceScaleId: 'atr', color: ind.color, lineWidth: 1, visible: ind.visible !== false,
+      priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: true }));
+    layoutPanes(); return;
+  }
+  if (ind.type === 'vwap') {
+    const nb = Math.max(0, Math.min(3, ind.bands | 0));
+    for (let j = 0; j < 1 + 2 * nb; j++)
+      for (let par = 0; par < 2; par++)
+        ind.series.push(chart.addLineSeries({ color: j ? ind.cBand : ind.color, lineWidth: j ? 1 : (ind.width || 2),
+          lineStyle: j ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid, visible: ind.visible !== false,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, title: j ? '' : 'VWAP' }));
+    return;
+  }
   if (ind.type === 'vol') {
     ind.series.push(chart.addHistogramSeries({ priceScaleId: 'vol', visible: ind.visible !== false, priceLineVisible: false,
       lastValueVisible: false, priceFormat: { type: 'volume' } }));
     layoutPanes(); return;
   }
   if (ind.type === 'hl' || ind.type === 'hdoji') { ind.hlN = 0; return; }       // lanes are created by fillHL as needed
-  if (ind.type === 'pivot') {
+  if (ind.type === 'pivot' || ind.type === 'pdhl') {
     ind.pnames = pivotNames(ind);
     ind.pnames.forEach(n => {
       for (let par = 0; par < 2; par++)
         ind.series.push(chart.addLineSeries({
           color: pivotColor(ind, n), lineWidth: ind.width || 1, visible: ind.visible !== false,
+          lineStyle: ind.style === 'dashed' ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
           priceLineVisible: false, lastValueVisible: ind.prices !== false, crosshairMarkerVisible: false,
           title: ind.labels !== false ? n : '',
           ...(ind.fit === false ? { autoscaleInfoProvider: () => null } : {}),
@@ -1121,8 +1301,9 @@ function makeSeries(ind) {
   }
 }
 function fullData(ind) {
-  if (ind.type === 'macd' || ind.type === 'vol') return fillPane(ind);
-  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji') return;
+  if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr') return fillPane(ind);
+  if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, 0); }
+  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji') return;
   ind.vals = calc(ind);
   ind.series.forEach((s, j) => {
     const v = ind.vals[j], d = [];
@@ -1131,8 +1312,9 @@ function fullData(ind) {
   });
 }
 function tailData(ind, first) {
-  if (ind.type === 'macd' || ind.type === 'vol') return fillPane(ind, first);
-  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji') return;
+  if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr') return fillPane(ind, first);
+  if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, first); }
+  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji') return;
   ind.vals = calc(ind);
   ind.series.forEach((s, j) => {
     const v = ind.vals[j];
@@ -1140,13 +1322,13 @@ function tailData(ind, first) {
   });
 }
 function saveInds() {
-  store.set('gc_inds', inds.map(ind => Object.fromEntries(Object.entries(ind).filter(([k, v]) => v === null || typeof v !== 'object'))));
+  store.set('gc_inds' + WK, inds.map(ind => Object.fromEntries(Object.entries(ind).filter(([k, v]) => v === null || typeof v !== 'object'))));
 }
 function addInd(type) {
   const ind = { id: Date.now() + Math.random(), type, src: 'ha', width: type === 'bb' ? 1 : 2,
                 visible: true, ...IND_DEFAULTS[type], series: [], vals: null, res: null };
   inds.push(ind); makeSeries(ind); if (raw.length) fullData(ind);
-  if (type === 'bos' || type === 'stretch' || type === 'pivot' || type === 'hl' || type === 'hdoji') refreshBos();
+  if (type === 'bos' || type === 'stretch' || type === 'pivot' || type === 'pdhl' || type === 'hl' || type === 'hdoji') refreshBos();
   saveInds(); renderPanel(); legend(null);
 }
 function renderPanel() {
@@ -1279,6 +1461,40 @@ function renderPanel() {
       `<label style="display:flex;align-items:center;gap:4px" title="Any other length, e.g. 10m or 2h. Press Enter."><input type="checkbox" data-k="on_custom" ${ind.on_custom ? 'checked' : ''}>` +
       `<input type="text" data-k="iv" value="${ind.iv}" placeholder="custom" style="width:58px;background:var(--bg);color:var(--text);` +
       `border:1px solid var(--line);border-radius:4px;padding:3px 5px"><input type="color" data-k="c_custom" value="${ind.c_custom}"></label></div>`;
+    else if (ind.type === 'pdhl') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Prev day H/L</b>` + `<label title="When a new day starts for these levels">Day starts <select data-k="day">` +
+      opt('day', 'broker', SRC === 'MT5' ? 'Broker midnight' : 'Session open') + opt('day', 'ist', 'India midnight') + opt('day', 'ny', '5 PM New York') + `</select></label>` +
+      `<label><input type="checkbox" data-k="close" ${ind.close ? 'checked' : ''}> Prev close</label>` +
+      `<label title="Keep the lines of earlier days"><input type="checkbox" data-k="history" ${ind.history ? 'checked' : ''}> Past days</label>` +
+      `<label><input type="checkbox" data-k="labels" ${ind.labels ? 'checked' : ''}> Labels</label>` +
+      `<label><input type="checkbox" data-k="prices" ${ind.prices ? 'checked' : ''}> Prices</label>` +
+      `<label title="Zoom the price scale out so the lines stay on screen"><input type="checkbox" data-k="fit" ${ind.fit !== false ? 'checked' : ''}> Keep in view</label>` +
+      `<label>Line <select data-k="style">` + opt('style', 'dashed', 'Dashed') + opt('style', 'solid', 'Solid') + `</select></label>` +
+      `<label>High <input type="color" data-k="cH" value="${ind.cH}"></label>` +
+      `<label>Low <input type="color" data-k="cL" value="${ind.cL}"></label>` +
+      `<label>Close <input type="color" data-k="cC" value="${ind.cC}"></label>` +
+      `<label>Width <select data-k="width">${[1, 2, 3].map(w => `<option ${w == ind.width ? 'selected' : ''}>${w}</option>`).join('')}</select></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'vwap') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">VWAP</b>` + `<label title="When a new day starts for these levels">Day starts <select data-k="day">` +
+      opt('day', 'broker', SRC === 'MT5' ? 'Broker midnight' : 'Session open') + opt('day', 'ist', 'India midnight') + opt('day', 'ny', '5 PM New York') + `</select></label>` +
+      `<label title="Standard-deviation bands around VWAP">Bands <select data-k="bands">` +
+      [0, 1, 2, 3].map(v => `<option value="${v}" ${v == ind.bands ? 'selected' : ''}>${v ? v + (v > 1 ? ' pairs' : ' pair') : 'None'}</option>`).join('') + `</select></label>` +
+      `<label title="Band step in standard deviations">x <input type="number" min="0.1" max="5" step="0.1" data-k="mult" value="${ind.mult}"></label>` +
+      `<label>VWAP <input type="color" data-k="color" value="${ind.color}"></label>` +
+      `<label>Bands <input type="color" data-k="cBand" value="${ind.cBand}"></label>` +
+      `<label>Width <select data-k="width">${[1, 2, 3].map(w => `<option ${w == ind.width ? 'selected' : ''}>${w}</option>`).join('')}</select></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'atr') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">ATR</b>` +
+      `<label>Length <input type="number" min="1" max="500" step="1" data-k="len" value="${ind.len}"></label>` +
+      `<label>Smoothing <select data-k="smooth">` + opt('smooth', 'rma', 'RMA (Wilder)') + opt('smooth', 'sma', 'SMA') + opt('smooth', 'ema', 'EMA') + `</select></label>` +
+      `<label>Candles <select data-k="src">` + opt('src', 'real', 'Real') + opt('src', 'ha', 'Heikin Ashi') + `</select></label>` +
+      `<label><input type="color" data-k="color" value="${ind.color}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
     else if (ind.type === 'vol') row.innerHTML =
       `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
       `<b style="width:auto">Volume</b>` +
@@ -1332,12 +1548,15 @@ function renderPanel() {
           if (k === 'visible') ind.series.forEach(x => x.applyOptions({ visible: ind.visible }));
           else makeSeries(ind);
           refreshBos();
-        } else if (ind.type === 'pivot') {
+        } else if (ind.type === 'pivot' || ind.type === 'pdhl') {
           if (k === 'visible') ind.series.forEach(x => x.applyOptions({ visible: ind.visible }));
           else { makeSeries(ind); computePivots(ind); fillPivots(ind, 0); }
-        } else if (ind.type === 'macd' || ind.type === 'vol') {
+        } else if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr') {
           if (k === 'visible') { ind.series.forEach(x => x.applyOptions({ visible: ind.visible })); layoutPanes(); }
           else { makeSeries(ind); if (raw.length) fillPane(ind); }
+        } else if (ind.type === 'vwap') {
+          if (k === 'visible') ind.series.forEach(x => x.applyOptions({ visible: ind.visible }));
+          else { makeSeries(ind); if (raw.length) fullData(ind); }
         } else if (ind.type === 'bos') {
           refreshBos();
         } else if (k === 'visible' || k === 'color' || k === 'width') {
@@ -1432,6 +1651,21 @@ function legend(idx) {
       `<span style="color:${i.cMacd}">${f(m[idx])}</span> <span style="color:${i.cSig}">${f(sg[idx])}</span>` +
       (dj ? ` <b style="color:${i.cDoji}">doji</b>` : '') + '</div>';
   });
+  inds.filter(i => i.type === 'pdhl' && i.visible !== false && i.piv).forEach(i => {
+    const rt = raw[idx] ? raw[idx][5] : null, pv = i.piv.find(p => rt >= p.start && rt < p.end) || i.piv[i.piv.length - 1];
+    html += `<div><span style="color:var(--text)">Prev day</span> ` + (i.pivWarn ? `<span style="color:var(--down)">${i.pivWarn}</span>`
+      : pv ? pv.lv.map(([n, v]) => `<span style="color:${pivotColor(i, n)}">${n.slice(2)}</span> ${fmt(v)}`).join(' ') : 'needs one full day of data') + '</div>';
+  });
+  inds.filter(i => i.type === 'vwap' && i.visible !== false && i.vals && raw[idx]).forEach(i => {
+    const v = i.vals[0][idx], sd = i.vals.length > 1 ? i.vals[1][idx] - v : NaN;
+    html += `<div><span style="color:${i.color}">VWAP</span> ${isNaN(v) ? '-' : fmt(v)}` +
+      (i.vals.length > 1 && !isNaN(sd) ? ` <span style="color:${i.cBand}">&plusmn;${fmt(sd)}</span>` : '') +
+      (i.noVol ? ' <span style="color:var(--muted)">(no volume: equal weights)</span>' : '') + '</div>';
+  });
+  inds.filter(i => i.type === 'atr' && i.visible !== false && i.vals && raw[idx]).forEach(i => {
+    const v = i.vals[0][idx];
+    html += `<div><span style="color:${i.color}">${label(i)}</span> ${isNaN(v) ? '-' : v.toFixed(Math.min(8, digits + 1))}</div>`;
+  });
   inds.filter(i => i.type === 'vol' && i.visible !== false && raw[idx]).forEach(i => {
     html += `<div><span style="color:var(--text)">Vol</span> <span style="color:${volColor(i, idx)}">${(raw[idx][6] || 0).toLocaleString()}</span></div>`;
   });
@@ -1445,7 +1679,7 @@ function legend(idx) {
     });
     html += `<div><span style="color:var(--text)">Doji ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
   });
-  inds.filter(i => !['bos', 'stretch', 'pivot', 'hl', 'macd', 'vol', 'hdoji'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
+  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
     const v = i.vals.map(a => fmt(a[idx])).join(' / ');
     html += `<div><span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${v}</span></div>`;
   });
@@ -1453,7 +1687,11 @@ function legend(idx) {
 }
 chart.subscribeCrosshairMove(p => {
   hoverIdx = p && p.time != null ? idxOfTime(p.time) : null;
-  legend(null);
+  legend(null); bump();
+  if (typeof send === 'function') {
+    const y = p && p.point ? p.point.y : null, pr = y != null ? series.coordinateToPrice(y) : null;
+    send({ type: 'cross', symbol, t: p && p.time != null ? realOf(p.time) : null, p: pr });
+  }
 });
 function idxOfTime(t) {
   let lo = 0, hi = raw.length - 1;
@@ -1505,7 +1743,7 @@ function syncControls() {
   styleSeries();
   applyInvert();
 }
-function saveView() { store.set('gc_view', { symbol, ctype, tf }); }
+function saveView() { store.set('gc_view' + WK, { symbol, ctype, tf }); }
 async function load() {
   if (ctype === 'renko' || ctype === 'kagi') box = store.get(`gc_box_${symbol}_${ctype}`, symMeta ? symMeta.box : box);
   syncControls();
@@ -1523,7 +1761,7 @@ async function load() {
     inds.forEach(fullData);
     refreshBos();
     setStatus(j.status);
-    hoverIdx = null; legend(null);
+    hoverIdx = null; legend(null); bump();
     const n = ha.length;
     if (n) ts.setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 10 });
     $('msg').style.display = n ? 'none' : 'flex';
@@ -1559,7 +1797,7 @@ async function poll() {
       inds.forEach(i => tailData(i, first));
       tailPivots(first); tailHL(first);
       if (ha.length - 1 !== lastClosedCount) { lastClosedCount = ha.length - 1; refreshBos(); }
-      legend(null);
+      legend(null); bump();
     }
   } catch (e) { /* server busy or restarting; next poll retries */ }
   finally { polling = false; }
@@ -1581,6 +1819,7 @@ function tzChanged() {
                        timeScale: { tickMarkFormatter: (t, type) => axisLabel(t, type) } });
   updClock();
   if (raw.length) legend(null);
+  bump();
 }
 function updClock() {
   const off = tzNowOffset(), d = new Date(Date.now() + off * 1000);
@@ -1609,7 +1848,62 @@ let tool = 'cursor', drawings = [], sel = null, pending = null, drag = null;
 let curColor = '#2962ff', curWidth = 2;
 const chartEl = $('chart'), cv = $('overlay'), ctx = cv.getContext('2d');
 
-function saveDrawings() { store.set('gc_draw_' + symbol, drawings); }
+function saveDrawings() { store.set('gc_draw_' + symbol, drawings); send({ type: 'draw', symbol, drawings }); bump(); }
+/* ---- sync between chart windows (monitor + laptop screen) ----
+   Windows of this chart in the same browser talk over a BroadcastChannel: drawings, the crosshair (shown as a
+   dashed line in the other windows), the symbol and the theme. On/off with the Sync button. */
+let syncOn = store.get('gc_sync', true), remoteCross = null, booted = false;
+const ME = Math.random().toString(36).slice(2);
+const bc = 'BroadcastChannel' in window ? new BroadcastChannel('gc_sync') : null;
+function send(m) { if (bc && syncOn) try { bc.postMessage({ ...m, from: ME, src: SRC }); } catch (e) {} }
+if (bc) bc.onmessage = e => {
+  const m = e.data || {};
+  if (!syncOn || m.from === ME || m.src !== SRC) return;
+  if (m.type === 'draw' && m.symbol === symbol && !drag && !pending) {
+    drawings = m.drawings || []; if (sel && !drawings.some(d => d.id === sel)) sel = null;
+  } else if (m.type === 'cross') {
+    remoteCross = m.symbol === symbol && m.t != null ? { t: m.t, p: m.p } : null;
+  } else if (m.type === 'symbol' && m.symbol && m.symbol !== symbol) {
+    setSymbol(m.symbol, true);
+  } else if (m.type === 'theme' && m.theme !== theme) {
+    theme = m.theme; store.set('gc_theme', theme); applyTheme();
+  }
+  bump();
+};
+function applySync() {
+  $('syncbtn').classList.toggle('on', syncOn);
+  $('syncbtn').title = syncOn ? 'Sync is ON: drawings, crosshair, symbol and theme follow your other chart windows. Click to turn off.'
+                              : 'Sync is OFF. Click to sync drawings, crosshair, symbol and theme between chart windows.';
+  if (!syncOn) remoteCross = null;
+  bump();
+}
+$('syncbtn').onclick = () => {
+  syncOn = !syncOn; store.set('gc_sync', syncOn); applySync();
+  if (syncOn) { send({ type: 'draw', symbol, drawings }); }
+};
+$('winbtn').onclick = () => {
+  const n = WIN ? Number(WIN) + 1 : 2;
+  window.open(`${location.pathname}?w=${n}`, 'gc_win_' + n, 'popup=yes,width=1280,height=800');
+};
+$('themebtn').onclick = () => {
+  theme = theme === 'dark' ? 'light' : 'dark'; store.set('gc_theme', theme); applyTheme();
+  send({ type: 'theme', theme });
+};
+function drawRemoteCross(pw, ph) {
+  if (!remoteCross || !syncOn) return;
+  const l = t2l(remoteCross.t), x = l == null ? null : l2x(l), y = series.priceToCoordinate(remoteCross.p);
+  ctx.save(); ctx.setLineDash([4, 4]); ctx.lineWidth = 1; ctx.strokeStyle = rgba('#2962ff', 0.85);
+  if (x != null && x >= 0 && x <= pw) { ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, ph); ctx.stroke(); }
+  if (y != null && y >= 0 && y <= ph) { ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(pw, y + 0.5); ctx.stroke(); }
+  ctx.setLineDash([]);
+  if (x != null && x >= 0 && x <= pw) {
+    const txt = fullTime(remoteCross.t).slice(-8); ctx.font = '11px sans-serif';
+    const tw = ctx.measureText(txt).width + 8;
+    ctx.fillStyle = '#2962ff'; ctx.fillRect(x - tw / 2, ph - 18, tw, 16);
+    ctx.fillStyle = '#ffffff'; ctx.textBaseline = 'middle'; ctx.fillText(txt, x - tw / 2 + 4, ph - 10); ctx.textBaseline = 'alphabetic';
+  }
+  ctx.restore();
+}
 function paneW() { return chartEl.clientWidth - chart.priceScale('right').width(); }
 function paneH() { return chartEl.clientHeight - ts.height(); }
 
@@ -1789,8 +2083,15 @@ function rgba(hex, a) {
 }
 
 /* ---------------- overlay rendering ---------------- */
+let lastSig = '';
 function render() {
+  requestAnimationFrame(render);
   const dpr = window.devicePixelRatio || 1, W = chartEl.clientWidth, H = chartEl.clientHeight;
+  const vr = ts.getVisibleLogicalRange(), lc = raw.length ? raw[raw.length - 1][4] : 0;
+  const sig = [W, H, dpr, vr && vr.from, vr && vr.to, raw.length, lc, series.priceToCoordinate(lc),
+               series.priceToCoordinate(lc * 1.001 + 1)].join('|');
+  if (!needDraw && sig === lastSig) return;                 // nothing moved: skip this frame
+  needDraw = false; lastSig = sig;
   if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
     cv.style.width = W + 'px'; cv.style.height = H + 'px';
@@ -1809,10 +2110,12 @@ function render() {
     drawHDoji(pw, ph);
     const all = pending ? drawings.concat([pending]) : drawings;
     for (const d of all) drawOne(d, pw, d.id === sel || d === pending);
+    drawRemoteCross(pw, ph);
     ctx.restore();
   }
-  requestAnimationFrame(render);
 }
+['mousemove', 'mousedown', 'mouseup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'resize', 'touchmove', 'pointerup']
+  .forEach(ev => window.addEventListener(ev, bump, { passive: true, capture: true }));
 function drawBandFills() {
   const r = ts.getVisibleLogicalRange(); if (!r) return;
   const from = Math.max(0, Math.floor(r.from)), to = Math.min(raw.length - 1, Math.ceil(r.to));
@@ -1966,7 +2269,7 @@ function drawPivots(pw) {
   const r = ts.getVisibleLogicalRange(); if (!r || !raw.length) return;
   const tFrom = l2t(r.from), tTo = l2t(r.to);
   ctx.font = '11px sans-serif'; ctx.textBaseline = 'bottom';
-  inds.filter(i => i.type === 'pivot' && i.visible !== false && i.piv && i.piv.length && !i.pivWarn).forEach(ind => {
+  inds.filter(i => (i.type === 'pivot' || i.type === 'pdhl') && i.visible !== false && i.piv && i.piv.length && !i.pivWarn).forEach(ind => {
     const list = ind.history ? ind.piv : ind.piv.slice(-1);
     for (const p of list) {
       if (p.end < tFrom || p.start > tTo) continue;
@@ -1976,7 +2279,7 @@ function drawPivots(pw) {
       if (x1 - x0 < 1) continue;
       for (const [name, v] of p.lv) {
         const y = series.priceToCoordinate(v); if (y == null) continue;
-        const col = name === 'P' ? ind.cP : name[0] === 'R' ? ind.cR : ind.cS;
+        const col = pivotColor(ind, name);
         if (ind.labels && x1 - x0 > 34) {
           const txt = ind.prices && x1 - x0 > 110 ? `${name} (${fmt(v)})` : name;
           ctx.fillStyle = col; ctx.fillText(txt, x0 + 3, y - 2);
@@ -1988,7 +2291,7 @@ function drawPivots(pw) {
 }
 function handle(q) {
   ctx.beginPath(); ctx.arc(q.x, q.y, 4.5, 0, Math.PI * 2);
-  ctx.fillStyle = '#131722'; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+  ctx.fillStyle = TH().handleFill; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = TH().handleStroke; ctx.stroke();
 }
 function drawOne(d, pw, isSel) {
   ctx.strokeStyle = d.color; ctx.lineWidth = d.width;
@@ -2019,7 +2322,9 @@ requestAnimationFrame(render);
 /* ---------------- start ---------------- */
 /* ---------------- symbol, chart type and interval controls ---------------- */
 let symbols = [], symSel = 0, symSearch = false, watchLabel = 'Market Watch', found = [], findQ = '', findTimer = 0;
-async function setSymbol(name) {
+async function setSymbol(name, fromSync) {
+  if (booted && !fromSync) send({ type: 'symbol', symbol: name });
+  remoteCross = null;
   const id = ++reqId;
   $('msg').style.display = 'flex'; $('msg').textContent = `Opening ${name}...`;
   const m = await (await fetch(`/api/meta?symbol=${encodeURIComponent(name)}`)).json();
@@ -2115,13 +2420,16 @@ $('boxin').addEventListener('keydown', e => {
       document.querySelectorAll('.mt5only').forEach(b => b.style.display = 'none');
       inds = inds.filter(i => i.type !== 'macd' && i.type !== 'vol' && i.type !== 'hdoji');
     }
-    const view = store.get('gc_view', {});
+    const view = store.get('gc_view' + WK, null) || { ...store.get('gc_view', {}), ...(WIN ? { tf: '5m' } : {}) };
+    if (URLQ.get('tf')) view.tf = URLQ.get('tf');
+    if (WIN) document.title = `${SRC} Chart (window ${WIN})`;
     ctype = ['ha', 'candle', 'renko', 'kagi'].includes(view.ctype) ? view.ctype : 'ha';
     tf = parseIv(view.tf) ? view.tf : '15s';
     const want = view.symbol && (symSearch || symbols.some(s => s.name === view.symbol)) ? view.symbol : list.default;
     inds.forEach(makeSeries);
     await setSymbol(want);
     if (!symMeta && want !== list.default) await setSymbol(list.default);    // e.g. an expired contract
+    booted = true; applySync();
   } catch (e) {
     $('msg').textContent = 'Could not reach the chart server. Start it first, then refresh this page.';
   }

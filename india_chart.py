@@ -842,6 +842,33 @@ from the address bar (it contains <code>auth_code=</code>), paste it below and p
 <button>Continue</button></form></div></body></html>"""
 
 
+# ---------------- chart library (kept next to this file so the page loads instantly and offline) ----------------
+LIB_FILE = HERE / "lightweight-charts.js"
+LIB_URL = "https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"
+
+
+def ensure_library():
+    """Download the chart library once. If it can't be downloaded the page falls back to the internet copy."""
+    try:
+        if LIB_FILE.exists() and LIB_FILE.stat().st_size > 100_000:
+            return
+        import urllib.request
+        print("Saving the chart library locally (one time)...")
+        with urllib.request.urlopen(LIB_URL, timeout=30) as r:
+            data = r.read()
+        if len(data) > 100_000 and b"createChart" in data:
+            LIB_FILE.write_bytes(data)
+    except Exception as e:
+        print("  could not save it (the page will load it from the internet):", e)
+
+
+def library_bytes():
+    try:
+        return LIB_FILE.read_bytes() if LIB_FILE.exists() and LIB_FILE.stat().st_size > 100_000 else None
+    except Exception:
+        return None
+
+
 def make_handler():
     page = (HERE / "chart.html").read_bytes()
     cb_path = urlparse(AUTH.cfg["redirect_uri"]).path or "/"
@@ -890,6 +917,16 @@ def make_handler():
                     except Exception as e:
                         state["err"] = f"Login failed: {e}"
                     return self.redirect("/")
+                if url.path == "/lightweight-charts.js":
+                    lib = library_bytes()
+                    if lib is None:
+                        return self.send_error(404)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/javascript")
+                    self.send_header("Cache-Control", "max-age=604800")
+                    self.end_headers()
+                    self.wfile.write(lib)
+                    return
                 if url.path in ("/", "/index.html"):
                     if not AUTH.ok:
                         return self.send(LOGIN_PAGE.replace("%ERR%", state["err"]).encode(), "text/html; charset=utf-8")
@@ -950,6 +987,7 @@ def main():
     else:
         print("Opening the Fyers login page in your browser...")
     print(f"\nChart running at {url}  (keep this window open while the market is open, Ctrl+C to stop)")
+    ensure_library()
     webbrowser.open(url)
     try:
         server.serve_forever()

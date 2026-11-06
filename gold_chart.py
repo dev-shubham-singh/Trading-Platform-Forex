@@ -451,6 +451,33 @@ def get_bars(sym, kind, p, since):
     return out, extra
 
 
+# ---------------- chart library (kept next to this file so the page loads instantly and offline) ----------------
+LIB_FILE = HERE / "lightweight-charts.js"
+LIB_URL = "https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"
+
+
+def ensure_library():
+    """Download the chart library once. If it can't be downloaded the page falls back to the internet copy."""
+    try:
+        if LIB_FILE.exists() and LIB_FILE.stat().st_size > 100_000:
+            return
+        import urllib.request
+        print("Saving the chart library locally (one time)...")
+        with urllib.request.urlopen(LIB_URL, timeout=30) as r:
+            data = r.read()
+        if len(data) > 100_000 and b"createChart" in data:
+            LIB_FILE.write_bytes(data)
+    except Exception as e:
+        print("  could not save it (the page will load it from the internet):", e)
+
+
+def library_bytes():
+    try:
+        return LIB_FILE.read_bytes() if LIB_FILE.exists() and LIB_FILE.stat().st_size > 100_000 else None
+    except Exception:
+        return None
+
+
 def make_handler(default_sym):
     page = (HERE / "chart.html").read_bytes()
 
@@ -472,6 +499,16 @@ def make_handler(default_sym):
             url = urlparse(self.path)
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             try:
+                if url.path == "/lightweight-charts.js":
+                    lib = library_bytes()
+                    if lib is None:
+                        return self.send_error(404)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/javascript")
+                    self.send_header("Cache-Control", "max-age=604800")
+                    self.end_headers()
+                    self.wfile.write(lib)
+                    return
                 if url.path in ("/", "/index.html"):
                     return self.send(page, "text/html; charset=utf-8")
                 if url.path == "/api/symbols":
@@ -510,6 +547,7 @@ def main():
     server = ThreadingHTTPServer(("127.0.0.1", PORT), make_handler(sym))
     url = f"http://127.0.0.1:{PORT}"
     print(f"\nChart running at {url}  (keep this window open, Ctrl+C to stop)")
+    ensure_library()
     webbrowser.open(url)
     try:
         server.serve_forever()

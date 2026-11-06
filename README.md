@@ -19,8 +19,10 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
 - Intervals: seconds, minutes, hours, days, tick charts (e.g. `100t`), any custom value
 - Zoom/pan, invert scale, drawing tools (trend line, horizontal line, box) with colours
 - Time zone menu (bottom right, like TradingView): India time by default, plus UTC, broker time and major world cities; live clock
+- Dark / light mode
+- **New window + Sync**: open a second chart window (e.g. 5m) for another screen; drawings, crosshair, symbol and theme stay in sync (toggle)
 - Indicators: EMA, SMMA, SMA, Bollinger Bands, pivot points (any period, R3/S3, history),
-  candle high/low liquidity sweeps
+  candle high/low liquidity sweeps, previous day high/low/close, VWAP with deviation bands, ATR (own pane)
 - Strategy indicators: Heikin Ashi BOS bias (two pullback cycles), EMA/SMMA stretch reversal / momentum / limit-breakout
 - Gold/forex chart only: MACD pane with doji dots, tick volume, multi-timeframe **doji boxes** (1m–4h, Heikin Ashi or normal)
 
@@ -35,4 +37,4 @@ ticks the app records while it runs (`fyers_ticks/`).
 
 ## Requirements
 Windows, Python 3.10+. The `.bat` files install the libraries (`MetaTrader5`, `fyers-apiv3`, `pandas`, `numpy`).
-The chart page loads lightweight-charts 4.2.0 from unpkg.
+The servers save lightweight-charts 4.2.0 next to the page on first start (fallback: unpkg), so the chart loads instantly and offline.
