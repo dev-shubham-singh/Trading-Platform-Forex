@@ -2540,10 +2540,9 @@ chartEl.addEventListener('pointerdown', e => {
   const { x, y } = local(e);
   if (x > paneW() || y > paneH()) return;            // leave price/time scales to the chart
   const ph_ = posHits.find(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
-  if (ph_) {                                           // close box on a position line: click twice
+  if (ph_) {                                           // close box on a position line: one click closes it
     e.stopPropagation(); e.preventDefault();
-    if (posArm && posArm.ticket === ph_.ticket && Date.now() < posArm.until) { posArm = null; closeTickets([ph_.ticket]); }
-    else { posArm = { ticket: ph_.ticket, until: Date.now() + 3000 }; setTimeout(bump, 3100); }
+    if (!closing.has(ph_.ticket)) closeTickets([ph_.ticket]);
     bump(); return;
   }
   if (plan && planCur && RISK.lotMode === 'auto') {    // grab the planned stop-loss line
@@ -3247,22 +3246,22 @@ function drawPlan(pw) {
   hLine(ys, pw, '#ef5350', 2);
   priceTag(ys, pw, `SL ${fmt(r.sl)}  -${money(r.loss)}` + (RISK.lotMode === 'auto' ? '  ↕ drag' : ''), '#ef5350', true);
 }
-let posHits = [], posArm = null;               // clickable close boxes on the chart; armed = first click done
+let posHits = [];                              // clickable close boxes on the chart
 function drawPositions(pw) {
   posHits = [];
   if (SRC !== 'MT5' || !ACC || !ACC.positions) return;
   for (const p of ACC.positions) {
     const y = series.priceToCoordinate(p.open); if (y == null) continue;
     const pl = livePL(p).pl, col = pl >= 0 ? '#26a69a' : '#ef5350';
-    const armed = posArm && posArm.ticket === p.ticket && Date.now() < posArm.until;
+    const armed = closing.has(p.ticket);                // closing: show it on the tag
     hLine(y, pw, TH().text, 1, [2, 3]);
     const txt = `${p.side.toUpperCase()} ${p.volume}  ${pl >= 0 ? '+' : ''}${money(pl)}`;
     priceTag(y, pw, txt, col, true);
     ctx.font = '11px sans-serif';
-    const tw = ctx.measureText(txt).width + 10, bx = pw - tw - 4 - (armed ? 128 : 22), bw = armed ? 124 : 18;
+    const tw = ctx.measureText(txt).width + 10, bx = pw - tw - 4 - (armed ? 70 : 22), bw = armed ? 66 : 18;
     ctx.fillStyle = armed ? '#ef5350' : TH().text; ctx.fillRect(bx, y - 9, bw, 18);
     ctx.fillStyle = armed ? '#fff' : TH().bg; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
-    ctx.fillText(armed ? 'click again to close' : '\u2715', bx + bw / 2, y); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText(armed ? 'closing...' : '\u2715', bx + bw / 2, y); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
     posHits.push({ x: bx, y: y - 9, w: bw, h: 18, ticket: p.ticket });
     if (p.sl) { const ys = series.priceToCoordinate(p.sl); if (ys != null) { hLine(ys, pw, '#ef5350', 1, [2, 3]); priceTag(ys, pw, `SL ${fmt(p.sl)}`, '#ef5350', false); } }
     if (p.tp) { const yt = series.priceToCoordinate(p.tp); if (yt != null) { hLine(yt, pw, '#26a69a', 1, [2, 3]); priceTag(yt, pw, `TP ${fmt(p.tp)}`, '#26a69a', false); } }
@@ -3347,16 +3346,15 @@ function renderBar(force) {
       all.map(p => `<tr data-t="${p.ticket}"><td>${p.symbol}</td><td>${p.ticket}</td><td>${fullTime(p.time)}</td>` +
         `<td class="side-${p.side}">${p.side}</td><td>${p.volume}</td><td>${(+p.open).toFixed(p.digits)}</td><td class="c-cur"></td>` +
         `<td>${p.sl ? (+p.sl).toFixed(p.digits) : '-'}</td><td>${p.tp ? (+p.tp).toFixed(p.digits) : '-'}</td><td class="c-pl"></td>` +
-        `<td><button class="xbtn" data-close="${p.ticket}" title="Close at market (two clicks)">${closing.has(p.ticket) ? 'Closing...' : '&#10005; Close'}</button></td></tr>`).join('') + '</table>';
+        `<td><button class="xbtn" data-close="${p.ticket}" title="Close at market">${closing.has(p.ticket) ? 'Closing...' : '&#10005; Close'}</button></td></tr>`).join('') + '</table>';
   }
   for (const p of all) {                                  // live cells, updated in place so buttons keep working
     const row = $('tb_pos').querySelector(`tr[data-t="${p.ticket}"]`); if (!row) continue;
     const { pl, cur } = livePL(p);
     row.querySelector('.c-cur').textContent = cur ? (+cur).toFixed(p.digits) : '-';
     const c = row.querySelector('.c-pl'); c.textContent = sg(pl); c.className = 'c-pl ' + cls(pl);
-    const b = row.querySelector('.xbtn'), armed = tbArm[p.ticket] && Date.now() < tbArm[p.ticket];
-    const want = closing.has(p.ticket) ? 'Closing...' : armed ? 'Confirm close' : '✕ Close';
-    if (b.textContent !== want) { b.textContent = want; b.classList.toggle('arm', armed); }
+    const b = row.querySelector('.xbtn'), want = closing.has(p.ticket) ? 'Closing...' : '✕ Close';
+    if (b.textContent !== want) { b.textContent = want; b.classList.toggle('arm', closing.has(p.ticket)); }
   }
   const ca = tbArm.all && Date.now() < tbArm.all;
   $('tb_closeall').textContent = ca ? `Confirm: close all ${all.length}` : 'Close all'; $('tb_closeall').classList.toggle('arm', !!ca);
@@ -3417,8 +3415,7 @@ document.querySelectorAll('#tradebar [data-tab]').forEach(b => b.onclick = () =>
 $('tb_pos').addEventListener('click', e => {
   const b = e.target.closest('[data-close]'); if (!b) return;
   const t = +b.dataset.close; if (closing.has(t)) return;
-  if (tbArm[t] && Date.now() < tbArm[t]) { delete tbArm[t]; closeTickets([t]); }
-  else { tbArm[t] = Date.now() + 3000; renderBar(); }
+  closeTickets([t]);                                   // one click closes at market
 });
 $('tb_closeall').onclick = () => {
   if (tbArm.all && Date.now() < tbArm.all) { delete tbArm.all; closeTickets(null); }

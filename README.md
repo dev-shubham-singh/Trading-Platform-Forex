@@ -47,8 +47,8 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
 - MT5 must have **Algo Trading** switched on (toolbar button), or MT5 rejects the order.
 
 ### Trades panel (bottom, toggle with "Trades" in the footer)
-- **Positions**: every open position (all symbols) with live price and P/L, and a Close button (click twice).
-  "Close all" closes everything (click twice). Positions also show on the chart with live P/L and an x to close.
+- **Positions**: every open position (all symbols) with live price and P/L, and a Close button (one click closes).
+  "Close all" closes everything (click twice). Positions also show on the chart with live P/L and an x (one click closes).
 - Top line: balance, live equity, open P/L, today's P/L and account growth since your deposits.
 - **History & growth**: closed trades with profit, deposits, win rate and a balance curve ending at live equity.
 - Requotes are retried automatically on a fresh price (allowed slippage = 1x the spread); the same Confirm can never
