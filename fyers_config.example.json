@@ -1,0 +1,5 @@
+{
+  "client_id": "PUT-YOUR-APP-ID-HERE-100",
+  "secret_key": "PUT-YOUR-SECRET-HERE",
+  "redirect_uri": "http://127.0.0.1:8766/fyers"
+}

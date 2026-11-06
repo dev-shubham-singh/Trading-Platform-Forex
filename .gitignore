@@ -1,0 +1,18 @@
+# Private: your Fyers keys and daily login (never commit these)
+fyers_config.json
+fyers_token.json
+
+# Data the apps download or record
+fyers_ticks/
+fyers_symbols/
+fyers_logs/
+
+# Backtest output
+backtest_report.html
+backtest_trades.csv
+
+# Scratch / Python
+pt/
+__pycache__/
+*.pyc
+*.log

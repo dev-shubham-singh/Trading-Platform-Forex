@@ -1,0 +1,30 @@
+INDIA CHART (FYERS) - ONE-TIME SETUP
+====================================
+
+1. Create a Fyers API app (free)
+   - Open the Fyers API dashboard (myapi.fyers.in) and log in with your Fyers account.
+   - Create an app (a data-only / non-trading app is enough - no static IP needed, this chart places no orders).
+   - Redirect URL:  http://127.0.0.1:8766/fyers
+   - Permissions: tick the market data ones (historical data, quotes, market depth).
+   - After it is created you will see an App ID (looks like ABCD1234-100) and a Secret ID.
+
+2. Put them in fyers_config.json (this folder)
+   - Right-click fyers_config.json > Open with > Notepad.
+   - Replace PUT-YOUR-APP-ID-HERE-100 with your App ID and PUT-YOUR-SECRET-HERE with your Secret ID.
+   - Keep the quotes. Save. Never share this file.
+
+3. Double-click start_india_chart.bat
+   - The browser opens a "Log in to Fyers" page. Click the button and log in (once per day;
+     the Fyers login expires every morning at 6:30 AM).
+   - If after logging in the browser shows an error page, copy the whole address from the
+     address bar (it contains auth_code=) and paste it into the box on the login page.
+
+USING IT
+- Symbol box: type any name - "nifty", "banknifty fut", "nifty 24500 ce", "sbin", "goldm", "crudeoil".
+- 1m, 5m, 15m, 1h, 1d and custom minute intervals have full history straight away.
+- 15s / other second charts, tick charts, Renko and Kagi are built from ticks this app records.
+  Keep it running during market hours; history grows every day (fyers_ticks folder).
+- Every symbol you open is added to fyers_watchlist.txt and recorded from then on.
+  Delete lines from that file to stop recording a symbol (free plan: 100 live symbols max).
+- Times are India time. 1h / 4h candles, pivots and candle high/low start at 9:15 (MCX 9:00).
+- The gold chart (start_gold_chart.bat) still works as before; both can run at the same time.

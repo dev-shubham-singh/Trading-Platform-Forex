@@ -1,0 +1,2061 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MT5 Chart</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>window.LightweightCharts || document.write('<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"><\/script>');</script>
+<style>
+  :root { --bg:#131722; --panel:#1e222d; --line:#2a2e39; --text:#d1d4dc; --muted:#787b86;
+          --up:#26a69a; --down:#ef5350; --accent:#2962ff; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+               font:13px -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  body { display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:12px; padding:6px 12px;
+           border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .sym { font-weight:600; font-size:15px; }
+  .sym small { color:var(--muted); font-weight:400; margin-left:6px; }
+  .tfs { display:flex; gap:2px; }
+  button { font:inherit; }
+  .tfs button, .tool { background:transparent; color:var(--text); border:0; border-radius:4px;
+           padding:5px 9px; cursor:pointer; }
+  .tfs button:hover, .tool:hover { background:var(--panel); }
+  .tfs button.on, .tool.on { color:var(--accent); background:rgba(41,98,255,.12); }
+  .sep { width:1px; height:20px; background:var(--line); }
+  .symbtn { font-weight:600; font-size:15px; display:flex; align-items:center; gap:6px; }
+  .symbtn small { color:var(--muted); font-weight:400; font-size:12px; max-width:180px; overflow:hidden;
+                  text-overflow:ellipsis; white-space:nowrap; }
+  header select, header input { background:var(--bg); color:var(--text); border:1px solid var(--line);
+                  border-radius:4px; padding:4px 6px; font:inherit; }
+  header input:focus, header select:focus { outline:none; border-color:var(--accent); }
+  #ivin { width:92px; } #boxin { width:84px; }
+  #ivin.bad { border-color:var(--down); }
+  .pop { position:absolute; z-index:30; background:var(--panel); border:1px solid var(--line); border-radius:6px;
+         box-shadow:0 8px 24px rgba(0,0,0,.45); display:none; }
+  #sympop { width:min(420px, calc(100vw - 24px)); padding:8px; }
+  #symq { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:4px;
+          padding:6px 8px; font:inherit; }
+  #symlist { max-height:380px; overflow-y:auto; margin-top:6px; }
+  .symrow { display:flex; gap:10px; align-items:baseline; padding:6px 8px; border-radius:4px; cursor:pointer; }
+  .symrow:hover, .symrow.on { background:rgba(41,98,255,.15); }
+  .symrow b { font-weight:600; min-width:110px; }
+  .symrow span { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .symhead { color:var(--muted); font-size:11px; padding:8px 8px 4px; text-transform:uppercase; letter-spacing:.04em; }
+  .quote { margin-left:auto; display:flex; gap:14px; align-items:center; color:var(--muted); }
+  .quote b { color:var(--text); font-weight:500; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); display:inline-block; }
+  .dot.live { background:var(--up); }
+  #main { flex:1; display:flex; min-height:0; }
+  #tools { width:46px; border-right:1px solid var(--line); display:flex; flex-direction:column;
+           align-items:center; gap:4px; padding:8px 0; overflow-y:auto; }
+  #tools button { width:34px; height:32px; display:flex; align-items:center; justify-content:center;
+                  background:transparent; border:0; border-radius:4px; color:var(--text); cursor:pointer; }
+  #tools button:hover { background:var(--panel); }
+  #tools button.on { color:var(--accent); background:rgba(41,98,255,.15); }
+  #tools .hr { width:28px; height:1px; background:var(--line); margin:4px 0; }
+  .sw { width:18px; height:18px; border-radius:50%; border:2px solid transparent; cursor:pointer; margin:1px 0; }
+  .sw.on { border-color:#fff; }
+  #custom { width:22px; height:22px; padding:0; border:0; background:none; cursor:pointer; }
+  #tools .wbtn { font-size:11px; height:24px; }
+  #wrap { position:relative; flex:1; min-width:0; }
+  #chart { position:absolute; inset:0; }
+  #overlay { position:absolute; left:0; top:0; pointer-events:none; z-index:2; }
+  #legend { position:absolute; left:12px; top:8px; z-index:3; pointer-events:none;
+            font-size:12px; color:var(--muted); line-height:1.6; }
+  #legend .t { color:var(--text); font-weight:500; margin-right:8px; }
+  #legend span { margin-right:8px; }
+  #msg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+         color:var(--muted); z-index:4; pointer-events:none; }
+  #hint { position:absolute; left:50%; bottom:40px; transform:translateX(-50%); z-index:4;
+          background:var(--panel); border:1px solid var(--line); padding:4px 10px; border-radius:4px;
+          color:var(--muted); font-size:12px; pointer-events:none; display:none; }
+  #panel { position:absolute; z-index:20; background:var(--panel); border:1px solid var(--line);
+           border-radius:6px; padding:12px; width:min(560px, calc(100vw - 24px)); display:none;
+           box-shadow:0 8px 24px rgba(0,0,0,.45); }
+  #panel .ph { display:flex; justify-content:space-between; align-items:center; font-weight:600; margin-bottom:10px; }
+  #panel .add { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:10px; color:var(--muted); }
+  #panel .add button, #panel .x { background:var(--bg); color:var(--text); border:1px solid var(--line);
+           border-radius:4px; padding:4px 10px; cursor:pointer; }
+  #panel .add button:hover { border-color:var(--accent); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:7px 0; border-top:1px solid var(--line); }
+  .row b { width:52px; }
+  .row label { color:var(--muted); display:flex; gap:4px; align-items:center; }
+  .row input[type=number] { width:58px; background:var(--bg); color:var(--text); border:1px solid var(--line);
+           border-radius:4px; padding:3px 5px; }
+  .row select { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:4px; padding:3px; }
+  .row input[type=color] { width:26px; height:22px; padding:0; border:0; background:none; }
+  .row .x { margin-left:auto; padding:2px 8px; }
+  .note { color:var(--muted); font-size:11px; margin-top:8px; }
+  .empty { color:var(--muted); padding:8px 0; border-top:1px solid var(--line); }
+  footer { padding:4px 12px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
+</style>
+</head>
+<body>
+<header>
+  <button class="tool symbtn" id="symbtn" title="Change symbol"><span id="symname">-</span><small id="symdesc"></small> &#9662;</button>
+  <div class="sep"></div>
+  <select id="ctype" title="Chart type">
+    <option value="ha">Heikin Ashi</option><option value="candle">Candles</option>
+    <option value="renko">Renko</option><option value="kagi">Kagi</option>
+  </select>
+  <div class="tfs" id="tfs"></div>
+  <input id="ivin" title="Custom interval: 20s, 7m, 2h, 1d, or ticks like 100t. Press Enter." placeholder="20s, 7m, 100t">
+  <label id="boxwrap" style="display:none;color:var(--muted)"><span id="boxlbl">Brick</span>
+    <input id="boxin" type="number" min="0" step="any" title="Price units. Press Enter."></label>
+  <div class="sep"></div>
+  <button class="tool" id="indbtn">&#402;x Indicators</button>
+  <button class="tool" id="invbtn" title="Invert price scale (Alt+I)">Invert</button>
+  <button class="tool" id="fit" title="Show all history">Fit all</button>
+  <button class="tool" id="latest" title="Jump to the newest candle">Latest &rarr;</button>
+  <div class="quote">
+    <span id="bias" style="display:none;padding:3px 10px;border-radius:4px;font-weight:600"></span>
+    <span>Bid <b id="bid">-</b></span>
+    <span>Ask <b id="ask">-</b></span>
+    <span>Spread <b id="spr">-</b></span>
+    <span><span id="cdl">Closes in</span> <b id="cd">-</b></span>
+    <span class="dot" id="dot" title="Live"></span>
+  </div>
+</header>
+<div id="main">
+  <div id="tools">
+    <button data-tool="cursor" class="on" title="Cursor (Esc)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 3l6 17 2.5-7L20 10.5z"/></svg></button>
+    <button data-tool="trend" title="Trend line">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20L20 4"/><circle cx="4" cy="20" r="2"/><circle cx="20" cy="4" r="2"/></svg></button>
+    <button data-tool="hline" title="Horizontal line">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12h20"/></svg></button>
+    <button data-tool="rect" title="Box (rectangle)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="6" width="16" height="12" rx="1"/></svg></button>
+    <div class="hr"></div>
+    <div id="swatches"></div>
+    <input type="color" id="custom" title="Custom color" value="#2962ff">
+    <div class="hr"></div>
+    <button class="wbtn" data-w="1" title="Thin">1px</button>
+    <button class="wbtn on" data-w="2" title="Medium">2px</button>
+    <button class="wbtn" data-w="3" title="Thick">3px</button>
+    <div class="hr"></div>
+    <button id="del" title="Delete selected (Delete key)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></button>
+    <button id="clear" title="Remove all drawings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5l14 14M19 5L5 19"/></svg></button>
+  </div>
+  <div id="wrap">
+    <div id="chart"></div>
+    <canvas id="overlay"></canvas>
+    <div id="legend"></div>
+    <div id="msg">Loading candles from MT5...</div>
+    <div id="hint"></div>
+  </div>
+</div>
+<div id="sympop" class="pop"><input id="symq" placeholder="Search symbols" autocomplete="off"><div id="symlist"></div></div>
+<div id="panel">
+  <div class="ph">Indicators <button class="x" id="pclose">Close</button></div>
+  <div class="add">Add:
+    <button data-add="ema">EMA</button>
+    <button data-add="smma">SMMA</button>
+    <button data-add="sma">SMA</button>
+    <button data-add="bb">Bollinger Bands</button>
+    <button data-add="bos">HA BOS bias</button>
+    <button data-add="stretch">Stretch reversal</button>
+    <button data-add="pivot">Pivot points</button>
+    <button data-add="hl">Candle high/low sweeps</button>
+    <button data-add="macd" class="mt5only">MACD + doji</button>
+    <button data-add="vol" class="mt5only">Volume</button>
+    <button data-add="hdoji" class="mt5only">Doji boxes (5m, 15m, 1h...)</button>
+  </div>
+  <div id="ilist"></div>
+  <div class="note">Source "HA close" calculates on Heikin Ashi values (TradingView's default on an HA chart).
+    "Real close" uses actual market prices. Settings are saved automatically.</div>
+</div>
+<footer>Scroll to zoom &middot; drag to pan &middot; click a drawing to select, drag to move, drag its dots to resize &middot;
+  Delete removes it &middot; times are broker server time &middot; blue dashed line = real bid</footer>
+<script>
+if (!window.LightweightCharts) {
+  document.getElementById('msg').textContent = 'Could not load the chart library. Check your internet connection and refresh.';
+  throw new Error('lightweight-charts not loaded');
+}
+const $ = id => document.getElementById(id);
+const PRESETS = ['100t', '5s', '15s', '30s', '1m', '5m', '15m', '1h', '4h', '1d'];
+let digits = 2, symbol = '', tf = '15s', tfSec = 15, raw = [], ha = [], reqId = 0;
+let SRC = 'MT5', anchor = 0;           // data source name; session start (seconds after midnight) for period alignment
+let ctype = 'ha', kind = 'time', ivN = 15, box = 1, tickCnt = 0, kagiSegs = [], symMeta = null;
+// raw rows: [id, open, high, low, close, real time in seconds]; id = time for time charts, a counter otherwise
+function parseIv(s) {
+  const m = String(s).trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(t|s|m|h|d|w)$/);
+  if (!m) return null;
+  const v = Number(m[1]), mult = { s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[m[2]];
+  if (m[2] === 't') return Number.isInteger(v) && v >= 1 ? { kind: 'tick', n: v, label: v + 't' } : null;
+  const sec = v * mult;
+  return Number.isInteger(sec) && sec >= 1 ? { kind: 'time', n: sec, label: m[1] + m[2] } : null;
+}
+function ivLabel() {
+  return ctype === 'renko' ? `Renko ${fmt(box)}` : ctype === 'kagi' ? `Kagi ${fmt(box)}` : tf;
+}
+function typeLabel() { return { ha: 'Heikin Ashi', candle: 'Candles', renko: 'Renko', kagi: 'Kagi' }[ctype]; }
+function modeLabel() { return ctype === 'renko' || ctype === 'kagi' ? ivLabel() : `${tf} · ${typeLabel()}`; }
+let status = null, statusAt = 0, lastOk = 0, polling = false, lastClosedCount = 0;
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+};
+
+/* ---------------- chart ---------------- */
+const chart = LightweightCharts.createChart($('chart'), {
+  autoSize: true,
+  layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc', fontSize: 12 },
+  grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.08, bottom: 0.08 } },
+  timeScale: { borderColor: '#2a2e39', timeVisible: true, secondsVisible: true, rightOffset: 10,
+               barSpacing: 8, minBarSpacing: 0.3,
+               tickMarkFormatter: (t, type) => axisLabel(t, type) },
+  localization: { timeFormatter: t => fullTime(realOf(t)) },
+});
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function realOf(id) {                     // chart time (id) -> real time in seconds
+  if (kind === 'time') return id;
+  const i = idxOfTime(id);
+  return i == null ? id : raw[i][5];
+}
+const p2 = n => String(n).padStart(2, '0');
+function fullTime(sec) {
+  const d = new Date(sec * 1000);
+  return `${p2(d.getUTCDate())} ${MON[d.getUTCMonth()]} '${String(d.getUTCFullYear()).slice(2)} ` +
+         `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}`;
+}
+function axisLabel(t, type) {
+  const d = new Date(realOf(t) * 1000);
+  const hm = `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`;
+  if (kind !== 'time') return `${hm}:${p2(d.getUTCSeconds())}`;
+  if (type === 0) return String(d.getUTCFullYear());
+  if (type === 1) return MON[d.getUTCMonth()];
+  if (type === 2) return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}`;
+  return type === 4 ? `${hm}:${p2(d.getUTCSeconds())}` : hm;
+}
+const ts = chart.timeScale();
+const series = chart.addCandlestickSeries({
+  upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+  wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+  priceLineVisible: false, lastValueVisible: false,
+});
+const bidLine = series.createPriceLine({ price: 0, color: '#2962ff', lineWidth: 1,
+  lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Bid' });
+
+function haFrom(i) {
+  i = Math.max(0, i);
+  for (let k = i; k < raw.length; k++) {
+    const [t, o, h, l, c] = raw[k];
+    const hc = (o + h + l + c) / 4;
+    const ho = k > 0 ? (ha[k - 1].open + ha[k - 1].close) / 2 : (o + c) / 2;
+    ha[k] = { time: t, open: ho, high: Math.max(h, ho, hc), low: Math.min(l, ho, hc), close: hc };
+  }
+  ha.length = raw.length;
+}
+
+const fmt = v => (v == null || isNaN(v) ? '-' : Number(v).toFixed(digits));
+
+function buildFrom(i) {                   // raw -> the bars the chart shows (and indicators use)
+  if (ctype === 'ha') haFrom(i);
+  else {
+    for (let k = Math.max(0, i); k < raw.length; k++)
+      ha[k] = { time: raw[k][0], open: raw[k][1], high: raw[k][2], low: raw[k][3], close: raw[k][4] };
+    ha.length = raw.length;
+  }
+  if (ctype === 'kagi') buildKagi();
+}
+// Kagi: thick (yang) after price rises above the previous shoulder, thin (yin) after it falls below the previous waist
+function buildKagi() {
+  kagiSegs = [];
+  let yang = raw.length ? raw[0][4] >= raw[0][1] : true, peak = null, trough = null;
+  for (let i = 0; i < raw.length; i++) {
+    const o = raw[i][1], c = raw[i][4], up = c >= o, segs = [], conn = yang;
+    if (up) {
+      if (!yang && peak != null && c > peak) { segs.push([o, peak, false], [peak, c, true]); yang = true; }
+      else segs.push([o, c, yang]);
+      peak = c;
+    } else {
+      if (yang && trough != null && c < trough) { segs.push([o, trough, true], [trough, c, false]); yang = false; }
+      else segs.push([o, c, yang]);
+      trough = c;
+    }
+    kagiSegs.push({ segs, conn });
+  }
+}
+function styleSeries() {
+  const clear = 'rgba(0,0,0,0)', k = ctype === 'kagi';
+  series.applyOptions({ upColor: k ? clear : '#26a69a', downColor: k ? clear : '#ef5350',
+                        wickUpColor: k ? clear : '#26a69a', wickDownColor: k ? clear : '#ef5350' });
+}
+
+/* ---------------- indicators ---------------- */
+const DOJI_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h'];
+const IND_DEFAULTS = {
+  ema: { len: 21, color: '#f7c948' }, smma: { len: 50, color: '#e040fb' },
+  sma: { len: 20, color: '#26c6da' }, bb: { len: 20, mult: 2, color: '#2962ff' },
+  bos: { level: 'wick', show: 'flips', boxes: true, trend: true, sellColor: '#ef5350', buyColor: '#26a69a' },
+  pivot: { iv: '15m', ptype: 'traditional', nlev: 3, labels: true, prices: true, history: true, fit: true,
+           cP: '#f7c948', cR: '#ef5350', cS: '#26a69a', width: 1 },
+  macd: { fast: 12, slow: 26, sig: 9, src: 'ha', doji: 'ha', cDoji: '#f7c948', cMacd: '#2962ff', cSig: '#ff6d00',
+          cUp: '#26a69a', cUp2: '#b2dfdb', cDn: '#ff5252', cDn2: '#ffcdd2' },
+  vol: { by: 'real', cUp: '#26a69a', cDn: '#ef5350' },
+  hdoji: { doji: 'ha', last: '3', alpha: '0.12', border: 1, forming: true, labels: true, iv: '', on_custom: false, c_custom: '#ffffff',
+           on_1m: false, c_1m: '#b0bec5', on_3m: false, c_3m: '#80deea', on_5m: true, c_5m: '#ffd54f',
+           on_15m: true, c_15m: '#ce93d8', on_30m: false, c_30m: '#a5d6a7', on_1h: true, c_1h: '#4fc3f7',
+           on_4h: false, c_4h: '#ffb74d' },
+  hl: { iv: '1h', ext: 24, show: 'sweeps', fit: true, cH: '#ff9800', cL: '#29b6f6', width: 2 },
+  stretch: { fast: 9, slow: 15, base: 50, k: 4, look: 40, need: 1, level: 'wick', trend: true, tpLook: 300,
+             trade: 'limit', entry: 'close', ext: 0.5, win: 5, rr: 2, be: 0.3, hold: 10, stall: true, comm: 0.07,
+             pull: 0.2, limValid: 1, brkExt: 0.2, brkValid: 2, useLim: true, useBrk: true,
+             lines: true, zones: true, c1: '#42a5f5', c2: '#81c784', c3: '#2e7d32',
+             sellColor: '#ef5350', buyColor: '#26a69a' },
+};
+let inds = store.get('gc_inds', []).map(x => {
+  x = Object.fromEntries(Object.entries(x).filter(([k, v]) => v === null || typeof v !== 'object'));   // drop old saved data
+  if (x.type === 'hdoji') {                                          // move the first version's strong colours to the lighter ones
+    const OLD = { c_5m: '#ffd600', c_15m: '#e040fb', c_30m: '#69f0ae', c_1h: '#40c4ff', c_4h: '#ff9100' };
+    for (const k in OLD) if (x[k] === OLD[k]) delete x[k];
+    if (x.alpha === '0.2' && x.border === 2) { delete x.alpha; delete x.border; }
+  }
+  if (x.type === 'hdoji' && !('on_5m' in x)) {                       // older single-timeframe doji indicator
+    if (DOJI_TFS.includes(x.iv)) { x['on_' + x.iv] = true; x.iv = ''; } else if (x.iv) x.on_custom = true;
+  }
+  return { ...(IND_DEFAULTS[x.type] || {}), ...x, series: [], vals: null, res: null };
+});
+
+/* ---- HA BOS bias: two pullback cycles, then a close beyond both ----
+   SELL: green run -> red cycle 1 -> green run -> red cycle 2 -> green, then a candle CLOSES below
+         the low of both red cycles. BUY is the mirror (two green cycles, close above both highs).
+   A cycle is one or more consecutive candles of the pullback colour; it counts once the trend
+   colour returns. Only the most recent two finished cycles are used. Closed candles only.     */
+function bosCalc(bars, n, level, trend = true) {
+  // trend = true: sell needs red cycle 2 above cycle 1 (higher lows, i.e. an uptrend being broken);
+  //               buy needs green cycle 2 below cycle 1 (lower highs, a downtrend being broken).
+  const sig = [];
+  const st = { sell: { cyc: [], cur: null, skip: false }, buy: { cyc: [], cur: null, skip: false } };
+  const finish = (T, side) => {
+    const c = T.cur; T.cur = null;
+    if (side === 'sell') { c.lvl = level === 'body' ? c.blo : c.lo; c.top = level === 'body' ? c.bhi : c.hi; c.bot = c.lvl; }
+    else { c.lvl = level === 'body' ? c.bhi : c.hi; c.bot = level === 'body' ? c.blo : c.lo; c.top = c.lvl; }
+    T.cyc.push(c); if (T.cyc.length > 2) T.cyc.shift();
+  };
+  const track = (T, isPullback, b, i, side) => {
+    if (isPullback) {
+      if (T.skip) return;                          // the breakout run itself is not a pullback
+      if (!T.cur) T.cur = { s: i, e: i, hi: -Infinity, lo: Infinity, bhi: -Infinity, blo: Infinity };
+      const c = T.cur; c.e = i;
+      c.hi = Math.max(c.hi, b.high); c.lo = Math.min(c.lo, b.low);
+      c.bhi = Math.max(c.bhi, b.open, b.close); c.blo = Math.min(c.blo, b.open, b.close);
+    } else {
+      T.skip = false;
+      if (T.cur) finish(T, side);
+    }
+  };
+  for (let i = 0; i < n; i++) {
+    const b = bars[i], green = b.close >= b.open;
+    const S = st.sell, B = st.buy;
+    if (S.cyc.length === 2 && (!trend || S.cyc[1].lvl > S.cyc[0].lvl)) {
+      const lvl = Math.min(S.cyc[0].lvl, S.cyc[1].lvl);
+      if (b.close < lvl) { sig.push({ idx: i, side: 'sell', level: lvl, cycles: S.cyc }); S.cyc = []; S.cur = null; S.skip = true; }
+    }
+    if (B.cyc.length === 2 && (!trend || B.cyc[1].lvl < B.cyc[0].lvl)) {
+      const lvl = Math.max(B.cyc[0].lvl, B.cyc[1].lvl);
+      if (b.close > lvl) { sig.push({ idx: i, side: 'buy', level: lvl, cycles: B.cyc }); B.cyc = []; B.cur = null; B.skip = true; }
+    }
+    track(S, !green, b, i, 'sell');
+    track(B, green, b, i, 'buy');
+  }
+  let prev = null, since = null;
+  sig.forEach(s => { s.flip = s.side !== prev; if (s.flip) since = s.idx; prev = s.side; });
+  return { sig, bias: prev, since };
+}
+/* ---- Stretch reversal ----
+   SELL: EMA fast & slow both above SMMA base by >= k ATR (14, Heikin Ashi) at some candle within the
+   last `look` candles (the stretch), then a retracement BOS: `need` red pullback cycle(s), the trend
+   colour returns, and a candle CLOSES below the pullback low. Stop = signal candle high. Target =
+   scanning left from before the pullback, the low of the first red candle that is below the signal
+   close (the mitigation point); the signal close used here is the real close, not the HA close. BUY is the mirror image. A broken pullback is used up either way. */
+function trArr(bars) {
+  const o = new Array(bars.length);
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i];
+    o[i] = i ? Math.max(b.high - b.low, Math.abs(b.high - bars[i - 1].close), Math.abs(b.low - bars[i - 1].close))
+             : b.high - b.low;
+  }
+  return o;
+}
+function stretchLines(bars, o) {
+  const c = bars.map(b => b.close);
+  return [ema(c, o.fast), ema(c, o.slow), smma(c, o.base)];
+}
+function stretchCalc(bars, n, o, ref) {   // ref: real close prices (the target must be beyond the real price)
+  const [e1, e2, s] = stretchLines(bars, o), atr = smma(trArr(bars), 14);
+  const up = new Array(bars.length).fill(NaN), dn = new Array(bars.length).fill(NaN);
+  for (let i = 0; i < bars.length; i++) {
+    if (isNaN(e1[i]) || isNaN(e2[i]) || isNaN(s[i]) || !(atr[i] > 0)) continue;
+    up[i] = (Math.min(e1[i], e2[i]) - s[i]) / atr[i];
+    dn[i] = (s[i] - Math.max(e1[i], e2[i])) / atr[i];
+  }
+  const need = Number(o.need) === 2 ? 2 : 1, sig = [];
+  const st = { sell: { cyc: [], cur: null, skip: false }, buy: { cyc: [], cur: null, skip: false } };
+  const finish = (T, side) => {
+    const c = T.cur; T.cur = null;
+    if (side === 'sell') { c.lvl = o.level === 'body' ? c.blo : c.lo; c.top = o.level === 'body' ? c.bhi : c.hi; c.bot = c.lvl; }
+    else { c.lvl = o.level === 'body' ? c.bhi : c.hi; c.bot = o.level === 'body' ? c.blo : c.lo; c.top = c.lvl; }
+    T.cyc.push(c); if (T.cyc.length > need) T.cyc.shift();
+  };
+  const track = (T, isPullback, b, i, side) => {
+    if (isPullback) {
+      if (T.skip) return;
+      if (!T.cur) T.cur = { s: i, e: i, hi: -Infinity, lo: Infinity, bhi: -Infinity, blo: Infinity };
+      const c = T.cur; c.e = i;
+      c.hi = Math.max(c.hi, b.high); c.lo = Math.min(c.lo, b.low);
+      c.bhi = Math.max(c.bhi, b.open, b.close); c.blo = Math.min(c.blo, b.open, b.close);
+    } else {
+      T.skip = false;
+      if (T.cur) finish(T, side);
+    }
+  };
+  const findTp = (side, from, close) => {
+    for (let j = from; j >= 0 && j >= from - o.tpLook; j--) {
+      const b = bars[j];
+      if (side === 'sell' ? (b.close < b.open && b.low < close) : (b.close >= b.open && b.high > close))
+        return { price: side === 'sell' ? b.low : b.high, idx: j };
+    }
+    return null;
+  };
+  let lastUp = -Infinity, lastDn = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const b = bars[i], green = b.close >= b.open;
+    if (up[i] >= o.k) lastUp = i;
+    if (dn[i] >= o.k) lastDn = i;
+    for (const side of ['sell', 'buy']) {
+      const T = st[side];
+      if (T.cyc.length < need) continue;
+      if (need === 2 && o.trend && !(side === 'sell' ? T.cyc[1].lvl > T.cyc[0].lvl : T.cyc[1].lvl < T.cyc[0].lvl)) continue;
+      const lvls = T.cyc.map(c => c.lvl);
+      const lvl = side === 'sell' ? Math.min(...lvls) : Math.max(...lvls);
+      if (side === 'sell' ? b.close < lvl : b.close > lvl) {
+        const last = side === 'sell' ? lastUp : lastDn;
+        if (i - last <= o.look) {
+          const tp = findTp(side, Math.min(...T.cyc.map(c => c.s)) - 1, ref ? ref[i] : b.close);
+          sig.push({ idx: i, side, level: lvl, cycles: T.cyc.slice(), sl: side === 'sell' ? b.high : b.low,
+                     tp: tp ? tp.price : null, tpIdx: tp ? tp.idx : null, gap: side === 'sell' ? up[last] : dn[last] });
+        }
+        T.cyc = []; T.cur = null; T.skip = true;
+      }
+    }
+    track(st.sell, !green, b, i, 'sell');
+    track(st.buy, green, b, i, 'buy');
+  }
+  return { sig, up, dn };
+}
+/* ---- Stretch momentum (chart view; the backtest replays real ticks) ----
+   The stretch candle is recorded, not traded. Within the next `win` candles, a candle that closes
+   (or, in touch mode, trades) `ext` x the stretch candle's length beyond its high (buy) / low (sell)
+   is the entry. Stop = stretch candle low (buy) / high (sell); target = rr x risk; break-even at
+   `be` x the entry candle's length, stop -> entry +/- comm; exit after `hold` candles, or when a HA
+   candle closes against the trade while price is between entry and target (stall).            */
+function momentumTrades(res, o, noBusy) {
+  const out = [], last = ha.length - 2;
+  let busy = -1;
+  for (const s of res.sig) {
+    const i = s.idx, buy = s.side === 'buy', b0 = ha[i], len = b0.high - b0.low;
+    const m = { side: s.side, idx: i, j: null, lvl: buy ? b0.high + o.ext * len : b0.low - o.ext * len,
+                sl: buy ? b0.low : b0.high };
+    out.push(m);
+    if (!noBusy && i < busy) { m.skip = 'busy'; continue; }
+    for (let j = i + 1; j <= Math.min(i + o.win, last); j++) {
+      const hit = o.entry === 'touch' ? (buy ? raw[j][2] >= m.lvl : raw[j][3] <= m.lvl)
+                                      : (buy ? ha[j].close >= m.lvl : ha[j].close <= m.lvl);
+      if (hit) { m.j = j; break; }
+    }
+    if (m.j == null) continue;
+    const j = m.j;
+    m.entry = o.entry === 'touch' ? m.lvl : raw[j][4];
+    if (buy ? m.entry <= m.sl : m.entry >= m.sl) { m.j = null; continue; }
+    const risk = Math.abs(m.entry - m.sl), x = ha[j].high - ha[j].low;
+    m.tp = buy ? m.entry + o.rr * risk : m.entry - o.rr * risk;
+    const beStop = buy ? m.entry + o.comm : m.entry - o.comm;
+    m.beNeed = buy ? Math.max(m.entry + o.be * x, beStop) : Math.min(m.entry - o.be * x, beStop);
+    let stop = m.sl; m.be = false; m.outcome = null; m.end = Math.min(j + o.hold, raw.length - 1);
+    for (let k = j + 1; k <= Math.min(j + o.hold, raw.length - 1); k++) {
+      const h = raw[k][2], l = raw[k][3], c = raw[k][4];
+      if (buy ? l <= stop : h >= stop) { m.outcome = m.be ? 'BE' : 'SL'; m.end = k; break; }
+      if (buy ? h >= m.tp : l <= m.tp) { m.outcome = 'TP'; m.end = k; break; }
+      if (!m.be && (buy ? h >= m.beNeed : l <= m.beNeed)) { m.be = true; stop = beStop; }
+      if (k > last) break;
+      const against = buy ? ha[k].close < ha[k].open : ha[k].close >= ha[k].open;
+      if (o.stall && against && (buy ? c > m.entry && c < m.tp : c < m.entry && c > m.tp)) { m.outcome = 'STALL'; m.end = k; break; }
+      if (k === j + o.hold) { m.outcome = 'TIME'; m.end = k; }
+    }
+    busy = m.end;
+  }
+  return out;
+}
+/* ---- Stretch limit + breakout (chart view, candle-based; the backtest replays real ticks) ----
+   Trigger candle = first of the next `win` candles closing `ext` x stretch length beyond the stretch
+   candle. Then a limit `pull` x trigger length back from its high (buy) / low (sell), valid `limValid`
+   candles, and a stop order `brkExt` x length beyond it, valid `brkValid` candles; first fill wins.
+   Stop = trigger candle low (buy) / high (sell), target rr x risk, no break-even, time / stall exits. */
+function limitTrades(res, o, noBusy) {
+  const out = [], last = ha.length - 2;
+  let busy = -1;
+  for (const s of res.sig) {
+    const i = s.idx, buy = s.side === 'buy', b0 = ha[i], len = b0.high - b0.low;
+    const m = { side: s.side, idx: i, a: null, j: null, lvl: buy ? b0.high + o.ext * len : b0.low - o.ext * len };
+    out.push(m);
+    if (!noBusy && i < busy) continue;
+    for (let a = i + 1; a <= Math.min(i + o.win, last); a++)
+      if (buy ? ha[a].close >= m.lvl : ha[a].close <= m.lvl) { m.a = a; break; }
+    if (m.a == null) continue;
+    const A = ha[m.a], al = A.high - A.low, ref = buy ? A.high : A.low;
+    m.lim = buy ? ref - o.pull * al : ref + o.pull * al;
+    m.brk = buy ? ref + o.brkExt * al : ref - o.brkExt * al;
+    m.sl = buy ? A.low : A.high;
+    for (let k = m.a + 1; k <= Math.min(m.a + Math.max(o.limValid, o.brkValid), raw.length - 1); k++) {
+      const op = raw[k][1], h = raw[k][2], l = raw[k][3];
+      const limHit = o.useLim && k <= m.a + o.limValid && (buy ? l <= m.lim : h >= m.lim);
+      const brkHit = o.useBrk && k <= m.a + o.brkValid && (buy ? h >= m.brk : l <= m.brk);
+      if (!limHit && !brkHit) continue;
+      const useLim = limHit && (!brkHit || Math.abs(op - m.lim) <= Math.abs(op - m.brk));   // nearer the open = first
+      m.j = k; m.fill = useLim ? 'limit' : 'breakout'; m.entry = useLim ? m.lim : m.brk;
+      break;
+    }
+    if (m.j == null) { m.void = true; continue; }
+    const j = m.j, risk = Math.abs(m.entry - m.sl);
+    m.tp = buy ? m.entry + o.rr * risk : m.entry - o.rr * risk;
+    m.outcome = null; m.end = Math.min(j + o.hold, raw.length - 1);
+    for (let k = j + 1; k <= Math.min(j + o.hold, raw.length - 1); k++) {
+      const h = raw[k][2], l = raw[k][3], c = raw[k][4];
+      if (buy ? l <= m.sl : h >= m.sl) { m.outcome = 'SL'; m.end = k; break; }
+      if (buy ? h >= m.tp : l <= m.tp) { m.outcome = 'TP'; m.end = k; break; }
+      if (k > last) break;
+      const against = buy ? ha[k].close < ha[k].open : ha[k].close >= ha[k].open;
+      if (o.stall && against && (buy ? c > m.entry && c < m.tp : c < m.entry && c > m.tp)) { m.outcome = 'STALL'; m.end = k; break; }
+      if (k === j + o.hold) { m.outcome = 'TIME'; m.end = k; }
+    }
+    busy = m.end;
+  }
+  return out;
+}
+/* ---- Pivot points ----
+   Each pivot period (e.g. 15m, aligned to the clock like candles) gets levels from the PREVIOUS period's
+   high, low and close (real prices, not Heikin Ashi). Formulas as in TradingView's Pivot Points Standard. */
+const PIVOT_TYPES = { traditional: 'Traditional', classic: 'Classic', fibonacci: 'Fibonacci', woodie: 'Woodie', camarilla: 'Camarilla' };
+function pivotLevels(type, H, L, C, O) {
+  const R = H - L;
+  if (type === 'fibonacci') {
+    const P = (H + L + C) / 3;
+    return { P, R1: P + 0.382 * R, S1: P - 0.382 * R, R2: P + 0.618 * R, S2: P - 0.618 * R, R3: P + R, S3: P - R };
+  }
+  if (type === 'woodie') {
+    const P = (H + L + 2 * O) / 4, R3 = H + 2 * (P - L), S3 = L - 2 * (H - P);
+    return { P, R1: 2 * P - L, S1: 2 * P - H, R2: P + R, S2: P - R, R3, S3, R4: R3 + R, S4: S3 - R };
+  }
+  if (type === 'camarilla') {
+    const P = (H + L + C) / 3, R4 = C + 1.1 * R / 2, R3 = C + 1.1 * R / 4, S4 = C - 1.1 * R / 2, S3 = C - 1.1 * R / 4;
+    return { P, R1: C + 1.1 * R / 12, S1: C - 1.1 * R / 12, R2: C + 1.1 * R / 6, S2: C - 1.1 * R / 6, R3, S3, R4, S4,
+             R5: R4 + 1.168 * (R4 - R3), S5: S4 - 1.168 * (S3 - S4) };
+  }
+  const P = (H + L + C) / 3;
+  if (type === 'classic')
+    return { P, R1: 2 * P - L, S1: 2 * P - H, R2: P + R, S2: P - R, R3: P + 2 * R, S3: P - 2 * R, R4: P + 3 * R, S4: P - 3 * R };
+  return { P, R1: 2 * P - L, S1: 2 * P - H, R2: P + R, S2: P - R,                       // traditional
+           R3: 2 * P + (H - 2 * L), S3: 2 * P - (2 * H - L), R4: 3 * P + (H - 3 * L), S4: 3 * P - (3 * H - L),
+           R5: 4 * P + (H - 4 * L), S5: 4 * P - (4 * H - L) };
+}
+// Start of the period holding time t. With a session start A (Indian markets), periods that don't divide a day
+// restart at the session open each day; with A = 0 (MT5) the plain clock grid is used, as before.
+function periodStart(t, T, A) {
+  if (!A || T >= 86400 || 86400 % T === 0) return Math.floor((t - A) / T) * T + A;
+  const d = Math.floor((t - A) / 86400) * 86400 + A;
+  return d + Math.floor((t - d) / T) * T;
+}
+function pivotCalc(rows, T, type, nlev, A = 0) {     // rows: [id, open, high, low, close, real time]; A = session start
+  const per = [];
+  for (const r of rows) {
+    const b = periodStart(r[5], T, A);
+    const p = per[per.length - 1];
+    if (!p || b > p.start) per.push({ start: b, o: r[1], h: r[2], l: r[3], c: r[4] });
+    else { if (r[2] > p.h) p.h = r[2]; if (r[3] < p.l) p.l = r[3]; p.c = r[4]; }
+  }
+  const out = [];
+  for (let k = 1; k < per.length; k++) {
+    if (k === 1 && rows[0][5] > per[0].start) continue;      // the first period is only partly loaded
+    const pr = per[k - 1], all = pivotLevels(type, pr.h, pr.l, pr.c, per[k].o);
+    const lv = Object.entries(all).filter(([name]) => name === 'P' || Number(name.slice(1)) <= nlev);
+    out.push({ start: per[k].start, end: per[k].start + T, lv, map: Object.fromEntries(lv) });
+  }
+  return out;
+}
+function pivotNames(ind) {                  // level names for this type, top to bottom: R3, R2, R1, P, S1, ...
+  const order = ['R5', 'R4', 'R3', 'R2', 'R1', 'P', 'S1', 'S2', 'S3', 'S4', 'S5'];
+  const have = pivotLevels(ind.ptype, 2, 1, 1.5, 1.5);
+  return order.filter(n => n in have && (n === 'P' || Number(n.slice(1)) <= ind.nlev));
+}
+function pivotColor(ind, n) { return n === 'P' ? ind.cP : n[0] === 'R' ? ind.cR : ind.cS; }
+function computePivots(ind) {
+  const iv = parseIv(ind.iv);
+  ind.piv = iv && iv.kind === 'time' && raw.length ? pivotCalc(raw, iv.n, ind.ptype, ind.nlev, anchor) : [];
+  ind.pivWarn = kind === 'time' && iv && iv.n < tfSec ? `pivot period ${ind.iv} is shorter than the chart interval ${tf}` : '';
+}
+// Each level is drawn by two line series (even / odd periods). The chart library joins every point of a
+// series to the next one, so each period's run is wrapped in two transparent points: one on the bar before
+// the period (lead-in) and one on the bar after it (lead-out). Whether the library colours a segment by its
+// left or its right point, the slanted join between periods is then transparent and only flat lines show.
+const PIVOT_CLEAR = 'rgba(0,0,0,0)';
+function fillPivots(ind, from) {
+  if (!ind.series.length || !raw.length) return;
+  const names = ind.pnames, piv = ind.piv || [], n = raw.length;
+  const firstShown = ind.history ? 0 : piv.length - 1;
+  const cur = piv.length - 1;
+  if (from > 0 && ind.pivCount === piv.length && cur >= 0) {        // live: extend the current period only
+    const par = cur % 2;
+    for (let i = Math.max(0, from); i < n; i++) {
+      const t = raw[i][5];
+      if (t < piv[cur].start || t >= piv[cur].end || ind.pivWarn) continue;
+      names.forEach((nm, j) => ind.series[j * 2 + par].update({ time: raw[i][0], value: piv[cur].map[nm], color: pivotColor(ind, nm) }));
+    }
+    return;
+  }
+  const data = ind.series.map(() => []);
+  if (!ind.pivWarn) {
+    const runs = [];                                      // [period index, first bar, last bar]
+    let k = 0;
+    for (let i = 0; i < n; i++) {
+      const t = raw[i][5];
+      while (k < piv.length && piv[k].end <= t) k++;
+      if (k >= piv.length || piv[k].start > t) continue;
+      const r = runs[runs.length - 1];
+      if (r && r[0] === k) r[2] = i; else runs.push([k, i, i]);
+    }
+    for (const [pk, a, b] of runs) {
+      if (pk < firstShown) continue;
+      const par = pk % 2;
+      names.forEach((nm, j) => {
+        const arr = data[j * 2 + par], v = piv[pk].map[nm], col = pivotColor(ind, nm);
+        const lastT = arr.length ? arr[arr.length - 1].time : -Infinity;
+        if (a > 0 && raw[a - 1][0] > lastT) arr.push({ time: raw[a - 1][0], value: v, color: PIVOT_CLEAR });
+        for (let i = a; i <= b; i++) arr.push({ time: raw[i][0], value: v, color: col });
+        if (b + 1 < n) arr.push({ time: raw[b + 1][0], value: v, color: PIVOT_CLEAR });
+      });
+    }
+  }
+  ind.series.forEach((s, j) => s.setData(data[j]));
+  ind.pivCount = piv.length;
+}
+function refreshPivots() {
+  inds.filter(i => i.type === 'pivot').forEach(ind => { computePivots(ind); fillPivots(ind, 0); });
+}
+function tailPivots(first) {                // live: extend the lines to new bars, redraw fully at a new period
+  inds.filter(i => i.type === 'pivot').forEach(ind => {
+    computePivots(ind);
+    fillPivots(ind, ind.piv.length !== ind.pivCount ? 0 : first);
+  });
+}
+/* ---- Candle high/low sweeps ----
+   Every finished candle of the chosen period (1h by default) gets two solid horizontal lines: its high and
+   its low. Each line starts at that candle and runs right until real price trades through it:
+     wick through and close back inside -> liquidity SWEEP (marker, line stops there)
+     close through                      -> BREAK (line stops; marker only when "Show" = sweeps + breaks)
+   Untouched lines stop after `ext` periods. Lines are drawn with 4 points each (transparent lead-in / lead-out,
+   see the pivot note above) and packed into as few line series ("lanes") as possible. */
+function hlCalc(ind) {
+  const iv = parseIv(ind.iv), n = raw.length;
+  ind.hlWarn = kind === 'time' && iv && iv.n <= tfSec ? `period ${ind.iv} must be longer than the chart interval ${tf}` : '';
+  ind.hl = []; ind.hlEv = [];
+  if (!iv || iv.kind !== 'time' || n < 2 || ind.hlWarn) return;
+  const T = iv.n, per = [];
+  for (let i = 0; i < n; i++) {
+    const r = raw[i], b = periodStart(r[5], T, anchor), p = per[per.length - 1];
+    if (!p || b > p.start) per.push({ start: b, a: i, b: i, h: r[2], l: r[3] });
+    else { p.b = i; if (r[2] > p.h) p.h = r[2]; if (r[3] < p.l) p.l = r[3]; }
+  }
+  const closed = n - 2;                                    // last finished chart bar (n-1 is still forming)
+  for (let k = 0; k < per.length - 1; k++) {               // the last period is still forming
+    const c = per[k];
+    if (k === 0 && raw[0][5] > c.start) continue;          // first period only partly loaded
+    const stopT = c.start + T * (1 + Math.max(1, ind.ext));
+    for (const side of ['H', 'L']) {
+      const v = side === 'H' ? c.h : c.l;
+      let j = c.b + 1, end = -1, ev = null;
+      for (; j <= closed && raw[j][5] < stopT; j++) {
+        const r = raw[j];
+        if (side === 'H' ? r[2] > v : r[3] < v) {
+          end = j; ev = { idx: j, side, v, k, type: (side === 'H' ? r[4] > v : r[4] < v) ? 'break' : 'sweep' };
+          break;
+        }
+      }
+      let active = false;
+      if (end < 0) {
+        if (j > closed && (j >= n || raw[j][5] < stopT)) { end = n - 1; active = true; }   // still live
+        else end = j - 1;                                                                   // expired
+      }
+      ind.hl.push({ a: c.a, b: end, v, side, active, start: c.start });
+      if (ev) ind.hlEv.push(ev);
+    }
+  }
+  ind.hl.sort((x, y) => x.a - y.a);
+  ind.hlEv.sort((x, y) => x.idx - y.idx);
+}
+const HL_CLEAR = 'rgba(0,0,0,0)';
+function fillHL(ind) {
+  const n = raw.length, lanes = [], laneEnd = [];
+  for (const g of ind.hl) {
+    let L = laneEnd.findIndex(e => g.a >= e + 3);
+    if (L < 0) { L = lanes.length; lanes.push([]); laneEnd.push(0); }
+    const arr = lanes[L], col = g.side === 'H' ? ind.cH : ind.cL;
+    if (g.a > 0) arr.push({ time: raw[g.a - 1][0], value: g.v, color: HL_CLEAR });
+    arr.push({ time: raw[g.a][0], value: g.v, color: col });
+    if (g.b > g.a) arr.push({ time: raw[g.b][0], value: g.v, color: col });
+    if (g.b + 1 < n) arr.push({ time: raw[g.b + 1][0], value: g.v, color: HL_CLEAR });
+    laneEnd[L] = g.active ? Infinity : g.b;
+    g.lane = L;
+  }
+  while (ind.series.length < lanes.length) ind.series.push(chart.addLineSeries({
+    color: ind.cH, lineWidth: ind.width || 2, lineStyle: LightweightCharts.LineStyle.Solid,
+    visible: ind.visible !== false, priceLineVisible: false, lastValueVisible: false,
+    crosshairMarkerVisible: false, title: '',
+    ...(ind.fit === false ? { autoscaleInfoProvider: () => null } : {}),
+  }));
+  ind.series.forEach((s, j) => s.setData(lanes[j] || []));
+  ind.hlN = n;
+}
+function tailHL(first) {                    // live: stretch the still-untouched lines to the new bars
+  inds.filter(i => i.type === 'hl' && i.hl && i.hlN).forEach(ind => {
+    for (const g of ind.hl) {
+      if (!g.active || !ind.series[g.lane]) continue;
+      const col = g.side === 'H' ? ind.cH : ind.cL;
+      for (let i = Math.max(first, ind.hlN - 1); i < raw.length; i++)
+        ind.series[g.lane].update({ time: raw[i][0], value: g.v, color: col });
+    }
+    ind.hlN = raw.length;
+  });
+}
+function gapAt(r, i) {
+  if (!r || i == null) return NaN;
+  if (r.up[i] > 0) return r.up[i];
+  if (r.dn[i] > 0) return -r.dn[i];
+  return isNaN(r.up[i]) ? NaN : 0;
+}
+// chart-only outcome: first real candle after the signal to touch the target or the stop (stop wins a tie)
+function stretchOutcome(s) {
+  s.end = Math.min(raw.length - 1, s.idx + 20); s.outcome = null;
+  if (s.tp == null) return;
+  for (let k = s.idx + 1; k < raw.length && k <= s.idx + 300; k++) {
+    const h = raw[k][2], l = raw[k][3];
+    const hitSl = s.side === 'sell' ? h >= s.sl : l <= s.sl;
+    const hitTp = s.side === 'sell' ? l <= s.tp : h >= s.tp;
+    if (hitSl || hitTp) { s.end = k; s.outcome = hitSl ? 'SL' : 'TP'; return; }
+    s.end = k;
+  }
+}
+function tstr(t) {                       // t = chart time (id)
+  const iso = new Date(realOf(t) * 1000).toISOString();
+  return kind === 'time' && tfSec >= 3600 ? iso.slice(5, 16).replace('T', ' ') : iso.slice(11, 19);
+}
+function refreshBos() {
+  refreshPivots();
+  const markers = [];
+  inds.filter(i => i.type === 'hdoji').forEach(hdojiCalc);
+  inds.filter(i => i.type === 'hl').forEach(ind => {
+    hlCalc(ind); fillHL(ind);
+    if (ind.visible === false) return;
+    ind.hlEv.forEach(e => {
+      if (e.type === 'break' && ind.show !== 'all') return;
+      const col = e.side === 'H' ? ind.cH : ind.cL, sw = e.type === 'sweep';
+      markers.push({ time: raw[e.idx][0], position: e.side === 'H' ? 'aboveBar' : 'belowBar',
+        shape: sw ? (e.side === 'H' ? 'arrowDown' : 'arrowUp') : 'circle', color: col,
+        text: `${ind.iv} ${e.side === 'H' ? 'high' : 'low'} ${sw ? 'sweep' : 'break'}` });
+    });
+  });
+  let shownBias = null;
+  inds.filter(i => i.type === 'bos').forEach(ind => {
+    ind.res = raw.length > 1 ? bosCalc(ha, ha.length - 1, ind.level, ind.trend !== false) : { sig: [], bias: null, since: null };
+    ind.res.shown = ind.show === 'all' ? ind.res.sig : ind.res.sig.filter(s => s.flip);
+    if (ind.visible === false) return;
+    if (!shownBias) shownBias = ind;
+    ind.res.shown.forEach(s => markers.push({
+      time: raw[s.idx][0], position: s.side === 'sell' ? 'aboveBar' : 'belowBar',
+      shape: s.side === 'sell' ? 'arrowDown' : 'arrowUp',
+      color: s.side === 'sell' ? ind.sellColor : ind.buyColor,
+      text: s.flip ? s.side.toUpperCase() : 'bos',
+    }));
+  });
+  inds.filter(i => i.type === 'stretch').forEach(ind => {
+    ind.res = raw.length > 1 ? stretchCalc(ha, ha.length - 1, ind, raw.map(r => r[4])) : null;
+    if (!ind.res || ind.visible === false) return;
+    if (ind.trade === 'momentum' || ind.trade === 'limit') {
+      ind.mom = ind.trade === 'limit' ? limitTrades(ind.res, ind) : momentumTrades(ind.res, ind);
+      ind.mom.forEach(m => {
+        const col = m.side === 'sell' ? ind.sellColor : ind.buyColor, pos = m.side === 'sell' ? 'aboveBar' : 'belowBar';
+        markers.push({ time: raw[m.idx][0], position: pos, shape: 'circle', color: col, text: 'stretch' });
+        if (m.a != null) markers.push({ time: raw[m.a][0], position: pos, shape: 'square', color: col,
+                                        text: m.void ? 'trigger (void)' : 'trigger' });
+        if (m.j != null) markers.push({ time: raw[m.j][0], position: pos,
+                                        shape: m.side === 'sell' ? 'arrowDown' : 'arrowUp', color: col,
+                                        text: m.side.toUpperCase() + (m.fill ? ' ' + m.fill : '') });
+      });
+      return;
+    }
+    ind.res.sig.forEach(s => {
+      stretchOutcome(s);
+      markers.push({
+        time: raw[s.idx][0], position: s.side === 'sell' ? 'aboveBar' : 'belowBar',
+        shape: s.side === 'sell' ? 'arrowDown' : 'arrowUp',
+        color: s.side === 'sell' ? ind.sellColor : ind.buyColor, text: 'stretch ' + s.side,
+      });
+    });
+  });
+  markers.sort((a, b) => a.time - b.time);
+  series.setMarkers(markers);
+  const el = $('bias');
+  if (!shownBias || !shownBias.res.bias) { el.style.display = shownBias ? 'inline-block' : 'none'; el.textContent = 'Bias: none yet'; el.style.background = 'var(--panel)'; el.style.color = 'var(--muted)'; return; }
+  const r = shownBias.res, sell = r.bias === 'sell';
+  el.style.display = 'inline-block';
+  el.textContent = `Bias: ${r.bias.toUpperCase()} since ${tstr(raw[r.since][0])}`;
+  el.style.background = sell ? shownBias.sellColor : shownBias.buyColor;
+  el.style.color = '#ffffff';
+}
+
+function sma(x, n) {
+  const o = new Array(x.length).fill(NaN); let s = 0;
+  for (let i = 0; i < x.length; i++) { s += x[i]; if (i >= n) s -= x[i - n]; if (i >= n - 1) o[i] = s / n; }
+  return o;
+}
+function seeded(x, n, step) {
+  const o = new Array(x.length).fill(NaN); let s = 0, prev = NaN;
+  for (let i = 0; i < x.length; i++) {
+    if (i < n) { s += x[i]; if (i === n - 1) { prev = s / n; o[i] = prev; } }
+    else { prev = step(prev, x[i]); o[i] = prev; }
+  }
+  return o;
+}
+const ema = (x, n) => { const k = 2 / (n + 1); return seeded(x, n, (p, v) => v * k + p * (1 - k)); };
+const smma = (x, n) => seeded(x, n, (p, v) => (p * (n - 1) + v) / n);
+function bands(x, n, m) {
+  const mid = sma(x, n), up = new Array(x.length).fill(NaN), lo = new Array(x.length).fill(NaN);
+  let s2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    s2 += x[i] * x[i]; if (i >= n) s2 -= x[i - n] * x[i - n];
+    if (i >= n - 1) { const sd = Math.sqrt(Math.max(0, s2 / n - mid[i] * mid[i])); up[i] = mid[i] + m * sd; lo[i] = mid[i] - m * sd; }
+  }
+  return [up, mid, lo];
+}
+function calc(ind) {
+  if (ind.type === 'stretch') return stretchLines(ha, ind);
+  const src = ind.src === 'real' ? raw.map(r => r[4]) : ha.map(b => b.close);
+  const n = Math.max(1, Math.floor(ind.len) || 1);
+  if (ind.type === 'ema') return [ema(src, n)];
+  if (ind.type === 'smma') return [smma(src, n)];
+  if (ind.type === 'sma') return [sma(src, n)];
+  return bands(src, n, Number(ind.mult) || 2);
+}
+/* ---- MACD (own pane under the price chart) and volume ----
+   MACD = EMA(fast) - EMA(slow), signal = EMA(MACD, sig), histogram = MACD - signal (TradingView colours).
+   Doji: both the upper and the lower wick are longer than the body - on Heikin Ashi candles (default) or on
+   normal candles. Every finished doji gets a dot on the MACD line. */
+function macdCalc(ind) {
+  const src = ind.src === 'real' ? raw.map(r => r[4]) : ha.map(b => b.close);
+  const f = ema(src, Math.max(1, ind.fast | 0)), sl = ema(src, Math.max(1, ind.slow | 0));
+  const m = src.map((_, i) => f[i] - sl[i]);
+  const first = m.findIndex(v => !isNaN(v));
+  const sg = new Array(m.length).fill(NaN);
+  if (first >= 0) ema(m.slice(first), Math.max(1, ind.sig | 0)).forEach((v, j) => { sg[first + j] = v; });
+  return [m.map((v, i) => v - sg[i]), m, sg];
+}
+function isDoji(b) {
+  const body = Math.abs(b.close - b.open);
+  return b.high - Math.max(b.open, b.close) > body && Math.min(b.open, b.close) - b.low > body;
+}
+function dojiAt(ind, i) {
+  if (ind.doji === 'off') return false;
+  const b = ind.doji === 'candle' ? { open: raw[i][1], high: raw[i][2], low: raw[i][3], close: raw[i][4] } : ha[i];
+  return !!b && isDoji(b);
+}
+function histColor(ind, h, i) {
+  const prev = i > 0 ? h[i - 1] : NaN;
+  if (h[i] >= 0) return isNaN(prev) || h[i] >= prev ? ind.cUp : ind.cUp2;
+  return isNaN(prev) || h[i] <= prev ? ind.cDn : ind.cDn2;
+}
+function volColor(ind, i) {
+  const up = ind.by === 'ha' ? ha[i] && ha[i].close >= ha[i].open : raw[i][4] >= raw[i][1];
+  return rgba(up ? ind.cUp : ind.cDn, 0.55);
+}
+function paneFmt() { const p = Math.min(8, digits + 2); return { type: 'price', precision: p, minMove: Math.pow(10, -p) }; }
+function macdMarkers(ind) {
+  if (!ind.series[1]) return;
+  const mk = [];
+  for (let i = 0; i < raw.length - 1; i++)                 // finished candles only
+    if (dojiAt(ind, i) && !isNaN(ind.vals[1][i])) mk.push({ time: raw[i][0], position: 'inBar', shape: 'circle', color: ind.cDoji, size: 0.6 });
+  ind.series[1].setMarkers(mk);
+  ind.dojiN = raw.length;
+}
+function fillPane(ind, first) {
+  const n = raw.length;
+  if (ind.type === 'vol') {
+    const s = ind.series[0]; if (!s) return;
+    if (first == null) s.setData(raw.map((r, i) => ({ time: r[0], value: r[6] || 0, color: volColor(ind, i) })));
+    else for (let i = first; i < n; i++) s.update({ time: raw[i][0], value: raw[i][6] || 0, color: volColor(ind, i) });
+    return;
+  }
+  ind.vals = macdCalc(ind);
+  const [h, m, sg] = ind.vals, fmt = paneFmt();
+  ind.series.forEach(s => s.applyOptions({ priceFormat: fmt }));
+  const pt = (arr, i, col) => col ? { time: raw[i][0], value: arr[i], color: col } : { time: raw[i][0], value: arr[i] };
+  if (first == null) {
+    const d = [[], [], []];
+    for (let i = 0; i < n; i++) {
+      if (!isNaN(h[i])) d[0].push(pt(h, i, histColor(ind, h, i)));
+      if (!isNaN(m[i])) d[1].push(pt(m, i));
+      if (!isNaN(sg[i])) d[2].push(pt(sg, i));
+    }
+    ind.series.forEach((s, j) => s.setData(d[j]));
+    macdMarkers(ind);
+  } else {
+    for (let i = first; i < n; i++) {
+      if (!isNaN(h[i])) ind.series[0].update(pt(h, i, histColor(ind, h, i)));
+      if (!isNaN(m[i])) ind.series[1].update(pt(m, i));
+      if (!isNaN(sg[i])) ind.series[2].update(pt(sg, i));
+    }
+    if (ind.dojiN !== n) macdMarkers(ind);
+  }
+}
+// Pane layout: MACD gets the bottom ~26% of the chart; volume sits at the bottom of the price area.
+const MACD_TOP = 0.74;
+function layoutPanes() {
+  const macd = inds.some(i => i.type === 'macd' && i.visible !== false && i.series.length);
+  const vol = inds.some(i => i.type === 'vol' && i.visible !== false && i.series.length);
+  const mainBottom = macd ? 1 - MACD_TOP + 0.04 : vol ? 0.2 : 0.08;
+  chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.08, bottom: mainBottom } });
+  if (inds.some(i => i.type === 'macd' && i.series.length))
+    chart.priceScale('macd').applyOptions({ scaleMargins: { top: MACD_TOP + 0.02, bottom: 0.03 } });
+  if (inds.some(i => i.type === 'vol' && i.series.length))
+    chart.priceScale('vol').applyOptions({ scaleMargins: macd ? { top: MACD_TOP - 0.17, bottom: 1 - MACD_TOP + 0.01 } : { top: 0.82, bottom: 0 } });
+}
+function drawPanes(pw, ph) {
+  const ind = inds.find(i => i.type === 'macd' && i.visible !== false && i.series.length);
+  if (!ind) return;
+  const y = Math.round(ph * MACD_TOP) + 0.5;
+  ctx.strokeStyle = '#2a2e39'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(pw, y); ctx.stroke();
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#868993';
+  ctx.fillText(`${label(ind)}${ind.doji !== 'off' ? `  ·  doji dots: ${ind.doji === 'candle' ? 'normal candles' : 'Heikin Ashi'}` : ''}`, 6, y + 14);
+}
+/* ---- Doji boxes for higher timeframes ----
+   For every ticked timeframe (5m, 15m, 1h, ...) candles of that length are built from the chart's own bars (real
+   prices), optionally turned into Heikin Ashi, and each doji (upper AND lower wick both longer than the body) is
+   drawn as a box over the chart candles that make it up - only the last N per timeframe. The candle still forming
+   is drawn dashed when it is a doji so far. */
+function dojiTfs(ind) {
+  const out = DOJI_TFS.filter(t => ind['on_' + t]).map(t => ({ iv: t, color: ind['c_' + t] }));
+  if (ind.on_custom && ind.iv && !out.some(o => o.iv === ind.iv)) out.push({ iv: ind.iv, color: ind.c_custom });
+  return out;
+}
+function hdojiCalc(ind) {
+  const n = raw.length;
+  ind.hd = []; ind.hdTf = [];
+  for (const tf of dojiTfs(ind)) {
+    const iv = parseIv(tf.iv), info = { iv: tf.iv, color: tf.color, all: [], warn: '' };
+    ind.hdTf.push(info);
+    if (!iv || iv.kind !== 'time') { info.warn = 'not a time length'; continue; }
+    if (kind === 'time' && iv.n <= tfSec) { info.warn = 'must be longer than the chart interval'; continue; }
+    const T = iv.n, per = [];
+    for (let i = 0; i < n; i++) {
+      const r = raw[i], st = periodStart(r[5], T, anchor), p = per[per.length - 1];
+      if (!p || st > p.start) per.push({ start: st, a: i, b: i, o: r[1], h: r[2], l: r[3], c: r[4] });
+      else { p.b = i; if (r[2] > p.h) p.h = r[2]; if (r[3] < p.l) p.l = r[3]; p.c = r[4]; }
+    }
+    let hO = NaN, hC = NaN;
+    per.forEach((p, k) => {
+      const c = (p.o + p.h + p.l + p.c) / 4, o = isNaN(hO) ? (p.o + p.c) / 2 : (hO + hC) / 2;
+      hO = o; hC = c;
+      if (k === 0 && raw[0][5] > p.start) return;             // first candle only partly loaded
+      const bar = ind.doji === 'candle' ? { open: p.o, high: p.h, low: p.l, close: p.c }
+        : { open: o, close: c, high: Math.max(p.h, o, c), low: Math.min(p.l, o, c) };
+      if (isDoji(bar)) info.all.push({ iv: tf.iv, color: tf.color, T, start: p.start, a: p.a, b: p.b, hi: bar.high, lo: bar.low,
+                                       forming: k === per.length - 1 });
+    });
+    const done = info.all.filter(d => !d.forming), cur = info.all.find(d => d.forming);
+    const keep = ind.last === 'all' ? done : done.slice(-Math.max(1, Number(ind.last) || 3));
+    info.shown = keep.concat(cur && ind.forming ? [cur] : []);
+    ind.hd.push(...info.shown);
+  }
+  ind.hd.sort((x, y) => y.T - x.T);                          // big timeframes first, small ones drawn on top
+}
+const hhmm = sec => { const d = new Date(sec * 1000); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
+function drawHDoji(pw, ph) {
+  const r = ts.getVisibleLogicalRange(); if (!r) return;
+  const bottom = inds.some(i => i.type === 'macd' && i.visible !== false && i.series.length) ? ph * MACD_TOP : ph;
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pw, bottom); ctx.clip();
+  ctx.font = '11px sans-serif'; ctx.textBaseline = 'middle';
+  const placed = [];                                            // label boxes drawn so far (to avoid overlaps)
+  inds.filter(i => i.type === 'hdoji' && i.visible !== false && i.hd).forEach(ind => {
+    const alpha = Math.min(0.8, Math.max(0, parseFloat(ind.alpha) || 0.2)), bw = Number(ind.border) || 2;
+    for (const d of ind.hd) {
+      if (d.b < r.from - 1 || d.a > r.to + 1) continue;
+      const x0 = l2x(d.a - 0.5), x1 = l2x(d.b + 0.5);
+      let y0 = series.priceToCoordinate(d.hi), y1 = series.priceToCoordinate(d.lo);
+      if (x0 == null || x1 == null || y0 == null || y1 == null) continue;
+      let y = Math.min(y0, y1), h = Math.abs(y1 - y0);
+      if (h < 6) { y -= (6 - h) / 2; h = 6; }                  // keep tiny candles visible
+      const x = Math.min(x0, x1), w = Math.max(3, Math.abs(x1 - x0));
+      ctx.fillStyle = rgba(d.color, d.forming ? alpha * 0.6 : alpha); ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = rgba(d.color, 0.9); ctx.lineWidth = bw; ctx.setLineDash(d.forming ? [5, 4] : []);
+      ctx.strokeRect(Math.round(x) + (bw % 2) / 2, Math.round(y) + (bw % 2) / 2, Math.round(w), Math.round(h)); ctx.setLineDash([]);
+      if (ind.labels) {
+        const txt = `${d.iv} doji ${hhmm(d.start)}${d.forming ? ' forming' : ''}`, tw = ctx.measureText(txt).width + 8;
+        if (tw <= w + 40) {                                   // skip labels that would swamp a narrow box (zoomed out)
+          let ly = y - 9 - bw < 8 ? y + 9 + bw : y - 9 - bw;
+          const hit = q => x < q.x + q.w && q.x < x + tw && Math.abs(ly - q.y) < 17;
+          for (let k = 0; k < 8 && placed.some(hit); k++) ly -= 17;     // stack labels that would overlap
+          placed.push({ x, y: ly, w: tw });
+          ctx.fillStyle = 'rgba(19,23,34,0.75)'; ctx.fillRect(x, ly - 8, tw, 16);
+          ctx.strokeStyle = rgba(d.color, 0.7); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x) + 0.5, Math.round(ly - 8) + 0.5, Math.round(tw), 16);
+          ctx.fillStyle = d.color; ctx.fillText(txt, x + 4, ly + 0.5);
+        }
+      }
+    }
+  });
+  ctx.restore(); ctx.textBaseline = 'alphabetic';
+}
+function label(ind) {
+  if (ind.type === 'bos') return 'HA BOS';
+  if (ind.type === 'pivot') return `Pivots ${ind.iv}`;
+  if (ind.type === 'hl') return `H/L ${ind.iv}`;
+  if (ind.type === 'macd') return `MACD ${ind.src === 'real' ? 'close' : 'HA close'} ${ind.fast} ${ind.slow} ${ind.sig}`;
+  if (ind.type === 'vol') return 'Volume';
+  if (ind.type === 'hdoji') return 'Doji boxes';
+  if (ind.type === 'stretch') return 'Stretch';
+  return ind.type === 'bb' ? `BB ${ind.len} ${ind.mult}` : `${ind.type.toUpperCase()} ${ind.len}`;
+}
+function makeSeries(ind) {
+  ind.series.forEach(s => chart.removeSeries(s));
+  ind.series = [];
+  if (ind.type === 'macd') {
+    const vis = ind.visible !== false, base = { priceScaleId: 'macd', visible: vis, priceLineVisible: false, crosshairMarkerVisible: false };
+    ind.series.push(chart.addHistogramSeries({ ...base, lastValueVisible: false }));
+    ind.series.push(chart.addLineSeries({ ...base, color: ind.cMacd, lineWidth: 1, lastValueVisible: true }));
+    ind.series.push(chart.addLineSeries({ ...base, color: ind.cSig, lineWidth: 1, lastValueVisible: true }));
+    ind.dojiN = -1; layoutPanes(); return;
+  }
+  if (ind.type === 'vol') {
+    ind.series.push(chart.addHistogramSeries({ priceScaleId: 'vol', visible: ind.visible !== false, priceLineVisible: false,
+      lastValueVisible: false, priceFormat: { type: 'volume' } }));
+    layoutPanes(); return;
+  }
+  if (ind.type === 'hl' || ind.type === 'hdoji') { ind.hlN = 0; return; }       // lanes are created by fillHL as needed
+  if (ind.type === 'pivot') {
+    ind.pnames = pivotNames(ind);
+    ind.pnames.forEach(n => {
+      for (let par = 0; par < 2; par++)
+        ind.series.push(chart.addLineSeries({
+          color: pivotColor(ind, n), lineWidth: ind.width || 1, visible: ind.visible !== false,
+          priceLineVisible: false, lastValueVisible: ind.prices !== false, crosshairMarkerVisible: false,
+          title: ind.labels !== false ? n : '',
+          ...(ind.fit === false ? { autoscaleInfoProvider: () => null } : {}),
+        }));
+    });
+    return;
+  }
+  if (ind.type === 'stretch') {
+    [[ind.c1, 1, `EMA ${ind.fast}`], [ind.c2, 1, `EMA ${ind.slow}`], [ind.c3, 2, `SMMA ${ind.base}`]].forEach(([c, w, t]) =>
+      ind.series.push(chart.addLineSeries({ color: c, lineWidth: w, visible: ind.visible !== false && ind.lines,
+        priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, title: t })));
+    return;
+  }
+  const count = ind.type === 'bos' ? 0 : ind.type === 'bb' ? 3 : 1;
+  for (let i = 0; i < count; i++) {
+    ind.series.push(chart.addLineSeries({
+      color: ind.color, lineWidth: ind.width || 1, visible: ind.visible !== false,
+      lineStyle: ind.type === 'bb' && i === 1 ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
+      priceLineVisible: false, lastValueVisible: i !== 1 || ind.type !== 'bb',
+      crosshairMarkerVisible: false, title: i === 0 || ind.type !== 'bb' ? label(ind) : '',
+    }));
+  }
+}
+function fullData(ind) {
+  if (ind.type === 'macd' || ind.type === 'vol') return fillPane(ind);
+  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji') return;
+  ind.vals = calc(ind);
+  ind.series.forEach((s, j) => {
+    const v = ind.vals[j], d = [];
+    for (let k = 0; k < v.length; k++) if (!isNaN(v[k])) d.push({ time: raw[k][0], value: v[k] });
+    s.setData(d);
+  });
+}
+function tailData(ind, first) {
+  if (ind.type === 'macd' || ind.type === 'vol') return fillPane(ind, first);
+  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji') return;
+  ind.vals = calc(ind);
+  ind.series.forEach((s, j) => {
+    const v = ind.vals[j];
+    for (let k = first; k < v.length; k++) if (!isNaN(v[k])) s.update({ time: raw[k][0], value: v[k] });
+  });
+}
+function saveInds() {
+  store.set('gc_inds', inds.map(ind => Object.fromEntries(Object.entries(ind).filter(([k, v]) => v === null || typeof v !== 'object'))));
+}
+function addInd(type) {
+  const ind = { id: Date.now() + Math.random(), type, src: 'ha', width: type === 'bb' ? 1 : 2,
+                visible: true, ...IND_DEFAULTS[type], series: [], vals: null, res: null };
+  inds.push(ind); makeSeries(ind); if (raw.length) fullData(ind);
+  if (type === 'bos' || type === 'stretch' || type === 'pivot' || type === 'hl' || type === 'hdoji') refreshBos();
+  saveInds(); renderPanel(); legend(null);
+}
+function renderPanel() {
+  const list = $('ilist');
+  if (!inds.length) { list.innerHTML = '<div class="empty">No indicators yet. Add one above.</div>'; return; }
+  list.innerHTML = '';
+  inds.forEach(ind => {
+    const row = document.createElement('div'); row.className = 'row';
+    const opt = (k, v, t) => `<option value="${v}" ${ind[k] === v ? 'selected' : ''}>${t}</option>`;
+    if (ind.type === 'bos') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">HA BOS</b>` +
+      `<label title="Break measured from the red/green cycle's wick (high/low) or its body">Break of <select data-k="level">` +
+      opt('level', 'wick', 'Wick') + opt('level', 'body', 'Body') + `</select></label>` +
+      `<label>Show <select data-k="show">` + opt('show', 'flips', 'Bias changes') + opt('show', 'all', 'All breaks') + `</select></label>` +
+      `<label><input type="checkbox" data-k="boxes" ${ind.boxes ? 'checked' : ''}> Boxes</label>` +
+      `<label title="Sell: 2nd red cycle must be higher than the 1st (uptrend). Buy: 2nd green cycle lower than the 1st (downtrend).">` +
+      `<input type="checkbox" data-k="trend" ${ind.trend !== false ? 'checked' : ''}> Trend filter</label>` +
+      `<label>Sell <input type="color" data-k="sellColor" value="${ind.sellColor}"></label>` +
+      `<label>Buy <input type="color" data-k="buyColor" value="${ind.buyColor}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'pivot') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Pivots</b>` +
+      `<label title="Pivot period: 1m, 5m, 15m, 1h, 4h, 1d or any custom length. Press Enter.">Period ` +
+      `<input type="text" data-k="iv" value="${ind.iv}" style="width:58px;background:var(--bg);color:var(--text);` +
+      `border:1px solid var(--line);border-radius:4px;padding:3px 5px"></label>` +
+      `<label>Type <select data-k="ptype">${Object.entries(PIVOT_TYPES).map(([v, t]) => opt('ptype', v, t)).join('')}</select></label>` +
+      `<label>Levels <select data-k="nlev">${[1, 2, 3, 4, 5].map(n => opt('nlev', n, `R${n} / S${n}`)).join('')}</select></label>` +
+      `<label><input type="checkbox" data-k="labels" ${ind.labels ? 'checked' : ''}> Labels</label>` +
+      `<label><input type="checkbox" data-k="prices" ${ind.prices ? 'checked' : ''}> Prices</label>` +
+      `<label title="Show pivots for past periods too, or only the current one"><input type="checkbox" data-k="history" ${ind.history ? 'checked' : ''}> Past periods</label>` +
+      `<label title="Zoom the price scale out so every pivot level stays on screen"><input type="checkbox" data-k="fit" ${ind.fit !== false ? 'checked' : ''}> Keep all levels in view</label>` +
+      `<label>P <input type="color" data-k="cP" value="${ind.cP}"></label>` +
+      `<label>R <input type="color" data-k="cR" value="${ind.cR}"></label>` +
+      `<label>S <input type="color" data-k="cS" value="${ind.cS}"></label>` +
+      `<label>Width <select data-k="width">${[1, 2, 3].map(w => `<option ${w == ind.width ? 'selected' : ''}>${w}</option>`).join('')}</select></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'hl') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Candle H/L</b>` +
+      `<label title="Candle length whose high and low are drawn: 1m, 5m, 15m, 1h, 4h, 1d or custom. Press Enter.">Candle ` +
+      `<input type="text" data-k="iv" value="${ind.iv}" style="width:58px;background:var(--bg);color:var(--text);` +
+      `border:1px solid var(--line);border-radius:4px;padding:3px 5px"></label>` +
+      `<label title="An untouched line stops after this many candles of that length">Extend ` +
+      `<input type="number" min="1" max="500" step="1" data-k="ext" value="${ind.ext}"> candles</label>` +
+      `<label title="Sweep = wick through the level and close back inside. Break = close through it.">Show <select data-k="show">` +
+      opt('show', 'sweeps', 'Sweeps') + opt('show', 'all', 'Sweeps + breaks') + `</select></label>` +
+      `<label title="Zoom the price scale out so every line stays on screen"><input type="checkbox" data-k="fit" ${ind.fit !== false ? 'checked' : ''}> Keep lines in view</label>` +
+      `<label>High <input type="color" data-k="cH" value="${ind.cH}"></label>` +
+      `<label>Low <input type="color" data-k="cL" value="${ind.cL}"></label>` +
+      `<label>Width <select data-k="width">${[1, 2, 3].map(w => `<option ${w == ind.width ? 'selected' : ''}>${w}</option>`).join('')}</select></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'stretch') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Stretch</b>` +
+      `<label>EMA <input type="number" min="1" max="500" step="1" data-k="fast" value="${ind.fast}"></label>` +
+      `<label>EMA <input type="number" min="1" max="500" step="1" data-k="slow" value="${ind.slow}"></label>` +
+      `<label>SMMA <input type="number" min="1" max="1000" step="1" data-k="base" value="${ind.base}"></label>` +
+      `<label title="How far both EMAs must be from the SMMA, in ATR(14) units, to count as stretched">Gap &ge; ` +
+      `<input type="number" min="0.5" max="50" step="0.5" data-k="k" value="${ind.k}"> ATR</label>` +
+      `<label title="The stretch must have happened within this many candles before the signal">within ` +
+      `<input type="number" min="1" max="1000" step="1" data-k="look" value="${ind.look}"> candles</label>` +
+      `<label>Pullbacks <select data-k="need">` + opt('need', 1, '1') + opt('need', 2, '2') + `</select></label>` +
+      `<label>Break of <select data-k="level">` + opt('level', 'wick', 'Wick') + opt('level', 'body', 'Body') + `</select></label>` +
+      `<label>Trade <select data-k="trade">` + opt('trade', 'limit', 'Limit + breakout') + opt('trade', 'momentum', 'Momentum (market)') +
+      opt('trade', 'direct', 'Direct (old)') + `</select></label>` +
+      (ind.trade === 'momentum' ? `<label title="Momentum: a candle must close beyond the level, or just touch it">Entry on <select data-k="entry">` +
+      opt('entry', 'close', 'Close') + opt('entry', 'touch', 'Touch') + `</select></label>` : '') +
+      (ind.trade === 'limit' ?
+      `<label><input type="checkbox" data-k="useLim" ${ind.useLim ? 'checked' : ''}> Limit</label>` +
+      `<label title="Limit = trigger candle high (buy) / low (sell) minus/plus this many trigger lengths">back ` +
+      `<input type="number" min="0.01" max="5" step="0.05" data-k="pull" value="${ind.pull}"> &times; len, valid ` +
+      `<input type="number" min="1" max="50" step="1" data-k="limValid" value="${ind.limValid}"></label>` +
+      `<label><input type="checkbox" data-k="useBrk" ${ind.useBrk ? 'checked' : ''}> Breakout</label>` +
+      `<label title="Stop order beyond the trigger candle high (buy) / low (sell)">+` +
+      `<input type="number" min="0.01" max="5" step="0.05" data-k="brkExt" value="${ind.brkExt}"> &times; len, valid ` +
+      `<input type="number" min="1" max="50" step="1" data-k="brkValid" value="${ind.brkValid}"></label>` : '') +
+      `<label title="Trigger: a candle closes this many stretch-candle lengths beyond the stretch candle">Level +` +
+      `<input type="number" min="0.05" max="5" step="0.05" data-k="ext" value="${ind.ext}"> &times; len</label>` +
+      `<label>within <input type="number" min="1" max="50" step="1" data-k="win" value="${ind.win}"> candles</label>` +
+      `<label>RR 1:<input type="number" min="0.1" max="20" step="0.1" data-k="rr" value="${ind.rr}"></label>` +
+      (ind.trade === 'momentum' ?
+      `<label title="Break-even after this many entry-candle lengths; stop moves to entry +/- commission">BE at ` +
+      `<input type="number" min="0.05" max="5" step="0.05" data-k="be" value="${ind.be}"> &times; entry candle</label>` +
+      `<label>+ comm $<input type="number" min="0.001" max="5" step="0.01" data-k="comm" value="${ind.comm}"></label>` : '') +
+      `<label>Max hold <input type="number" min="1" max="500" step="1" data-k="hold" value="${ind.hold}"> candles</label>` +
+      `<label><input type="checkbox" data-k="stall" ${ind.stall ? 'checked' : ''}> Stall exit</label>` +
+      `<label><input type="checkbox" data-k="lines" ${ind.lines ? 'checked' : ''}> Lines</label>` +
+      `<label><input type="checkbox" data-k="zones" ${ind.zones ? 'checked' : ''}> SL/TP zones</label>` +
+      `<label><input type="color" data-k="c1" value="${ind.c1}"></label>` +
+      `<label><input type="color" data-k="c2" value="${ind.c2}"></label>` +
+      `<label><input type="color" data-k="c3" value="${ind.c3}"></label>` +
+      `<label>Sell <input type="color" data-k="sellColor" value="${ind.sellColor}"></label>` +
+      `<label>Buy <input type="color" data-k="buyColor" value="${ind.buyColor}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'macd') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">MACD</b>` +
+      `<label>Fast <input type="number" min="1" max="500" step="1" data-k="fast" value="${ind.fast}"></label>` +
+      `<label>Slow <input type="number" min="1" max="500" step="1" data-k="slow" value="${ind.slow}"></label>` +
+      `<label>Signal <input type="number" min="1" max="500" step="1" data-k="sig" value="${ind.sig}"></label>` +
+      `<label>Source <select data-k="src">` + opt('src', 'ha', 'HA close') + opt('src', 'real', 'Real close') + `</select></label>` +
+      `<label title="Doji = upper AND lower wick both longer than the body. A dot is put on the MACD line at each one.">Doji dots on ` +
+      `<select data-k="doji">` + opt('doji', 'ha', 'Heikin Ashi candles') + opt('doji', 'candle', 'Normal candles') + opt('doji', 'off', 'Off') + `</select></label>` +
+      `<label>Doji <input type="color" data-k="cDoji" value="${ind.cDoji}"></label>` +
+      `<label>MACD <input type="color" data-k="cMacd" value="${ind.cMacd}"></label>` +
+      `<label>Signal <input type="color" data-k="cSig" value="${ind.cSig}"></label>` +
+      `<label title="Histogram: above zero rising / falling, below zero falling / rising">Hist ` +
+      `<input type="color" data-k="cUp" value="${ind.cUp}"><input type="color" data-k="cUp2" value="${ind.cUp2}">` +
+      `<input type="color" data-k="cDn" value="${ind.cDn}"><input type="color" data-k="cDn2" value="${ind.cDn2}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'hdoji') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide all doji boxes">` +
+      `<b style="width:auto">Doji boxes</b>` +
+      `<label title="Doji = upper AND lower wick both longer than the body">Candles <select data-k="doji">` +
+      opt('doji', 'ha', 'Heikin Ashi') + opt('doji', 'candle', 'Normal') + `</select></label>` +
+      `<label title="How many past doji boxes to show for each timeframe">Show last <select data-k="last">` +
+      ['1', '2', '3', '4', '5', '10', 'all'].map(v => opt('last', v, v === 'all' ? 'All' : v)).join('') + `</select></label>` +
+      `<label title="How strongly the boxes are filled">Fill <select data-k="alpha">` +
+      opt('alpha', '0', 'None') + opt('alpha', '0.06', 'Very light') + opt('alpha', '0.12', 'Light') + opt('alpha', '0.2', 'Medium') + opt('alpha', '0.32', 'Strong') +
+      opt('alpha', '0.5', 'Very strong') + `</select></label>` +
+      `<label>Border <select data-k="border">${[1, 2, 3, 4].map(w => `<option ${w == ind.border ? 'selected' : ''}>${w}</option>`).join('')}</select></label>` +
+      `<label title="Also box the candle still forming (dashed) when it is a doji so far"><input type="checkbox" data-k="forming" ${ind.forming ? 'checked' : ''}> Forming</label>` +
+      `<label><input type="checkbox" data-k="labels" ${ind.labels ? 'checked' : ''}> Labels</label>` +
+      `<button class="x" title="Remove">Remove</button>` +
+      `<div style="flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px 14px;padding:6px 0 2px 22px">` +
+      DOJI_TFS.map(t => `<label style="display:flex;align-items:center;gap:4px"><input type="checkbox" data-k="on_${t}" ${ind['on_' + t] ? 'checked' : ''}>` +
+        `<b style="width:auto;color:${ind['c_' + t]}">${t}</b><input type="color" data-k="c_${t}" value="${ind['c_' + t]}"></label>`).join('') +
+      `<label style="display:flex;align-items:center;gap:4px" title="Any other length, e.g. 10m or 2h. Press Enter."><input type="checkbox" data-k="on_custom" ${ind.on_custom ? 'checked' : ''}>` +
+      `<input type="text" data-k="iv" value="${ind.iv}" placeholder="custom" style="width:58px;background:var(--bg);color:var(--text);` +
+      `border:1px solid var(--line);border-radius:4px;padding:3px 5px"><input type="color" data-k="c_custom" value="${ind.c_custom}"></label></div>`;
+    else if (ind.type === 'vol') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Volume</b>` +
+      `<label title="MT5 tick volume (number of price changes). Bar colour follows the candle direction.">Colour by ` +
+      `<select data-k="by">` + opt('by', 'real', 'Normal candle') + opt('by', 'ha', 'Heikin Ashi candle') + `</select></label>` +
+      `<label>Up <input type="color" data-k="cUp" value="${ind.cUp}"></label>` +
+      `<label>Down <input type="color" data-k="cDn" value="${ind.cDn}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b>${ind.type === 'bb' ? 'BB' : ind.type.toUpperCase()}</b>` +
+      `<label>Length <input type="number" min="1" max="1000" step="1" data-k="len" value="${ind.len}"></label>` +
+      (ind.type === 'bb' ? `<label>StdDev <input type="number" min="0.1" max="10" step="0.1" data-k="mult" value="${ind.mult}"></label>` : '') +
+      `<label>Source <select data-k="src"><option value="ha" ${ind.src !== 'real' ? 'selected' : ''}>HA close</option>` +
+      `<option value="real" ${ind.src === 'real' ? 'selected' : ''}>Real close</option></select></label>` +
+      `<label><input type="color" data-k="color" value="${ind.color}"></label>` +
+      `<label>Width <select data-k="width">${[1, 2, 3, 4].map(w => `<option ${w == ind.width ? 'selected' : ''}>${w}</option>`).join('')}</select></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    row.querySelectorAll('[data-k]').forEach(el => {
+      el.addEventListener(el.type === 'number' || el.type === 'color' ? 'input' : 'change', () => {
+        const k = el.dataset.k;
+        if (ind.type === 'hdoji' && k === 'iv' && !el.value.trim()) { ind.iv = ''; ind.on_custom = false; }
+        else if ((ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji') && k === 'iv') {
+          const iv = parseIv(el.value), ok = iv && iv.kind === 'time';
+          el.style.borderColor = ok ? '' : 'var(--down)';
+          el.title = ok ? '' : 'Use a time length: 1m, 5m, 15m, 1h, 4h, 1d (tick counts are not allowed here)';
+          if (!ok) return;
+          ind.iv = iv.label; el.value = iv.label;
+        } else if (k === 'nlev') ind.nlev = Number(el.value);
+        else if (el.type === 'checkbox') ind[k] = el.checked;
+        else if (k === 'len') { const v = Math.floor(Number(el.value)); if (!(v >= 1)) return; ind.len = v; }
+        else if (k === 'mult') { const v = Number(el.value); if (!(v > 0)) return; ind.mult = v; }
+        else if (k === 'width') ind.width = Number(el.value);
+        else if (k === 'need') ind.need = Number(el.value);
+        else if (el.type === 'number') { const v = Number(el.value); if (!(v > 0)) return; ind[k] = v; }
+        else ind[k] = el.value;
+        if (ind.type === 'stretch') {
+          if (['c1', 'c2', 'c3', 'lines', 'visible'].includes(k)) {
+            [ind.c1, ind.c2, ind.c3].forEach((c, j) => ind.series[j] &&
+              ind.series[j].applyOptions({ color: c, visible: ind.visible !== false && ind.lines }));
+          } else if (['fast', 'slow', 'base'].includes(k)) {
+            makeSeries(ind); if (raw.length) fullData(ind);
+          }
+          refreshBos();
+          if (k === 'trade') { saveInds(); renderPanel(); legend(null); return; }
+        } else if (ind.type === 'hdoji') {
+          if (k === 'iv' && ind.iv) ind.on_custom = true;
+          refreshBos();
+          if (k.startsWith('c_') || k.startsWith('on_') || k === 'iv') { saveInds(); renderPanel(); legend(null); return; }
+        } else if (ind.type === 'hl') {
+          if (k === 'visible') ind.series.forEach(x => x.applyOptions({ visible: ind.visible }));
+          else makeSeries(ind);
+          refreshBos();
+        } else if (ind.type === 'pivot') {
+          if (k === 'visible') ind.series.forEach(x => x.applyOptions({ visible: ind.visible }));
+          else { makeSeries(ind); computePivots(ind); fillPivots(ind, 0); }
+        } else if (ind.type === 'macd' || ind.type === 'vol') {
+          if (k === 'visible') { ind.series.forEach(x => x.applyOptions({ visible: ind.visible })); layoutPanes(); }
+          else { makeSeries(ind); if (raw.length) fillPane(ind); }
+        } else if (ind.type === 'bos') {
+          refreshBos();
+        } else if (k === 'visible' || k === 'color' || k === 'width') {
+          ind.series.forEach(s => s.applyOptions({ visible: ind.visible, color: ind.color, lineWidth: ind.width }));
+        } else {
+          makeSeries(ind); if (raw.length) fullData(ind);
+        }
+        saveInds(); legend(null);
+      });
+    });
+    row.querySelector('.x').onclick = () => {
+      ind.series.forEach(s => chart.removeSeries(s));
+      inds = inds.filter(i => i !== ind); layoutPanes(); refreshBos(); saveInds(); renderPanel(); legend(null);
+    };
+    list.appendChild(row);
+  });
+}
+$('indbtn').onclick = () => {
+  const p = $('panel'), open = p.style.display === 'block';
+  if (open) { p.style.display = 'none'; return; }
+  const r = $('indbtn').getBoundingClientRect();
+  p.style.left = Math.max(12, Math.min(r.left, innerWidth - p.offsetWidth - 12, innerWidth - 572)) + 'px';
+  p.style.top = (r.bottom + 6) + 'px';
+  renderPanel(); p.style.display = 'block';
+};
+$('pclose').onclick = () => { $('panel').style.display = 'none'; };
+document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => addInd(b.dataset.add));
+
+/* ---------------- legend ---------------- */
+let hoverIdx = null;
+function legend(idx) {
+  if (idx == null) idx = hoverIdx != null ? hoverIdx : ha.length - 1;
+  const bar = ha[idx];
+  if (!bar) { $('legend').innerHTML = ''; return; }
+  const col = bar.close >= bar.open ? 'var(--up)' : 'var(--down)';
+  let html = `<div><span class="t">${symbol} &middot; ${modeLabel()}</span>` +
+    ['open', 'high', 'low', 'close'].map(k =>
+      `<span>${k[0].toUpperCase()} <b style="color:${col};font-weight:500">${fmt(bar[k])}</b></span>`).join('') + '</div>';
+  inds.filter(i => i.type === 'pivot' && i.visible !== false && i.piv).forEach(i => {
+    const rt = raw[idx] ? raw[idx][5] : null, pv = i.piv.find(p => rt >= p.start && rt < p.end) || i.piv[i.piv.length - 1];
+    const col = n => n === 'P' ? i.cP : n[0] === 'R' ? i.cR : i.cS;
+    html += `<div><span style="color:var(--text)">Pivots ${i.iv} ${PIVOT_TYPES[i.ptype]}</span> ` + (i.pivWarn
+      ? `<span style="color:var(--down)">${i.pivWarn}</span>`
+      : pv ? [...pv.lv].sort((a, b) => b[1] - a[1]).map(([n, v]) => `<span style="color:${col(n)}">${n}</span> ${fmt(v)}`).join(' ')
+           : 'needs one full period of data') + '</div>';
+  });
+  inds.filter(i => i.type === 'hl' && i.visible !== false && i.hl).forEach(i => {
+    const lastH = [...i.hl].reverse().find(g => g.side === 'H'), lastL = [...i.hl].reverse().find(g => g.side === 'L');
+    const ev = i.hlEv.filter(e => i.show === 'all' || e.type === 'sweep').slice(-1)[0];
+    const live = i.hl.filter(g => g.active).length;
+    html += `<div><span style="color:var(--text)">Candle H/L ${i.iv}</span> ` + (i.hlWarn
+      ? `<span style="color:var(--down)">${i.hlWarn}</span>`
+      : lastH ? `last candle <span style="color:${i.cH}">H</span> ${fmt(lastH.v)} <span style="color:${i.cL}">L</span> ${fmt(lastL.v)}` +
+        ` &middot; ${live} untouched &middot; ` + (ev
+          ? `last <b style="color:${ev.side === 'H' ? i.cH : i.cL}">${ev.side === 'H' ? 'high' : 'low'} ${ev.type}</b> ${fmt(ev.v)} at ${tstr(raw[ev.idx][0])}`
+          : 'no sweep yet')
+      : 'needs one full candle of data') + '</div>';
+  });
+  inds.filter(i => i.type === 'stretch' && i.visible !== false && i.res).forEach(i => {
+    const g = gapAt(i.res, idx), hot = Math.abs(g) >= i.k;
+    const last = i.res.sig[i.res.sig.length - 1];
+    const lines = i.vals ? `<span style="color:${i.c1}">EMA ${i.fast}</span> ${fmt(i.vals[0][idx])} ` +
+      `<span style="color:${i.c2}">EMA ${i.slow}</span> ${fmt(i.vals[1][idx])} ` +
+      `<span style="color:${i.c3}">SMMA ${i.base}</span> ${fmt(i.vals[2][idx])} &middot; ` : '';
+    if ((i.trade === 'momentum' || i.trade === 'limit') && i.mom) {
+      const lt = [...i.mom].reverse().find(m => m.j != null);
+      html += `<div><span style="color:var(--text)">Stretch ${i.trade === 'limit' ? 'limit + breakout' : 'momentum'}</span> ${lines}gap ` +
+        `<b style="color:${hot ? '#f7c948' : 'var(--text)'}">${isNaN(g) ? '-' : (g > 0 ? '+' : '') + g.toFixed(1)} ATR</b>` +
+        ` (arms at ${i.k}) &middot; ` + (lt
+          ? `last <b style="color:${lt.side === 'sell' ? i.sellColor : i.buyColor}">${lt.side.toUpperCase()}${lt.fill ? ' ' + lt.fill : ''}</b> ${tstr(raw[lt.j][0])}` +
+            ` entry ${fmt(lt.entry)} SL ${fmt(lt.sl)} TP ${fmt(lt.tp)}${lt.outcome ? ' &rarr; ' + lt.outcome : ' (open)'}`
+          : 'no entry yet') + '</div>';
+      return;
+    }
+    html += `<div><span style="color:var(--text)">Stretch</span> ${lines}gap ` +
+      `<b style="color:${hot ? '#f7c948' : 'var(--text)'}">${isNaN(g) ? '-' : (g > 0 ? '+' : '') + g.toFixed(1)} ATR</b>` +
+      ` (arms at ${i.k}) &middot; ` + (last
+        ? `last <b style="color:${last.side === 'sell' ? i.sellColor : i.buyColor}">${last.side.toUpperCase()}</b> ${tstr(raw[last.idx][0])}` +
+          ` SL ${fmt(last.sl)} TP ${last.tp == null ? 'none found' : fmt(last.tp)}`
+        : 'no setup yet') + '</div>';
+  });
+  inds.filter(i => i.type === 'bos' && i.visible !== false && i.res).forEach(i => {
+    const r = i.res, c = r.bias === 'sell' ? i.sellColor : i.buyColor;
+    html += `<div><span style="color:var(--text)">HA BOS</span> ` + (r.bias
+      ? `bias <b style="color:${c}">${r.bias.toUpperCase()}</b> since ${tstr(raw[r.since][0])} &middot; ${r.sig.length} breaks in loaded history`
+      : 'no break of structure yet') + '</div>';
+  });
+  inds.filter(i => i.type === 'macd' && i.visible !== false && i.vals).forEach(i => {
+    const [h, m, sg] = i.vals, f = v => isNaN(v) ? '-' : v.toFixed(Math.min(8, digits + 2));
+    const dj = i.doji !== 'off' && raw[idx] && dojiAt(i, idx);
+    html += `<div><span style="color:var(--text)">${label(i)}</span> <span style="color:${histColor(i, h, idx)}">${f(h[idx])}</span> ` +
+      `<span style="color:${i.cMacd}">${f(m[idx])}</span> <span style="color:${i.cSig}">${f(sg[idx])}</span>` +
+      (dj ? ` <b style="color:${i.cDoji}">doji</b>` : '') + '</div>';
+  });
+  inds.filter(i => i.type === 'vol' && i.visible !== false && raw[idx]).forEach(i => {
+    html += `<div><span style="color:var(--text)">Vol</span> <span style="color:${volColor(i, idx)}">${(raw[idx][6] || 0).toLocaleString()}</span></div>`;
+  });
+  inds.filter(i => i.type === 'hdoji' && i.visible !== false && i.hdTf).forEach(i => {
+    const parts = i.hdTf.map(t => {
+      if (t.warn) return `<span style="color:${t.color}">${t.iv}</span> <span style="color:var(--muted)">${t.warn}</span>`;
+      const here = raw[idx] && t.all.find(d => idx >= d.a && idx <= d.b);
+      const times = t.all.filter(d => !d.forming).slice(-3).map(d => hhmm(d.start));
+      return `<b style="color:${t.color}">${t.iv}</b> ` + (here ? `<b style="color:${t.color}">&#9632; this candle${here.forming ? ' so far' : ''}</b> ` : '') +
+        (times.length ? times.join(', ') : 'none');
+    });
+    html += `<div><span style="color:var(--text)">Doji ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
+  });
+  inds.filter(i => !['bos', 'stretch', 'pivot', 'hl', 'macd', 'vol', 'hdoji'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
+    const v = i.vals.map(a => fmt(a[idx])).join(' / ');
+    html += `<div><span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${v}</span></div>`;
+  });
+  $('legend').innerHTML = html;
+}
+chart.subscribeCrosshairMove(p => {
+  hoverIdx = p && p.time != null ? idxOfTime(p.time) : null;
+  legend(null);
+});
+function idxOfTime(t) {
+  let lo = 0, hi = raw.length - 1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (raw[m][0] === t) return m; if (raw[m][0] < t) lo = m + 1; else hi = m - 1; }
+  return null;
+}
+
+/* ---------------- status / countdown ---------------- */
+function setStatus(s) {
+  if (!s || s.bid == null) return;
+  status = s; statusAt = Date.now(); lastOk = Date.now();
+  $('bid').textContent = fmt(s.bid); $('ask').textContent = fmt(s.ask);
+  $('spr').textContent = fmt(s.ask - s.bid);
+  bidLine.applyOptions({ price: s.bid });
+}
+setInterval(() => {
+  if (kind === 'tick') { $('cdl').textContent = 'Ticks'; $('cd').textContent = `${tickCnt}/${ivN}`; }
+  else if (kind !== 'time') { $('cdl').textContent = ctype === 'renko' ? 'Brick' : 'Reversal'; $('cd').textContent = fmt(box); }
+  else if (status && status.server_ms) {
+    $('cdl').textContent = 'Closes in';
+    const now = status.server_ms + (Date.now() - statusAt);
+    const left = periodStart(now / 1000, tfSec, anchor) + tfSec - now / 1000;
+    $('cd').textContent = left >= 3600 ? `${Math.floor(left / 3600)}h ${Math.floor(left % 3600 / 60)}m`
+      : left >= 60 ? `${Math.floor(left / 60)}m ${Math.floor(left % 60)}s` : `${left.toFixed(1)}s`;
+  }
+  $('dot').classList.toggle('live', Date.now() - lastOk < 3000);
+}, 100);
+
+/* ---------------- data loading ---------------- */
+function query(since) {
+  const p = kind === 'time' || kind === 'tick' ? ivN : box;
+  return `/api/bars?symbol=${encodeURIComponent(symbol)}&kind=${kind}&p=${p}` + (since != null ? `&since=${since}` : '');
+}
+function syncControls() {
+  const iv = parseIv(tf) || { kind: 'time', n: 15 };
+  kind = ctype === 'renko' || ctype === 'kagi' ? ctype : iv.kind;
+  ivN = iv.n; tfSec = kind === 'time' ? iv.n : 1;
+  $('ctype').value = ctype;
+  const customs = store.get('gc_custom_iv', []);
+  $('tfs').innerHTML = [...PRESETS, ...customs.filter(c => !PRESETS.includes(c))]
+    .map(t => `<button data-tf="${t}" class="${t === tf && kind !== 'renko' && kind !== 'kagi' ? 'on' : ''}">${t}</button>`).join('');
+  document.querySelectorAll('#tfs button').forEach(b => b.onclick = () => { tf = b.dataset.tf; saveView(); load(); });
+  const rk = ctype === 'renko' || ctype === 'kagi';
+  $('tfs').style.display = $('ivin').style.display = rk ? 'none' : '';
+  $('boxwrap').style.display = rk ? '' : 'none';
+  $('boxlbl').textContent = ctype === 'renko' ? 'Brick' : 'Reversal';
+  $('boxin').value = box;
+  chart.applyOptions({ timeScale: { secondsVisible: kind !== 'time' || tfSec < 60 } });
+  styleSeries();
+  applyInvert();
+}
+function saveView() { store.set('gc_view', { symbol, ctype, tf }); }
+async function load() {
+  if (ctype === 'renko' || ctype === 'kagi') box = store.get(`gc_box_${symbol}_${ctype}`, symMeta ? symMeta.box : box);
+  syncControls();
+  const id = ++reqId;
+  raw = []; ha = [];
+  $('msg').style.display = 'flex';
+  $('msg').textContent = kind === 'time' && tfSec >= 60 && tfSec % 60 === 0 ? `Loading ${symbol} bars from ${SRC}...`
+    : `Loading ${symbol} ticks... (the first time for a symbol can take a few seconds)`;
+  try {
+    const j = await (await fetch(query())).json();
+    if (id !== reqId) return;
+    if (j.error) { $('msg').textContent = j.error; return; }
+    raw = j.bars; ha = []; tickCnt = j.cnt || 0; buildFrom(0);
+    series.setData(ha);
+    inds.forEach(fullData);
+    refreshBos();
+    setStatus(j.status);
+    hoverIdx = null; legend(null);
+    const n = ha.length;
+    if (n) ts.setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 10 });
+    $('msg').style.display = n ? 'none' : 'flex';
+    if (!n) $('msg').textContent = kind === 'renko' || kind === 'kagi'
+      ? `No ${ctype === 'renko' ? 'bricks' : 'columns'} yet. Price hasn't moved ${fmt(box)} in the loaded ticks; try a smaller size.`
+      : SRC === 'MT5' ? 'No candles returned. Is the market open and MT5 logged in?'
+      : kind === 'time' && tfSec >= 60 ? 'No candles returned for this instrument.'
+      : 'No candles yet. Second, tick, Renko and Kagi charts are built from ticks this app records while the market is open. ' +
+        'Keep it running during market hours (minute charts like 1m have full history now).';
+  } catch (e) {
+    if (id === reqId) $('msg').textContent = `Lost connection to the chart server. Is its window still open?`;
+  }
+}
+
+async function poll() {
+  if (polling || !raw.length) return;
+  polling = true;
+  const id = reqId, since = raw[raw.length - 1][0];
+  try {
+    const j = await (await fetch(query(since))).json();
+    if (id !== reqId || j.error) return;
+    setStatus(j.status);
+    if (j.cnt != null) tickCnt = j.cnt;
+    let first = -1;
+    for (const c of j.bars) {
+      const lastT = raw[raw.length - 1][0];
+      if (c[0] === lastT) { raw[raw.length - 1] = c; if (first < 0) first = raw.length - 1; }
+      else if (c[0] > lastT) { raw.push(c); if (first < 0) first = raw.length - 1; }
+    }
+    if (first >= 0) {
+      buildFrom(first);
+      for (let k = first; k < ha.length; k++) series.update(ha[k]);
+      inds.forEach(i => tailData(i, first));
+      tailPivots(first); tailHL(first);
+      if (ha.length - 1 !== lastClosedCount) { lastClosedCount = ha.length - 1; refreshBos(); }
+      legend(null);
+    }
+  } catch (e) { /* server busy or restarting; next poll retries */ }
+  finally { polling = false; }
+}
+setInterval(poll, 500);
+
+let inverted = store.get('gc_invert', false);
+function applyInvert() {
+  chart.applyOptions({ rightPriceScale: { invertScale: inverted } });
+  $('invbtn').classList.toggle('on', inverted);
+  document.title = `${symbol} ${modeLabel().replace(' · ', ' ')}${inverted ? ' (inverted)' : ''}`;
+}
+function toggleInvert() { inverted = !inverted; store.set('gc_invert', inverted); applyInvert(); }
+$('invbtn').onclick = toggleInvert;
+document.addEventListener('keydown', e => { if (e.altKey && (e.key === 'i' || e.key === 'I')) { e.preventDefault(); toggleInvert(); } });
+applyInvert();
+$('fit').onclick = () => ts.fitContent();
+$('latest').onclick = () => ts.scrollToRealTime();
+
+/* ---------------- drawings ---------------- */
+const PALETTE = ['#2962ff', '#26a69a', '#ef5350', '#ff9800', '#e040fb', '#ffeb3b', '#ffffff'];
+let tool = 'cursor', drawings = [], sel = null, pending = null, drag = null;
+let curColor = '#2962ff', curWidth = 2;
+const chartEl = $('chart'), cv = $('overlay'), ctx = cv.getContext('2d');
+
+function saveDrawings() { store.set('gc_draw_' + symbol, drawings); }
+function paneW() { return chartEl.clientWidth - chart.priceScale('right').width(); }
+function paneH() { return chartEl.clientHeight - ts.height(); }
+
+// time <-> logical index (works between bars and beyond the last bar)
+// drawings are anchored to real time (raw[i][5]), so they stay put across chart types and intervals
+function gapSec() {
+  const n = raw.length;
+  if (kind === 'time') return tfSec;
+  return n > 1 ? Math.max(1e-3, (raw[n - 1][5] - raw[0][5]) / (n - 1)) : 1;
+}
+// Screen x of a (possibly fractional) bar position. The chart library only converts whole bar numbers (a
+// fractional one comes back as 0, the left edge), so fractions are interpolated between neighbouring bars.
+function l2x(l) {
+  if (l == null || !isFinite(l)) return null;
+  const i = Math.floor(l), f = l - i, x0 = ts.logicalToCoordinate(i);
+  if (x0 == null || !f) return x0;
+  const x1 = ts.logicalToCoordinate(i + 1);
+  return x1 == null ? null : x0 + f * (x1 - x0);
+}
+function t2l(t) {
+  const n = raw.length; if (!n) return null;
+  if (t >= raw[n - 1][5]) return n - 1 + (t - raw[n - 1][5]) / gapSec();
+  if (t <= raw[0][5]) return (t - raw[0][5]) / gapSec();
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (raw[m][5] <= t) lo = m; else hi = m; }
+  const d = raw[hi][5] - raw[lo][5];
+  return d > 0 ? lo + (t - raw[lo][5]) / d : lo;
+}
+function l2t(l) {
+  const n = raw.length;
+  if (l >= n - 1) return raw[n - 1][5] + (l - (n - 1)) * gapSec();
+  if (l <= 0) return raw[0][5] + l * gapSec();
+  const i = Math.floor(l);
+  return raw[i][5] + (l - i) * (raw[i + 1][5] - raw[i][5]);
+}
+function toXY(pt) {
+  const l = t2l(pt.t); if (l == null) return null;
+  const x = l2x(l), y = series.priceToCoordinate(pt.p);
+  return x == null || y == null ? null : { x, y };
+}
+function rawAt(x, y) {
+  const l = ts.coordinateToLogical(x), p = series.coordinateToPrice(y);
+  return l == null || p == null ? null : { l, p };
+}
+function ptAt(x, y) {   // snaps time to the nearest candle, like TradingView
+  const r = rawAt(x, y); return r ? { t: l2t(Math.round(r.l)), p: r.p } : null;
+}
+function local(e) { const r = chartEl.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+function lockChart(on) { chart.applyOptions({ handleScroll: !on, handleScale: !on }); }
+
+function setTool(t) {
+  tool = t; pending = null;
+  document.querySelectorAll('#tools [data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+  const hints = { trend: 'Click and drag (or click twice) to draw a trend line', hline: 'Click to place a horizontal line',
+                  rect: 'Click and drag (or click twice) to draw a box' };
+  $('hint').textContent = hints[t] || ''; $('hint').style.display = hints[t] ? 'block' : 'none';
+  chartEl.style.cursor = t === 'cursor' ? '' : 'crosshair';
+}
+function selected() { return drawings.find(d => d.id === sel) || null; }
+function commit(d) {
+  drawings.push(d); sel = d.id; pending = null; saveDrawings(); setTool('cursor'); lockChart(false);
+}
+
+function segDist(px, py, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, L = dx * dx + dy * dy;
+  let t = L ? ((px - a.x) * dx + (py - a.y) * dy) / L : 0; t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
+}
+function rectCorners(d) {
+  return [
+    { pt: { t: d.p1.t, p: d.p1.p }, h: { t: 'p1', p: 'p1' } }, { pt: { t: d.p2.t, p: d.p2.p }, h: { t: 'p2', p: 'p2' } },
+    { pt: { t: d.p1.t, p: d.p2.p }, h: { t: 'p1', p: 'p2' } }, { pt: { t: d.p2.t, p: d.p1.p }, h: { t: 'p2', p: 'p1' } },
+  ];
+}
+function hit(x, y) {
+  for (let i = drawings.length - 1; i >= 0; i--) {
+    const d = drawings[i];
+    if (d.type === 'trend') {
+      const a = toXY(d.p1), b = toXY(d.p2); if (!a || !b) continue;
+      if (Math.hypot(x - a.x, y - a.y) < 8) return { d, kind: 'handle', h: 'p1' };
+      if (Math.hypot(x - b.x, y - b.y) < 8) return { d, kind: 'handle', h: 'p2' };
+      if (segDist(x, y, a, b) < 6) return { d, kind: 'body' };
+    } else if (d.type === 'hline') {
+      const yy = series.priceToCoordinate(d.p1.p); if (yy == null) continue;
+      if (Math.abs(y - yy) < 6) return { d, kind: 'body' };
+    } else if (d.type === 'rect') {
+      for (const c of rectCorners(d)) {
+        const q = toXY(c.pt); if (q && Math.hypot(x - q.x, y - q.y) < 8) return { d, kind: 'corner', h: c.h };
+      }
+      const a = toXY(d.p1), b = toXY(d.p2); if (!a || !b) continue;
+      const x1 = Math.min(a.x, b.x), x2 = Math.max(a.x, b.x), y1 = Math.min(a.y, b.y), y2 = Math.max(a.y, b.y);
+      if (x >= x1 - 5 && x <= x2 + 5 && y >= y1 - 5 && y <= y2 + 5) return { d, kind: 'body' };
+    }
+  }
+  return null;
+}
+
+chartEl.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  const { x, y } = local(e);
+  if (x > paneW() || y > paneH()) return;            // leave price/time scales to the chart
+  if (tool !== 'cursor') {
+    e.stopPropagation(); e.preventDefault(); lockChart(true);
+    const pt = ptAt(x, y); if (!pt) return;
+    if (tool === 'hline') { commit({ id: Date.now(), type: 'hline', p1: pt, color: curColor, width: curWidth }); return; }
+    if (pending) { pending.p2 = pt; commit(pending); return; }
+    pending = { id: Date.now(), type: tool, p1: pt, p2: { ...pt }, color: curColor, width: curWidth };
+    drag = { kind: 'create', sx: x, sy: y };
+    return;
+  }
+  const h = hit(x, y);
+  if (h) {
+    e.stopPropagation(); e.preventDefault(); lockChart(true);
+    sel = h.d.id; syncStyleUI(h.d);
+    drag = { ...h, start: rawAt(x, y), orig: JSON.parse(JSON.stringify(h.d)) };
+  } else {
+    sel = null;
+  }
+}, { capture: true });
+chartEl.addEventListener('mousedown', e => { if (drag || tool !== 'cursor') e.stopPropagation(); }, { capture: true });
+
+window.addEventListener('pointermove', e => {
+  const { x, y } = local(e);
+  if (pending) { const pt = ptAt(x, y); if (pt) pending.p2 = pt; }
+  if (!drag || drag.kind === 'create') return;
+  const d = drag.d;
+  if (drag.kind === 'handle') { const pt = ptAt(x, y); if (pt) d[drag.h] = pt; return; }
+  if (drag.kind === 'corner') { const pt = ptAt(x, y); if (pt) { d[drag.h.t].t = pt.t; d[drag.h.p].p = pt.p; } return; }
+  const cur = rawAt(x, y); if (!cur || !drag.start) return;
+  const dl = Math.round(cur.l - drag.start.l), dp = cur.p - drag.start.p;
+  ['p1', 'p2'].forEach(k => {
+    if (!drag.orig[k]) return;
+    d[k] = { t: d.type === 'hline' ? drag.orig[k].t : l2t(t2l(drag.orig[k].t) + dl), p: drag.orig[k].p + dp };
+  });
+});
+window.addEventListener('pointerup', e => {
+  if (!drag) return;
+  if (drag.kind === 'create') {
+    const { x, y } = local(e);
+    if (pending && Math.hypot(x - drag.sx, y - drag.sy) > 4) commit(pending);   // click-drag finished
+    drag = null;                                                                 // else: wait for 2nd click
+    return;
+  }
+  drag = null; saveDrawings(); lockChart(false);
+});
+document.addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if (e.key === 'Escape') { setTool('cursor'); sel = null; lockChart(false); }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && sel) { deleteSel(); e.preventDefault(); }
+});
+function deleteSel() { drawings = drawings.filter(d => d.id !== sel); sel = null; saveDrawings(); }
+$('del').onclick = deleteSel;
+$('clear').onclick = () => { if (drawings.length && confirm('Remove all drawings on this chart?')) { drawings = []; sel = null; saveDrawings(); } };
+document.querySelectorAll('#tools [data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+
+// colors and widths
+$('swatches').innerHTML = PALETTE.map(c => `<div class="sw" data-c="${c}" style="background:${c}" title="${c}"></div>`).join('');
+function applyStyle() {
+  document.querySelectorAll('.sw').forEach(s => s.classList.toggle('on', s.dataset.c === curColor));
+  document.querySelectorAll('.wbtn').forEach(b => b.classList.toggle('on', Number(b.dataset.w) === curWidth));
+  const d = selected(); if (d) { d.color = curColor; d.width = curWidth; saveDrawings(); }
+}
+function syncStyleUI(d) {
+  curColor = d.color; curWidth = d.width;
+  document.querySelectorAll('.sw').forEach(s => s.classList.toggle('on', s.dataset.c === curColor));
+  document.querySelectorAll('.wbtn').forEach(b => b.classList.toggle('on', Number(b.dataset.w) === curWidth));
+  $('custom').value = curColor;
+}
+document.querySelectorAll('.sw').forEach(s => s.onclick = () => { curColor = s.dataset.c; $('custom').value = curColor; applyStyle(); });
+$('custom').addEventListener('input', () => { curColor = $('custom').value; applyStyle(); });
+document.querySelectorAll('.wbtn').forEach(b => b.onclick = () => { curWidth = Number(b.dataset.w); applyStyle(); });
+applyStyle();
+
+function rgba(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/* ---------------- overlay rendering ---------------- */
+function render() {
+  const dpr = window.devicePixelRatio || 1, W = chartEl.clientWidth, H = chartEl.clientHeight;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  if (raw.length) {
+    const pw = paneW(), ph = paneH();
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pw, ph); ctx.clip();
+    drawKagi();
+    drawBandFills();
+    drawBos();
+    drawStretch();
+    drawPivots(pw);
+    drawPanes(pw, ph);
+    drawHDoji(pw, ph);
+    const all = pending ? drawings.concat([pending]) : drawings;
+    for (const d of all) drawOne(d, pw, d.id === sel || d === pending);
+    ctx.restore();
+  }
+  requestAnimationFrame(render);
+}
+function drawBandFills() {
+  const r = ts.getVisibleLogicalRange(); if (!r) return;
+  const from = Math.max(0, Math.floor(r.from)), to = Math.min(raw.length - 1, Math.ceil(r.to));
+  inds.filter(i => i.type === 'bb' && i.visible !== false && i.vals).forEach(ind => {
+    const [up, , lo] = ind.vals;
+    ctx.fillStyle = rgba(ind.color, 0.07);
+    let run = [];
+    const flush = () => {
+      if (run.length > 1) {
+        ctx.beginPath();
+        run.forEach((q, j) => j ? ctx.lineTo(q.x, q.yu) : ctx.moveTo(q.x, q.yu));
+        for (let j = run.length - 1; j >= 0; j--) ctx.lineTo(run[j].x, run[j].yl);
+        ctx.closePath(); ctx.fill();
+      }
+      run = [];
+    };
+    for (let k = from; k <= to; k++) {
+      if (isNaN(up[k])) { flush(); continue; }
+      const x = l2x(k), yu = series.priceToCoordinate(up[k]), yl = series.priceToCoordinate(lo[k]);
+      if (x == null || yu == null || yl == null) { flush(); continue; }
+      run.push({ x, yu, yl });
+    }
+    flush();
+  });
+}
+function drawBos() {
+  const r = ts.getVisibleLogicalRange(); if (!r) return;
+  inds.filter(i => i.type === 'bos' && i.visible !== false && i.boxes && i.res).forEach(ind => {
+    for (const s of ind.res.shown) {
+      if (s.idx < r.from || s.cycles[0].s > r.to) continue;
+      const col = s.side === 'sell' ? ind.sellColor : ind.buyColor;
+      const xEnd = l2x(s.idx + 0.4);
+      if (xEnd == null) continue;
+      for (const c of s.cycles) {
+        const x1 = l2x(c.s - 0.4);
+        const y1 = series.priceToCoordinate(c.top), y2 = series.priceToCoordinate(c.bot);
+        if (x1 == null || y1 == null || y2 == null) continue;
+        const y = Math.min(y1, y2), h = Math.max(2, Math.abs(y2 - y1));
+        ctx.fillStyle = rgba(col, 0.13); ctx.fillRect(x1, y, xEnd - x1, h);
+        ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.strokeRect(x1, y, xEnd - x1, h);
+      }
+      const xs = l2x(Math.min(s.cycles[0].s, s.cycles[1].s) - 0.4), yl = series.priceToCoordinate(s.level);
+      if (xs != null && yl != null) {
+        ctx.setLineDash([4, 3]); ctx.strokeStyle = col; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(xs, yl); ctx.lineTo(xEnd, yl); ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
+  });
+}
+function drawMomentum(ind, r) {
+  for (const m of ind.mom || []) {
+    const lastI = m.j != null ? m.end : m.idx + ind.win;
+    if (lastI < r.from || m.idx > r.to) continue;
+    const col = m.side === 'sell' ? ind.sellColor : ind.buyColor;
+    const lim = ind.trade === 'limit';
+    const xs = l2x(m.idx - 0.4),
+          xw = l2x((lim ? (m.a != null ? m.a : m.idx + ind.win) : (m.j != null ? m.j : m.idx + ind.win)) + 0.4);
+    const yl = series.priceToCoordinate(m.lvl);
+    if (xs != null && xw != null && yl != null) {                 // entry level over the waiting window
+      ctx.setLineDash([3, 3]); ctx.strokeStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(xs, yl); ctx.lineTo(xw, yl); ctx.stroke(); ctx.setLineDash([]);
+    }
+    if (lim && m.a != null) {                                      // the two orders over their lifetimes
+      const xa = l2x(m.a + 0.4);
+      const xl = l2x(Math.min(m.j != null ? m.j : Infinity, m.a + ind.limValid) + 0.4);
+      const xb = l2x(Math.min(m.j != null ? m.j : Infinity, m.a + ind.brkValid) + 0.4);
+      const yli = series.priceToCoordinate(m.lim), ybr = series.priceToCoordinate(m.brk);
+      ctx.setLineDash([4, 2]); ctx.lineWidth = 1.5;
+      if (ind.useLim && xa != null && xl != null && yli != null) {
+        ctx.strokeStyle = '#f7c948'; ctx.beginPath(); ctx.moveTo(xa, yli); ctx.lineTo(xl, yli); ctx.stroke();
+      }
+      if (ind.useBrk && xa != null && xb != null && ybr != null) {
+        ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(xa, ybr); ctx.lineTo(xb, ybr); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+    if (m.j == null) continue;
+    const x0 = l2x(m.j + 0.5), x1 = l2x(m.end + 0.5);
+    const ye = series.priceToCoordinate(m.entry), ysl = series.priceToCoordinate(m.sl), ytp = series.priceToCoordinate(m.tp);
+    if ([x0, x1, ye, ysl, ytp].some(v => v == null)) continue;
+    const w = Math.max(4, x1 - x0);
+    ctx.fillStyle = 'rgba(239,83,80,0.16)'; ctx.fillRect(x0, Math.min(ye, ysl), w, Math.abs(ysl - ye));
+    ctx.fillStyle = 'rgba(38,166,154,0.16)'; ctx.fillRect(x0, Math.min(ye, ytp), w, Math.abs(ytp - ye));
+    const ybe = lim ? null : series.priceToCoordinate(m.beNeed);
+    if (ybe != null) {
+      ctx.setLineDash([2, 2]); ctx.strokeStyle = '#f7c948'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, ybe); ctx.lineTo(x0 + w, ybe); ctx.stroke(); ctx.setLineDash([]);
+    }
+    if (m.outcome) {
+      ctx.fillStyle = m.outcome === 'TP' ? '#26a69a' : m.outcome === 'SL' ? '#ef5350' : m.outcome === 'BE' ? '#f7c948' : '#90caf9';
+      ctx.fillText(m.outcome, x1 + 4, (m.outcome === 'TP' ? ytp : m.outcome === 'SL' ? ysl : ye) + 4);
+    }
+  }
+}
+function drawStretch() {
+  const r = ts.getVisibleLogicalRange(); if (!r) return;
+  ctx.font = '11px sans-serif';
+  inds.filter(i => i.type === 'stretch' && i.visible !== false && i.zones && i.res).forEach(ind => {
+    if (ind.trade === 'momentum' || ind.trade === 'limit') { drawMomentum(ind, r); return; }
+    for (const s of ind.res.sig) {
+      const startIdx = s.tpIdx != null ? s.tpIdx : s.idx;
+      if (s.end < r.from || startIdx > r.to) continue;
+      const x0 = l2x(s.idx + 0.5), x1 = l2x(s.end + 0.5);
+      const ye = series.priceToCoordinate(raw[s.idx][4]), ysl = series.priceToCoordinate(s.sl);
+      if (x0 == null || x1 == null || ye == null || ysl == null) continue;
+      const w = Math.max(4, x1 - x0);
+      ctx.fillStyle = 'rgba(239,83,80,0.16)';
+      ctx.fillRect(x0, Math.min(ye, ysl), w, Math.abs(ysl - ye));
+      if (s.tp != null) {
+        const ytp = series.priceToCoordinate(s.tp), xm = l2x(s.tpIdx);
+        if (ytp == null) continue;
+        ctx.fillStyle = 'rgba(38,166,154,0.16)';
+        ctx.fillRect(x0, Math.min(ye, ytp), w, Math.abs(ytp - ye));
+        if (xm != null) {                                   // line from the mitigation candle to the trade
+          ctx.setLineDash([4, 3]); ctx.strokeStyle = '#26a69a'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(xm, ytp); ctx.lineTo(x1, ytp); ctx.stroke(); ctx.setLineDash([]);
+          ctx.beginPath(); ctx.arc(xm, ytp, 3.5, 0, Math.PI * 2); ctx.fillStyle = '#26a69a'; ctx.fill();
+        }
+        if (s.outcome) {
+          ctx.fillStyle = s.outcome === 'TP' ? '#26a69a' : '#ef5350';
+          ctx.fillText(s.outcome, x1 + 4, (s.outcome === 'TP' ? ytp : ysl) + 4);
+        }
+      }
+    }
+  });
+}
+function drawKagi() {
+  if (ctype !== 'kagi' || !kagiSegs.length) return;
+  const r = ts.getVisibleLogicalRange(); if (!r) return;
+  const from = Math.max(0, Math.floor(r.from) - 1), to = Math.min(raw.length - 1, Math.ceil(r.to) + 1);
+  const line = (x1, y1, x2, y2, yang) => {
+    ctx.strokeStyle = yang ? '#26a69a' : '#ef5350'; ctx.lineWidth = yang ? 3 : 1.2;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  };
+  ctx.lineCap = 'square';
+  for (let i = from; i <= to; i++) {
+    const x = l2x(i); if (x == null) continue;
+    const k = kagiSegs[i];
+    if (i > 0) {
+      const xp = l2x(i - 1), y = series.priceToCoordinate(raw[i][1]);
+      if (xp != null && y != null) line(xp, y, x, y, k.conn);
+    }
+    for (const [a, b, yang] of k.segs) {
+      const ya = series.priceToCoordinate(a), yb = series.priceToCoordinate(b);
+      if (ya != null && yb != null) line(x, ya, x, yb, yang);
+    }
+  }
+  ctx.lineCap = 'butt';
+}
+function drawPivots(pw) {
+  const r = ts.getVisibleLogicalRange(); if (!r || !raw.length) return;
+  const tFrom = l2t(r.from), tTo = l2t(r.to);
+  ctx.font = '11px sans-serif'; ctx.textBaseline = 'bottom';
+  inds.filter(i => i.type === 'pivot' && i.visible !== false && i.piv && i.piv.length && !i.pivWarn).forEach(ind => {
+    const list = ind.history ? ind.piv : ind.piv.slice(-1);
+    for (const p of list) {
+      if (p.end < tFrom || p.start > tTo) continue;
+      const xa = l2x(t2l(p.start) - 0.5), xb = l2x(t2l(p.end) - 0.5);
+      if (xa == null || xb == null) continue;
+      const x0 = Math.max(0, xa), x1 = Math.min(pw, xb);
+      if (x1 - x0 < 1) continue;
+      for (const [name, v] of p.lv) {
+        const y = series.priceToCoordinate(v); if (y == null) continue;
+        const col = name === 'P' ? ind.cP : name[0] === 'R' ? ind.cR : ind.cS;
+        if (ind.labels && x1 - x0 > 34) {
+          const txt = ind.prices && x1 - x0 > 110 ? `${name} (${fmt(v)})` : name;
+          ctx.fillStyle = col; ctx.fillText(txt, x0 + 3, y - 2);
+        }
+      }
+    }
+  });
+  ctx.textBaseline = 'alphabetic';
+}
+function handle(q) {
+  ctx.beginPath(); ctx.arc(q.x, q.y, 4.5, 0, Math.PI * 2);
+  ctx.fillStyle = '#131722'; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+}
+function drawOne(d, pw, isSel) {
+  ctx.strokeStyle = d.color; ctx.lineWidth = d.width;
+  if (d.type === 'hline') {
+    const y = series.priceToCoordinate(d.p1.p); if (y == null) return;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(pw, y); ctx.stroke();
+    const txt = fmt(d.p1.p); ctx.font = '11px sans-serif';
+    const w = ctx.measureText(txt).width + 8;
+    ctx.fillStyle = d.color; ctx.fillRect(pw - w - 2, y - 8, w, 16);
+    ctx.fillStyle = d.color === '#ffffff' || d.color === '#ffeb3b' ? '#131722' : '#ffffff';
+    ctx.fillText(txt, pw - w + 2, y + 4);
+    if (isSel) handle({ x: pw / 2, y });
+    return;
+  }
+  const a = toXY(d.p1), b = toXY(d.p2); if (!a || !b) return;
+  if (d.type === 'trend') {
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    if (isSel) { handle(a); handle(b); }
+  } else if (d.type === 'rect') {
+    const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y), w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+    ctx.fillStyle = rgba(d.color, 0.15); ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    if (isSel) rectCorners(d).forEach(c => { const q = toXY(c.pt); if (q) handle(q); });
+  }
+}
+requestAnimationFrame(render);
+
+/* ---------------- start ---------------- */
+/* ---------------- symbol, chart type and interval controls ---------------- */
+let symbols = [], symSel = 0, symSearch = false, watchLabel = 'Market Watch', found = [], findQ = '', findTimer = 0;
+async function setSymbol(name) {
+  const id = ++reqId;
+  $('msg').style.display = 'flex'; $('msg').textContent = `Opening ${name}...`;
+  const m = await (await fetch(`/api/meta?symbol=${encodeURIComponent(name)}`)).json();
+  if (id !== reqId) return;
+  if (m.error) { $('msg').textContent = m.error; return; }
+  symMeta = m; digits = m.digits; symbol = m.symbol; anchor = m.anchor || 0;
+  series.applyOptions({ priceFormat: { type: 'price', precision: digits, minMove: Math.pow(10, -digits) } });
+  $('symname').textContent = m.symbol; $('symdesc').textContent = m.desc || '';
+  $('boxin').step = m.point;
+  drawings = store.get('gc_draw_' + symbol, []); sel = null;
+  saveView();
+  await load();
+}
+function renderSymbols() {
+  const q = $('symq').value.trim().toLowerCase();
+  const hits = symSearch && q ? (findQ === q ? found : [])
+    : symbols.filter(s => !q || s.name.toLowerCase().includes(q) || s.desc.toLowerCase().includes(q)).slice(0, 300);
+  if (symSearch && q && findQ !== q) {                     // big instrument lists are searched on the server
+    clearTimeout(findTimer);
+    findTimer = setTimeout(async () => {
+      try { const r = await (await fetch('/api/search?q=' + encodeURIComponent(q))).json(); found = r.symbols || []; }
+      catch (e) { found = []; }
+      findQ = q; if ($('symq').value.trim().toLowerCase() === q) renderSymbols();
+    }, 150);
+    $('symlist').innerHTML = '<div class="symhead">Searching...</div>';
+    return hits;
+  }
+  symSel = Math.min(symSel, Math.max(0, hits.length - 1));
+  let html = '', section = null;
+  hits.forEach((s, i) => {
+    const sec = s.mw ? watchLabel : (s.path.split('\\')[0] || 'Other');
+    if (sec !== section) { html += `<div class="symhead">${sec}</div>`; section = sec; }
+    html += `<div class="symrow${i === symSel ? ' on' : ''}" data-i="${i}"><b>${s.name}</b><span>${s.desc}</span></div>`;
+  });
+  $('symlist').innerHTML = html || '<div class="symhead">No matching symbols</div>';
+  $('symlist').querySelectorAll('.symrow').forEach(r => r.onclick = () => { closeSymbols(); setSymbol(hits[+r.dataset.i].name); });
+  return hits;
+}
+async function openSymbols() {
+  const p = $('sympop'), r = $('symbtn').getBoundingClientRect();
+  p.style.left = Math.max(8, r.left) + 'px'; p.style.top = (r.bottom + 6) + 'px'; p.style.display = 'block';
+  $('symq').value = ''; symSel = 0;
+  if (!symbols.length) {
+    $('symlist').innerHTML = '<div class="symhead">Loading symbols...</div>';
+    try { symbols = (await (await fetch('/api/symbols')).json()).symbols; } catch (e) { symbols = []; }
+  }
+  renderSymbols(); $('symq').focus();
+}
+function closeSymbols() { $('sympop').style.display = 'none'; }
+$('symbtn').onclick = e => { e.stopPropagation(); $('sympop').style.display === 'block' ? closeSymbols() : openSymbols(); };
+$('symq').addEventListener('input', () => { symSel = 0; renderSymbols(); });
+$('symq').addEventListener('keydown', e => {
+  const hits = renderSymbols();
+  if (e.key === 'ArrowDown') { symSel = Math.min(hits.length - 1, symSel + 1); renderSymbols(); e.preventDefault(); }
+  else if (e.key === 'ArrowUp') { symSel = Math.max(0, symSel - 1); renderSymbols(); e.preventDefault(); }
+  else if (e.key === 'Enter' && hits[symSel]) { closeSymbols(); setSymbol(hits[symSel].name); }
+  else if (e.key === 'Escape') closeSymbols();
+});
+document.addEventListener('mousedown', e => { if (!$('sympop').contains(e.target) && e.target !== $('symbtn')) closeSymbols(); });
+$('ctype').onchange = () => {
+  ctype = $('ctype').value;
+  if ((ctype === 'ha' || ctype === 'candle') && !parseIv(tf)) tf = '15s';
+  saveView(); load();
+};
+$('ivin').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const iv = parseIv($('ivin').value);
+  $('ivin').classList.toggle('bad', !iv);
+  if (!iv) { $('ivin').title = 'Use a number and a unit: 20s, 7m, 2h, 1d, 1w, or ticks like 100t'; return; }
+  tf = iv.label;
+  const customs = store.get('gc_custom_iv', []);
+  if (!PRESETS.includes(tf) && !customs.includes(tf)) store.set('gc_custom_iv', [...customs, tf].slice(-6));
+  $('ivin').value = ''; saveView(); load();
+});
+$('ivin').addEventListener('input', () => $('ivin').classList.remove('bad'));
+$('boxin').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const v = Number($('boxin').value);
+  if (!(v > 0)) { $('boxin').value = box; return; }
+  box = v; store.set(`gc_box_${symbol}_${ctype}`, box); saveView(); load();
+});
+
+(async () => {
+  try {
+    const list = await (await fetch('/api/symbols')).json();
+    symbols = list.symbols;
+    if (list.source) { SRC = list.source; document.title = `${SRC} Chart`; }
+    symSearch = !!list.search; if (list.watchLabel) watchLabel = list.watchLabel;
+    if (SRC !== 'MT5') {                                    // MACD + volume are only on the MT5 (forex) chart for now
+      document.querySelectorAll('.mt5only').forEach(b => b.style.display = 'none');
+      inds = inds.filter(i => i.type !== 'macd' && i.type !== 'vol' && i.type !== 'hdoji');
+    }
+    const view = store.get('gc_view', {});
+    ctype = ['ha', 'candle', 'renko', 'kagi'].includes(view.ctype) ? view.ctype : 'ha';
+    tf = parseIv(view.tf) ? view.tf : '15s';
+    const want = view.symbol && (symSearch || symbols.some(s => s.name === view.symbol)) ? view.symbol : list.default;
+    inds.forEach(makeSeries);
+    await setSymbol(want);
+    if (!symMeta && want !== list.default) await setSymbol(list.default);    // e.g. an expired contract
+  } catch (e) {
+    $('msg').textContent = 'Could not reach the chart server. Start it first, then refresh this page.';
+  }
+})();
+</script>
+</body>
+</html>

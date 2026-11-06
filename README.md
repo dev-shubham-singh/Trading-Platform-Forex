@@ -1,0 +1,37 @@
+# Heikin Ashi trading chart (MT5 / Exness + Fyers)
+
+A TradingView-style chart that runs on your own PC, built for scalping XAU/USD on 15-second Heikin Ashi candles,
+with custom strategy indicators and backtests. It **reads prices only and places no orders**.
+
+## Two charts
+
+| | Gold / forex | Indian market |
+|---|---|---|
+| Start | `start_gold_chart.bat` | `start_india_chart.bat` |
+| Data | MetaTrader 5 (Exness), must be open and logged in | Fyers API (free plan), daily login |
+| Server | `gold_chart.py` → http://127.0.0.1:8765 | `india_chart.py` → http://127.0.0.1:8766 |
+| Symbols | everything in your MT5 terminal | all Fyers instruments (NSE/BSE stocks & F&O, MCX, currency), searched by name |
+
+Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.html` (the server reads it at start).
+
+## Chart features
+- Candle types: Heikin Ashi, normal candles, Renko, Kagi
+- Intervals: seconds, minutes, hours, days, tick charts (e.g. `100t`), any custom value
+- Zoom/pan, invert scale, drawing tools (trend line, horizontal line, box) with colours
+- Indicators: EMA, SMMA, SMA, Bollinger Bands, pivot points (any period, R3/S3, history),
+  candle high/low liquidity sweeps
+- Strategy indicators: Heikin Ashi BOS bias (two pullback cycles), EMA/SMMA stretch reversal / momentum / limit-breakout
+- Gold/forex chart only: MACD pane with doji dots, tick volume, multi-timeframe **doji boxes** (1m–4h, Heikin Ashi or normal)
+
+## Indian chart (Fyers)
+See `FYERS_SETUP.txt`. Copy `fyers_config.example.json` to `fyers_config.json` and put in your App ID and Secret
+(this file is git-ignored). Minute charts and up have full history; second / tick / Renko / Kagi charts are built from
+ticks the app records while it runs (`fyers_ticks/`).
+
+## Backtest
+`run_backtest.bat` runs `backtest.py` on recent MT5 ticks for the strategy set in `STRATEGY` and writes
+`backtest_report.html` (per-trade drawdown, variants, threshold sweep) and `backtest_trades.csv`.
+
+## Requirements
+Windows, Python 3.10+. The `.bat` files install the libraries (`MetaTrader5`, `fyers-apiv3`, `pandas`, `numpy`).
+The chart page loads lightweight-charts 4.2.0 from unpkg.
