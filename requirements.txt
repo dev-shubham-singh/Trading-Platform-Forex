@@ -1,0 +1,13 @@
+# Python libraries for the charts and the backtest.
+# Install everything on a new PC with:   py -m pip install -r requirements.txt
+# (needs Python 3.10 or newer; on Windows tick "Add Python to PATH" when installing Python)
+
+# Gold / forex chart and backtest: prices from MetaTrader 5 (Exness). Windows only.
+MetaTrader5>=5.0.45; sys_platform == "win32"
+
+# Indian market chart: Fyers API v3
+fyers-apiv3>=3.1.0,<4
+
+# Used by all of them
+pandas>=2.0
+numpy>=1.24

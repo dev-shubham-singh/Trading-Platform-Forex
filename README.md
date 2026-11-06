@@ -43,5 +43,17 @@ ticks the app records while it runs (`fyers_ticks/`).
 `backtest_report.html` (per-trade drawdown, variants, threshold sweep) and `backtest_trades.csv`.
 
 ## Requirements
-Windows, Python 3.10+. The `.bat` files install the libraries (`MetaTrader5`, `fyers-apiv3`, `pandas`, `numpy`).
+Windows, Python 3.10+. All libraries are listed in `requirements.txt` (`MetaTrader5`, `fyers-apiv3`, `pandas`, `numpy`);
+the `.bat` files also install what they need on first run.
+
+### Setting up on a new PC
+1. Install Python 3 from https://www.python.org/downloads/ (tick **Add Python to PATH**).
+2. Download this repo: **Code → Download ZIP** on GitHub and unzip it, or `git clone https://github.com/dev-shubham-singh/Trading-Platform-Forex.git`.
+3. In that folder, open a command prompt and run `py -m pip install -r requirements.txt`.
+4. Gold / forex: install MetaTrader 5, log in to Exness, then run `start_gold_chart.bat`.
+5. Indian market: copy `fyers_config.example.json` to `fyers_config.json`, fill in your Fyers App ID and Secret
+   (these are not on GitHub, on purpose), then run `start_india_chart.bat` and log in.
+
+Not on GitHub (they stay on the old PC): `fyers_config.json`, your recorded Fyers ticks (`fyers_ticks/`), and the chart's
+saved drawings / indicators / settings, which live in the browser. Copy `fyers_ticks/` across if you want the old tick history.
 The servers save lightweight-charts 4.2.0 next to the page on first start (fallback: unpkg), so the chart loads instantly and offline.
