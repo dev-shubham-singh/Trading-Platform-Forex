@@ -2713,33 +2713,42 @@ function drawStretch() {
     }
   });
 }
-// Volume candles: the candle with the most volume on screen is full width, the others in proportion (min 1px).
-// Candles with no volume data (e.g. a Fyers candle still forming from live ticks) get the average width.
-function volWidths(from, to, full) {
-  let vmax = 0, sum = 0, n = 0;
-  for (let i = from; i <= to; i++) { const v = raw[i][6]; if (v > 0) { vmax = Math.max(vmax, v); sum += v; n++; } }
-  const avg = n ? sum / n : 0;
+// Volume candles (like TradingView / Exness): width shows volume against the average volume on screen.
+// A candle with 2.5x the average (or more) is full width; a curve thins the rest, so an average candle is about
+// a quarter of full width and quiet ones are 1px lines. "Full width" never drops below 8px, so when zoomed out the busy candles still stand out (they may overlap
+// their neighbours, as on TradingView). Candles with no volume data (e.g. a Fyers candle still forming from
+// live ticks) get the average width.
+const VC_FULL_AT = 2.5, VC_MIN_FULL = 8, VC_CURVE = 1.5;
+function volWidths(from, to, spacing) {
+  let sum = 0, n = 0;
+  for (let i = from; i <= to; i++) { const v = raw[i][6]; if (v > 0) { sum += v; n++; } }
+  const avg = n ? sum / n : 0, full = Math.max(spacing * 0.9, VC_MIN_FULL);
   return i => {
-    const v = raw[i][6];
-    if (!vmax) return full * 0.8;
-    return Math.max(1, full * (v > 0 ? v : v === 0 ? 0 : avg) / vmax);
+    if (!avg) return Math.max(1, spacing * 0.8);
+    const v = raw[i][6], rel = (v > 0 ? v : v === 0 ? 0 : avg) / (avg * VC_FULL_AT);
+    return Math.max(1, full * Math.pow(Math.min(1, rel), VC_CURVE));
   };
 }
 function drawVolCandles(c) {
   const r = ts.getVisibleLogicalRange(); if (!r || !ha.length) return;
   const from = Math.max(0, Math.floor(r.from) - 1), to = Math.min(ha.length - 1, Math.ceil(r.to) + 1);
   const xa = ts.logicalToCoordinate(from), xb = ts.logicalToCoordinate(from + 1);
-  const full = Math.max(1, (xa != null && xb != null ? xb - xa : 6) * 0.9);
-  const wOf = volWidths(from, to, full);
+  const wOf = volWidths(from, to, xa != null && xb != null ? xb - xa : 6);
+  const list = [];
   for (let i = from; i <= to; i++) {
     const x = ts.logicalToCoordinate(i), b = ha[i]; if (x == null || !b) continue;
     const yo = series.priceToCoordinate(b.open), yc = series.priceToCoordinate(b.close);
     const yh = series.priceToCoordinate(b.high), yl = series.priceToCoordinate(b.low);
     if (yo == null || yc == null || yh == null || yl == null) continue;
-    c.fillStyle = b.close >= b.open ? '#26a69a' : '#ef5350';
-    c.fillRect(Math.round(x) - 0.5, Math.min(yh, yl), 1, Math.max(1, Math.abs(yl - yh)));     // wick
-    const w = wOf(i), x0 = w >= 3 ? Math.round(x - w / 2) : x - w / 2, ww = w >= 3 ? Math.round(w) : w;
-    c.fillRect(x0, Math.min(yo, yc), ww, Math.max(1, Math.abs(yc - yo)));                       // body
+    list.push({ i, x, yo, yc, yh, yl, w: wOf(i), col: b.close >= b.open ? '#26a69a' : '#ef5350' });
+  }
+  for (const q of list) {                                                     // wicks
+    c.fillStyle = q.col; c.fillRect(Math.round(q.x) - 0.5, Math.min(q.yh, q.yl), 1, Math.max(1, Math.abs(q.yl - q.yh)));
+  }
+  list.sort((a, b) => a.w - b.w);                                             // busy (wide) candles on top
+  for (const q of list) {
+    const x0 = q.w >= 2 ? Math.round(q.x - q.w / 2) : Math.round(q.x) - 0.5, ww = q.w >= 2 ? Math.round(q.w) : 1;
+    c.fillStyle = q.col; c.fillRect(x0, Math.min(q.yo, q.yc), ww, Math.max(1, Math.abs(q.yc - q.yo)));
   }
 }
 function drawKagi() {
