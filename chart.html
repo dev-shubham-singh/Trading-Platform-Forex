@@ -90,6 +90,30 @@
   #tp_go:disabled { opacity:.45; cursor:not-allowed; }
   #tp_cancel { background:var(--line) !important; color:var(--text) !important; flex:0 0 70px !important; }
   #tp_msg { margin-top:6px; line-height:1.4; }
+  #tradebar { height:210px; flex:0 0 auto; border-top:1px solid var(--line); display:flex; flex-direction:column; font-size:12px; }
+  #tradebar .tbh { display:flex; align-items:center; gap:4px; padding:3px 8px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  #tradebar .tbh > button { background:none; border:0; color:var(--muted); padding:4px 10px; border-radius:4px; cursor:pointer; }
+  #tradebar .tbh > button.on { color:var(--text); background:var(--panel); }
+  #tb_sum { flex:1; display:flex; gap:16px; justify-content:flex-end; color:var(--muted); white-space:nowrap; flex-wrap:wrap; padding:0 8px; }
+  #tb_sum b { color:var(--text); font-weight:600; }
+  .pl-up { color:#26a69a !important; } .pl-dn { color:#ef5350 !important; }
+  #tradebar .tbody2 { flex:1; overflow:auto; min-height:0; }
+  #tradebar table { width:100%; border-collapse:collapse; }
+  #tradebar th { position:sticky; top:0; background:var(--bg); color:var(--muted); font-weight:400; text-align:right; padding:3px 8px; border-bottom:1px solid var(--line); }
+  #tradebar td { text-align:right; padding:3px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  #tradebar th:first-child, #tradebar td:first-child { text-align:left; }
+  #tradebar td.side-buy { color:#26a69a; } #tradebar td.side-sell { color:#ef5350; }
+  #tradebar .xbtn { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:3px; padding:1px 8px; cursor:pointer; }
+  #tradebar .xbtn:hover, #tradebar .xbtn.arm { background:#ef5350; border-color:#ef5350; color:#fff; }
+  #tb_closeall { background:none; border:1px solid var(--line) !important; color:var(--text) !important; }
+  #tb_closeall.arm { background:#ef5350 !important; color:#fff !important; border-color:#ef5350 !important; }
+  #tb_hist { display:flex; gap:10px; }
+  #tb_hlist { flex:1 1 55%; overflow:auto; min-width:0; }
+  #tb_growth { flex:1 1 45%; display:flex; flex-direction:column; min-width:0; padding:4px 8px 4px 0; }
+  #tb_gstats { color:var(--muted); line-height:1.6; } #tb_gstats b { color:var(--text); }
+  #tb_curve { flex:1; width:100%; min-height:0; }
+  #tb_empty { color:var(--muted); padding:14px; }
+  #tb_note { color:var(--muted); padding:0 8px; }
   #legend { position:absolute; left:12px; top:8px; z-index:3; pointer-events:none;
             font-size:12px; color:var(--muted); line-height:1.6; }
   #legend .t { color:var(--text); font-weight:500; margin-right:8px; }
@@ -230,9 +254,24 @@
   <div class="note">Source "HA close" calculates on Heikin Ashi values (TradingView's default on an HA chart).
     "Real close" uses actual market prices. Settings are saved automatically.</div>
 </div>
+<div id="tradebar" style="display:none">
+  <div class="tbh">
+    <button data-tab="pos" class="on">Positions <span id="tb_n"></span></button>
+    <button data-tab="hist">History &amp; growth</button>
+    <span id="tb_note"></span>
+    <div id="tb_sum"></div>
+    <button id="tb_closeall" title="Close every open position at market (two clicks)">Close all</button>
+    <button id="tb_hide" title="Hide this panel">&#9662;</button>
+  </div>
+  <div class="tbody2" id="tb_pos"></div>
+  <div class="tbody2" id="tb_hist" style="display:none">
+    <div id="tb_hlist"></div>
+    <div id="tb_growth"><div id="tb_gstats"></div><canvas id="tb_curve"></canvas></div>
+  </div>
+</div>
 <footer><span>Scroll to zoom &middot; drag to pan &middot; click a drawing to select, drag to move, drag its dots to resize &middot;
   Delete removes it &middot; blue dashed line = real bid</span>
-  <span class="tzbox"><span id="clock"></span><select id="tzsel" title="Time zone for the time axis, crosshair, legend and labels"></select></span></footer>
+  <span class="tzbox"><button class="tool mt5only" id="tbtoggle" title="Show / hide your trades, P/L and account growth" style="padding:1px 8px;font-size:11px">Trades &#9652;</button><span id="clock"></span><select id="tzsel" title="Time zone for the time axis, crosshair, legend and labels"></select></span></footer>
 <script>
 if (!window.LightweightCharts) {
   document.getElementById('msg').textContent = 'Could not load the chart library. Check your internet connection and refresh.';
@@ -2198,6 +2237,7 @@ function setStatus(s) {
   $('bid').textContent = fmt(s.bid); $('ask').textContent = fmt(s.ask);
   $('spr').textContent = fmt(s.ask - s.bid);
   bidLine.applyOptions({ price: s.bid });
+  if (typeof renderBar === 'function' && ACC) { renderBar(); if (plan) updatePlan(); }   // P/L, panel and chart move together
 }
 setInterval(() => {
   if (kind === 'tick') { $('cdl').textContent = 'Ticks'; $('cd').textContent = `${tickCnt}/${ivN}`; }
@@ -2499,6 +2539,13 @@ chartEl.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   const { x, y } = local(e);
   if (x > paneW() || y > paneH()) return;            // leave price/time scales to the chart
+  const ph_ = posHits.find(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
+  if (ph_) {                                           // close box on a position line: click twice
+    e.stopPropagation(); e.preventDefault();
+    if (posArm && posArm.ticket === ph_.ticket && Date.now() < posArm.until) { posArm = null; closeTickets([ph_.ticket]); }
+    else { posArm = { ticket: ph_.ticket, until: Date.now() + 3000 }; setTimeout(bump, 3100); }
+    bump(); return;
+  }
   if (plan && planCur && RISK.lotMode === 'auto') {    // grab the planned stop-loss line
     const ys = series.priceToCoordinate(planCur.sl);
     if (ys != null && Math.abs(y - ys) < 7) { e.stopPropagation(); e.preventDefault(); lockChart(true); drag = { kind: 'plansl' }; return; }
@@ -2991,10 +3038,11 @@ async function accTick() {
   } catch (e) { /* server busy; next tick retries */ }
   finally { accBusy = false; }
   if (plan) updatePlan();
+  renderBar();
   bump();
 }
 setInterval(() => {                                   // quick while planning or a position is open, else every 10 s
-  const busy = plan || (ACC && ACC.positions && ACC.positions.length);
+  const busy = plan || (ACC && ACC.all && ACC.all.length) || $('tradebar').style.display !== 'none';
   if (busy || Date.now() - accAt > 10000) accTick();
 }, 1500);
 setInterval(() => { if (plan) updatePlan(); }, 300);  // follow the live price
@@ -3053,7 +3101,7 @@ function computePlan() {
 }
 function openPlan(side) {
   if (plan && plan.side === side && !plan.sending) return closePlan();
-  plan = { side, slManual: null, sending: false };
+  plan = { side, slManual: null, sending: false, done: false, id: Date.now().toString(36) + Math.random().toString(36).slice(2) };
   $('buybtn').classList.toggle('on', side === 'buy'); $('sellbtn').classList.toggle('on', side === 'sell');
   $('tp_title').textContent = (side === 'buy' ? 'BUY ' : 'SELL ') + symbol;
   $('tp_title').style.color = side === 'buy' ? '#26a69a' : '#ef5350';
@@ -3095,13 +3143,13 @@ function updatePlan() {
   if ($('tp_info').innerHTML !== h) $('tp_info').innerHTML = h;
   const go = $('tp_go');
   go.style.background = buy ? '#26a69a' : '#ef5350';
-  go.textContent = plan.sending ? 'Sending...' : `Confirm ${buy ? 'BUY' : 'SELL'}${r && r.lot ? ' ' + r.lot + ' lot' : ''}`;
-  go.disabled = !r || !r.ok || plan.sending || !RISK.live;
+  go.textContent = plan.done ? 'Order placed' : plan.sending ? 'Sending...' : `Confirm ${buy ? 'BUY' : 'SELL'}${r && r.lot ? ' ' + r.lot + ' lot' : ''}`;
+  go.disabled = !r || !r.ok || plan.sending || plan.done || !RISK.live;      // done: never send the same plan twice
   go.title = !RISK.live ? 'Tick "Live orders on" first' : '';
 }
 async function sendOrder() {
   const r = computePlan();
-  if (!plan || !r || !r.ok || plan.sending || !RISK.live) return;
+  if (!plan || !r || !r.ok || plan.sending || plan.done || !RISK.live) return;
   const side = plan.side, buy = side === 'buy';
   plan.sending = true; updatePlan();
   $('tp_msg').style.color = 'var(--muted)'; $('tp_msg').textContent = 'Sending the order to MT5...';
@@ -3109,17 +3157,17 @@ async function sendOrder() {
   try {
     res = await (await fetch('/api/order', { method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Chart-Token': ACC.token },
-      body: JSON.stringify({ symbol, side, volume: r.lot, sl: r.sl, tp: r.tp || 0, risk: r.loss }) })).json();
+      body: JSON.stringify({ symbol, side, volume: r.lot, sl: r.sl, tp: r.tp || 0, risk: r.loss, id: plan.id }) })).json();
   } catch (e) { res = { error: 'Lost connection to the chart server. Check MT5 to see if the order went through.' }; }
   if (!plan) return;
+  if (res.ok) plan.done = true;
   plan.sending = false;
   if (res.ok) {
     $('tp_msg').style.color = '#26a69a';
     $('tp_msg').textContent = `${buy ? 'Bought' : 'Sold'} ${res.volume} ${symbol} at ${fmt(res.price)}, SL ${fmt(r.sl)}` +
       (r.tp ? `, TP ${fmt(r.tp)}` : '') + ` (ticket ${res.ticket}, risk ${money(res.risk)})`;
-    $('tp_go').disabled = true; plan.done = true;
-    accTick();
-    setTimeout(() => { if (plan && plan.done) closePlan(); }, 4000);
+    updatePlan(); accTick(); histTick();
+    setTimeout(() => { if (plan && plan.done) closePlan(); }, 3000);
   } else {
     $('tp_msg').style.color = '#ef5350'; $('tp_msg').textContent = res.error || 'The order was not placed.';
     updatePlan();
@@ -3199,17 +3247,194 @@ function drawPlan(pw) {
   hLine(ys, pw, '#ef5350', 2);
   priceTag(ys, pw, `SL ${fmt(r.sl)}  -${money(r.loss)}` + (RISK.lotMode === 'auto' ? '  ↕ drag' : ''), '#ef5350', true);
 }
+let posHits = [], posArm = null;               // clickable close boxes on the chart; armed = first click done
 function drawPositions(pw) {
+  posHits = [];
   if (SRC !== 'MT5' || !ACC || !ACC.positions) return;
   for (const p of ACC.positions) {
     const y = series.priceToCoordinate(p.open); if (y == null) continue;
-    const col = p.profit >= 0 ? '#26a69a' : '#ef5350';
+    const pl = livePL(p).pl, col = pl >= 0 ? '#26a69a' : '#ef5350';
+    const armed = posArm && posArm.ticket === p.ticket && Date.now() < posArm.until;
     hLine(y, pw, TH().text, 1, [2, 3]);
-    priceTag(y, pw, `${p.side.toUpperCase()} ${p.volume}  ${p.profit >= 0 ? '+' : ''}${money(p.profit)}`, col, false);
+    const txt = `${p.side.toUpperCase()} ${p.volume}  ${pl >= 0 ? '+' : ''}${money(pl)}`;
+    priceTag(y, pw, txt, col, true);
+    ctx.font = '11px sans-serif';
+    const tw = ctx.measureText(txt).width + 10, bx = pw - tw - 4 - (armed ? 128 : 22), bw = armed ? 124 : 18;
+    ctx.fillStyle = armed ? '#ef5350' : TH().text; ctx.fillRect(bx, y - 9, bw, 18);
+    ctx.fillStyle = armed ? '#fff' : TH().bg; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+    ctx.fillText(armed ? 'click again to close' : '\u2715', bx + bw / 2, y); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    posHits.push({ x: bx, y: y - 9, w: bw, h: 18, ticket: p.ticket });
     if (p.sl) { const ys = series.priceToCoordinate(p.sl); if (ys != null) { hLine(ys, pw, '#ef5350', 1, [2, 3]); priceTag(ys, pw, `SL ${fmt(p.sl)}`, '#ef5350', false); } }
     if (p.tp) { const yt = series.priceToCoordinate(p.tp); if (yt != null) { hLine(yt, pw, '#26a69a', 1, [2, 3]); priceTag(yt, pw, `TP ${fmt(p.tp)}`, '#26a69a', false); } }
   }
 }
+
+/* ---------------- trades panel: open positions, live P/L, close, history and account growth ---------------- */
+let HIST = null, histBusy = false, tbTab = 'pos', tbKey = '', tbArm = {}, closing = new Set();
+function livePL(p) {          // the server's P/L, moved on with every live tick for positions on this chart's symbol
+  if (ACC && ACC.sym && p.symbol === symbol && status && status.bid != null && ACC.sym.vpp > 0 && p.cur) {
+    const cur = p.side === 'buy' ? status.bid : status.ask;
+    return { pl: p.profit + (cur - p.cur) * (p.side === 'buy' ? 1 : -1) * p.volume * ACC.sym.vpp, cur };
+  }
+  return { pl: p.profit, cur: p.cur };
+}
+async function postJSON(path, body) {
+  try {
+    return await (await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Chart-Token': ACC.token },
+                                      body: JSON.stringify(body) })).json();
+  } catch (e) { return { error: 'Lost connection to the chart server. Check MT5.' }; }
+}
+async function closeTickets(tickets) {            // tickets = null: close everything
+  if (!ACC || !ACC.token) return;
+  (tickets || (ACC.all || []).map(p => p.ticket)).forEach(t => closing.add(t));
+  tbNote('Closing...', '');
+  renderBar(true);
+  const res = await postJSON('/api/close', tickets ? { tickets } : {});
+  (tickets || []).forEach(t => closing.delete(t)); if (!tickets) closing.clear();
+  if (res.results && res.results.length) {
+    const pl = res.results.filter(r => !r.error).reduce((a, r) => a + (r.profit || 0), 0), n = res.results.filter(r => !r.error).length;
+    if (n) tbNote(`Closed ${n} position${n > 1 ? 's' : ''}: ${pl >= 0 ? '+' : ''}${money(pl)}`, pl >= 0 ? 'pl-up' : 'pl-dn');
+  }
+  if (res.error) tbNote(res.error, 'pl-dn');
+  await accTick(); histTick(); renderBar(true);
+}
+function tbNote(t, cls) { $('tb_note').textContent = t; $('tb_note').className = cls || ''; clearTimeout(tbNote.t); tbNote.t = setTimeout(() => $('tb_note').textContent = '', 8000); }
+async function histTick() {
+  if (SRC !== 'MT5' || histBusy || $('tradebar').style.display === 'none') return;
+  histBusy = true;
+  try { const j = await (await fetch('/api/history?days=0')).json(); if (j.deals) { HIST = j.deals; renderHist(); } }
+  catch (e) {} finally { histBusy = false; }
+}
+const dealNet = d => d.profit + d.commission + d.swap + (d.fee || 0);
+const isTrade = d => d.type === 0 || d.type === 1;
+function growthStats() {
+  if (!HIST) return null;
+  let dep = 0, wd = 0, trade = 0, today = 0, wins = 0, losses = 0, n = 0;
+  const day = Math.floor(disp(Date.now() / 1000 + srvOffset) / 86400);
+  for (const d of HIST) {
+    if (d.type === 2) { if (d.profit >= 0) dep += d.profit; else wd -= d.profit; continue; }
+    if (!isTrade(d) && d.type !== 2) { trade += dealNet(d); continue; }        // other money: commission, bonus...
+    trade += dealNet(d);
+    if (d.entry !== 0) { n++; const v = dealNet(d); if (v >= 0) wins++; else losses++; if (Math.floor(disp(d.time) / 86400) === day) today += v; }
+    else if (Math.floor(disp(d.time) / 86400) === day) today += dealNet(d);     // entry commission today
+  }
+  return { dep, wd, trade, today, wins, losses, n, growth: dep > 0 ? trade / dep * 100 : null };
+}
+function liveEquity() {
+  if (!ACC || ACC.error) return null;
+  let e = ACC.equity;
+  for (const p of ACC.all || []) e += livePL(p).pl - p.profit;
+  return e;
+}
+function renderBar(force) {
+  if ($('tradebar').style.display === 'none' || !ACC || ACC.error) return;
+  const all = ACC.all || [], eq = liveEquity();
+  let fl = 0; all.forEach(p => fl += livePL(p).pl);
+  const g = growthStats(), cls = v => v >= 0 ? 'pl-up' : 'pl-dn', sg = v => (v >= 0 ? '+' : '') + money(v);
+  let sum = `<span>Balance <b>${money(ACC.balance)}</b></span><span>Equity <b>${money(eq)}</b></span>` +
+            `<span>Open P/L <b class="${cls(fl)}">${sg(fl)}</b></span>`;
+  if (g) sum += `<span>Today <b class="${cls(g.today + fl)}">${sg(g.today + fl)}</b></span>` +
+                (g.growth != null ? `<span>Growth <b class="${cls(eq - g.dep + g.wd)}">${((eq - g.dep + g.wd) / g.dep * 100).toFixed(1)}%</b> <span title="deposits">of ${money(g.dep)}</span></span>` : '');
+  if ($('tb_sum').innerHTML !== sum) $('tb_sum').innerHTML = sum;
+  $('tb_n').textContent = all.length ? `(${all.length})` : '';
+  $('tb_closeall').style.display = all.length ? '' : 'none';
+  if (tbTab !== 'pos') return;
+  const key = all.map(p => p.ticket).join(',');
+  if (force || key !== tbKey) {
+    tbKey = key;
+    $('tb_pos').innerHTML = !all.length ? '<div id="tb_empty">No open positions. Use Buy / Sell at the top to place a trade.</div>' :
+      `<table><tr><th>Symbol</th><th>Ticket</th><th>Time</th><th>Type</th><th>Lot</th><th>Open</th><th>Price</th><th>S/L</th><th>T/P</th><th>Profit</th><th></th></tr>` +
+      all.map(p => `<tr data-t="${p.ticket}"><td>${p.symbol}</td><td>${p.ticket}</td><td>${fullTime(p.time)}</td>` +
+        `<td class="side-${p.side}">${p.side}</td><td>${p.volume}</td><td>${(+p.open).toFixed(p.digits)}</td><td class="c-cur"></td>` +
+        `<td>${p.sl ? (+p.sl).toFixed(p.digits) : '-'}</td><td>${p.tp ? (+p.tp).toFixed(p.digits) : '-'}</td><td class="c-pl"></td>` +
+        `<td><button class="xbtn" data-close="${p.ticket}" title="Close at market (two clicks)">${closing.has(p.ticket) ? 'Closing...' : '&#10005; Close'}</button></td></tr>`).join('') + '</table>';
+  }
+  for (const p of all) {                                  // live cells, updated in place so buttons keep working
+    const row = $('tb_pos').querySelector(`tr[data-t="${p.ticket}"]`); if (!row) continue;
+    const { pl, cur } = livePL(p);
+    row.querySelector('.c-cur').textContent = cur ? (+cur).toFixed(p.digits) : '-';
+    const c = row.querySelector('.c-pl'); c.textContent = sg(pl); c.className = 'c-pl ' + cls(pl);
+    const b = row.querySelector('.xbtn'), armed = tbArm[p.ticket] && Date.now() < tbArm[p.ticket];
+    const want = closing.has(p.ticket) ? 'Closing...' : armed ? 'Confirm close' : '✕ Close';
+    if (b.textContent !== want) { b.textContent = want; b.classList.toggle('arm', armed); }
+  }
+  const ca = tbArm.all && Date.now() < tbArm.all;
+  $('tb_closeall').textContent = ca ? `Confirm: close all ${all.length}` : 'Close all'; $('tb_closeall').classList.toggle('arm', !!ca);
+}
+function pxFmt(sym, v) {                          // a price with its symbol's decimals
+  const p = (ACC && ACC.all || []).find(x => x.symbol === sym);
+  const dg = sym === symbol ? digits : p ? p.digits : null;
+  return dg != null ? (+v).toFixed(dg) : String(+(+v).toFixed(5));
+}
+function renderHist() {
+  if (!HIST || tbTab !== 'hist') return;
+  const opens = {}; HIST.forEach(d => { if (isTrade(d) && d.entry === 0) opens[d.position] = d; });
+  const closes = HIST.filter(d => isTrade(d) && d.entry !== 0).slice(-200).reverse();
+  $('tb_hlist').innerHTML = !closes.length ? '<div id="tb_empty">No closed trades yet.</div>' :
+    '<table><tr><th>Closed</th><th>Symbol</th><th>Type</th><th>Lot</th><th>Open</th><th>Close</th><th>Profit</th></tr>' +
+    closes.map(d => { const o = opens[d.position], side = d.type === 1 ? 'buy' : 'sell', v = dealNet(d) + (o ? o.commission + (o.fee || 0) : 0);
+      return `<tr><td>${fullTime(d.time)}</td><td>${d.symbol}</td><td class="side-${side}">${side}</td><td>${d.volume}</td>` +
+             `<td>${o ? pxFmt(d.symbol, o.price) : '-'}</td><td>${pxFmt(d.symbol, d.price)}</td><td class="${v >= 0 ? 'pl-up' : 'pl-dn'}">${v >= 0 ? '+' : ''}${money(v)}</td></tr>`; }).join('') + '</table>';
+  const g = growthStats(), eq = liveEquity();
+  if (g) $('tb_gstats').innerHTML = `Deposits <b>${money(g.dep)}</b>` + (g.wd ? ` &middot; withdrawals <b>${money(g.wd)}</b>` : '') +
+    ` &middot; closed trades <b class="${g.trade >= 0 ? 'pl-up' : 'pl-dn'}">${g.trade >= 0 ? '+' : ''}${money(g.trade)}</b>` +
+    ` &middot; ${g.n} trades, ${g.wins} won (${g.n ? Math.round(g.wins / g.n * 100) : 0}%)` +
+    (g.growth != null && eq != null ? ` &middot; account growth <b class="${eq - g.dep + g.wd >= 0 ? 'pl-up' : 'pl-dn'}">${((eq - g.dep + g.wd) / g.dep * 100).toFixed(1)}%</b>` : '');
+  drawCurve();
+}
+function drawCurve() {                             // balance after every deal, plus live equity at the end
+  const c = $('tb_curve'), W = c.clientWidth, H = c.clientHeight, dpr = window.devicePixelRatio || 1;
+  if (!HIST || W < 20 || H < 20) return;
+  c.width = W * dpr; c.height = H * dpr; const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const pts = []; let b = 0;
+  for (const d of HIST) { b += dealNet(d); pts.push(b); }
+  const eq = liveEquity(); if (eq != null) pts.push(eq);
+  if (pts.length < 2) return;
+  const lo = Math.min(...pts), hi = Math.max(...pts), pad = (hi - lo) * 0.1 || 1, y = v => H - 14 - (v - lo + pad) / (hi - lo + 2 * pad) * (H - 22);
+  const x = i => 4 + i / (pts.length - 1) * (W - 96);
+  const first = pts[0], col = pts[pts.length - 1] >= first ? '#26a69a' : '#ef5350';
+  g.beginPath(); pts.forEach((v, i) => i ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v)));
+  g.lineTo(x(pts.length - 1), H - 2); g.lineTo(x(0), H - 2); g.closePath(); g.fillStyle = rgba(col, 0.12); g.fill();
+  g.beginPath(); pts.forEach((v, i) => i ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v))); g.strokeStyle = col; g.lineWidth = 1.5; g.stroke();
+  g.fillStyle = TH().text; g.font = '11px sans-serif'; g.textBaseline = 'middle';
+  g.fillText(money(pts[pts.length - 1]), x(pts.length - 1) + 6, y(pts[pts.length - 1]));
+  g.fillStyle = getComputedStyle(document.body).getPropertyValue('--muted'); g.textAlign = 'right'; g.fillText(`high ${money(hi)}`, W - 2, 8); g.textAlign = 'left';
+}
+function showBar(on) {
+  $('tradebar').style.display = on ? 'flex' : 'none';
+  $('tbtoggle').innerHTML = on ? 'Trades &#9662;' : 'Trades &#9652;';
+  store.set('gc_tbar', on);
+  if (on) { accTick(); histTick(); renderBar(true); }
+}
+$('tbtoggle').onclick = () => showBar($('tradebar').style.display === 'none');
+$('tb_hide').onclick = () => showBar(false);
+document.querySelectorAll('#tradebar [data-tab]').forEach(b => b.onclick = () => {
+  tbTab = b.dataset.tab;
+  document.querySelectorAll('#tradebar [data-tab]').forEach(x => x.classList.toggle('on', x === b));
+  $('tb_pos').style.display = tbTab === 'pos' ? '' : 'none'; $('tb_hist').style.display = tbTab === 'hist' ? '' : 'none';
+  if (tbTab === 'hist') { histTick(); renderHist(); } else renderBar(true);
+});
+$('tb_pos').addEventListener('click', e => {
+  const b = e.target.closest('[data-close]'); if (!b) return;
+  const t = +b.dataset.close; if (closing.has(t)) return;
+  if (tbArm[t] && Date.now() < tbArm[t]) { delete tbArm[t]; closeTickets([t]); }
+  else { tbArm[t] = Date.now() + 3000; renderBar(); }
+});
+$('tb_closeall').onclick = () => {
+  if (tbArm.all && Date.now() < tbArm.all) { delete tbArm.all; closeTickets(null); }
+  else { tbArm.all = Date.now() + 3000; renderBar(); }
+};
+setInterval(() => {
+  renderBar();
+  if (tbTab === 'hist' && $('tradebar').style.display !== 'none') drawCurve();
+  if (ACC && ACC.positions && ACC.positions.length) bump();      // keep the P/L on the chart's position lines live
+}, 300);
+setInterval(histTick, 15000);
+let lastPosN = -1;
+setInterval(() => {                                   // a position closed by SL / TP: refresh the history
+  const n = ACC && ACC.all ? ACC.all.length : -1;
+  if (n !== lastPosN) { if (lastPosN >= 0) histTick(); lastPosN = n; }
+}, 1000);
 
 (async () => {
   try {
@@ -3234,6 +3459,7 @@ function drawPositions(pw) {
     await setSymbol(want);
     if (!symMeta && want !== list.default) await setSymbol(list.default);    // e.g. an expired contract
     booted = true; applySync();
+    if (SRC === 'MT5' && store.get('gc_tbar', true)) showBar(true);
   } catch (e) {
     $('msg').textContent = 'Could not reach the chart server. Start it first, then refresh this page.';
   }

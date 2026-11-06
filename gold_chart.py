@@ -22,7 +22,7 @@ import sys
 import threading
 import time
 import webbrowser
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -45,7 +45,9 @@ PORT = 8765
 POLL_SEC = 0.25          # how often new ticks are pulled from MT5
 MAX_BARS_SENT = 60000    # newest bars sent to the browser for tick-built charts
 ALLOW_TRADING = True     # False = the chart can never send orders (Buy / Sell panel only shows the plan)
-ORDER_DEVIATION = 20     # max slippage in points for market orders
+ORDER_DEVIATION = 20     # minimum slippage allowed for market orders, in points
+SLIPPAGE_SPREADS = 1     # ...or this many times the current spread, whichever is larger (avoids requotes on gold)
+ORDER_RETRIES = 4        # requote / price changed: try again on a fresh price this many times
 RISK_TOLERANCE = 1.25    # refuse an order if price moved so the loss at SL is over 1.25x the risk you confirmed
 ORDER_MAGIC = 26110601   # tags this chart's orders in MT5
 # ------------------------------------------
@@ -478,33 +480,113 @@ def value_per_price(sym, info, price):
     return float(tv) / float(ts_) if tv and ts_ else 0.0
 
 
+def pos_dict(p):
+    return {"ticket": p.ticket, "symbol": p.symbol, "side": "buy" if p.type == mt5.POSITION_TYPE_BUY else "sell",
+            "volume": p.volume, "open": p.price_open, "cur": getattr(p, "price_current", 0), "sl": p.sl, "tp": p.tp,
+            "profit": p.profit, "swap": getattr(p, "swap", 0), "magic": p.magic, "time": p.time,
+            "digits": SYMBOL_DIGITS.get(p.symbol, 5)}
+
+
+SYMBOL_DIGITS = {}
+
+
 def account(sym):
     with MT5_LOCK:
         acc = mt5.account_info()
         info = mt5.symbol_info(sym)
         tk = mt5.symbol_info_tick(sym)
         term = mt5.terminal_info()
-        pos = mt5.positions_get(symbol=sym) or ()
+        allpos = mt5.positions_get() or ()
+        for p in allpos:
+            if p.symbol not in SYMBOL_DIGITS:
+                si = mt5.symbol_info(p.symbol)
+                SYMBOL_DIGITS[p.symbol] = si.digits if si else 5
         vpp = value_per_price(sym, info, tk.bid) if info and tk else 0.0
     if not acc or not info:
         return {"error": "MT5 account or symbol not available"}
     algo = bool(getattr(term, "trade_allowed", True)) if term else True
+    allp = [pos_dict(p) for p in allpos]
     return {
         "token": TOKEN, "allow": ALLOW_TRADING, "algo": algo, "accTrade": bool(getattr(acc, "trade_allowed", True)),
         "login": acc.login, "server": acc.server, "currency": acc.currency, "balance": acc.balance, "equity": acc.equity,
-        "freeMargin": getattr(acc, "margin_free", 0), "leverage": getattr(acc, "leverage", 0),
+        "profit": getattr(acc, "profit", 0), "margin": getattr(acc, "margin", 0), "freeMargin": getattr(acc, "margin_free", 0),
+        "marginLevel": getattr(acc, "margin_level", 0), "leverage": getattr(acc, "leverage", 0),
         "sym": {"name": sym, "digits": info.digits, "point": info.point, "vmin": info.volume_min, "vmax": info.volume_max,
                 "vstep": info.volume_step, "stops": getattr(info, "trade_stops_level", 0) * info.point,
                 "contract": getattr(info, "trade_contract_size", 0), "vpp": vpp,
                 "tradeMode": getattr(info, "trade_mode", 4)},
-        "positions": [{"ticket": p.ticket, "side": "buy" if p.type == mt5.POSITION_TYPE_BUY else "sell",
-                       "volume": p.volume, "open": p.price_open, "sl": p.sl, "tp": p.tp, "profit": p.profit,
-                       "magic": p.magic, "time": p.time} for p in pos],
+        "positions": [p for p in allp if p["symbol"] == sym],
+        "all": allp,
     }
+
+
+def history(days):
+    """Every deal (trades, deposits, withdrawals) of the last `days` days, for the trade history and growth curve."""
+    now = datetime.now(timezone.utc) + timedelta(days=2)          # broker clock may run ahead of UTC
+    start = datetime(2000, 1, 1, tzinfo=timezone.utc) if days <= 0 else now - timedelta(days=days + 2)
+    with MT5_LOCK:
+        deals = mt5.history_deals_get(start, now) or ()
+    out = []
+    for d in deals:
+        out.append({"ticket": d.ticket, "time": d.time, "type": d.type, "entry": d.entry, "symbol": d.symbol,
+                    "volume": d.volume, "price": d.price, "profit": d.profit, "commission": d.commission,
+                    "swap": d.swap, "fee": getattr(d, "fee", 0), "position": d.position_id, "comment": d.comment})
+    out.sort(key=lambda d: (d["time"], d["ticket"]))
+    return {"deals": out}
 
 
 def round_step(v, step):
     return round(round(v / step) * step, 8)
+
+
+RETRY_CODES = (10004, 10020, 10021)       # requote, price changed, no quotes: retry on a fresh price
+SENT_IDS = {}                             # order ids that already went through (refuse a repeat click)
+
+
+def market_deal(sym, info, buy, vol, sl=0.0, tp=0.0, position=None, comment="", check=None):
+    """Send a market deal, retrying requotes on a fresh price. check(price) may veto (returns an error text).
+    Slippage allowed: ORDER_DEVIATION points or SLIPPAGE_SPREADS x the current spread, whichever is larger.
+    Call with MT5_LOCK held."""
+    otype = mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL
+    fm = getattr(info, "filling_mode", 0)
+    fills = ([mt5.ORDER_FILLING_FOK] if fm & 1 else []) + ([mt5.ORDER_FILLING_IOC] if fm & 2 else []) + [mt5.ORDER_FILLING_RETURN]
+    res, fi, tries = None, 0, 0
+    while tries < ORDER_RETRIES:
+        tries += 1
+        tk = mt5.symbol_info_tick(sym)
+        if not tk:
+            return None, "no price for " + sym
+        price = tk.ask if buy else tk.bid
+        if check:
+            err = check(tk, price)
+            if err:
+                return None, err
+        dev = max(ORDER_DEVIATION, int(round(SLIPPAGE_SPREADS * (tk.ask - tk.bid) / info.point)))
+        req = {"action": mt5.TRADE_ACTION_DEAL, "symbol": sym, "volume": vol, "type": otype, "price": price,
+               "deviation": dev, "magic": ORDER_MAGIC, "comment": comment, "type_time": mt5.ORDER_TIME_GTC,
+               "type_filling": fills[fi]}
+        if position:
+            req["position"] = position
+        else:
+            req["sl"] = round(sl, info.digits)
+            req["tp"] = round(tp, info.digits) if tp else 0.0
+        res = mt5.order_send(req)
+        if res is None:
+            return None, f"MT5 did not accept the order: {mt5.last_error()}"
+        if res.retcode == 10030 and fi < len(fills) - 1:     # fill mode not supported: try the next one
+            fi += 1; tries -= 1
+            continue
+        if res.retcode in RETRY_CODES:
+            time.sleep(0.15)
+            continue
+        break
+    return res, None
+
+
+def deal_result(res):
+    if res.retcode in (mt5.TRADE_RETCODE_DONE, 10008, 10010):
+        return None
+    return f"{RETCODE_TEXT.get(res.retcode, 'rejected')} (code {res.retcode}{', ' + res.comment if res.comment else ''})"
 
 
 def place_order(req):
@@ -513,57 +595,88 @@ def place_order(req):
         return {"error": "Trading is turned off in gold_chart.py (ALLOW_TRADING = False)."}
     sym, side = str(req.get("symbol", "")), req.get("side")
     vol, sl, tp = float(req.get("volume", 0)), float(req.get("sl", 0)), float(req.get("tp", 0) or 0)
-    max_risk = float(req.get("risk", 0))
+    max_risk, oid = float(req.get("risk", 0)), str(req.get("id", ""))[:64]
     if side not in ("buy", "sell"):
         return {"error": "side must be buy or sell"}
     if not sl > 0:
         return {"error": "a stop loss is required"}
     if not max_risk > 0:
         return {"error": "risk amount missing"}
+    if oid and oid in SENT_IDS:
+        return {"error": "this order was already placed (ticket %s); press Buy / Sell again for a new one" % SENT_IDS[oid]}
+    buy = side == "buy"
     with MT5_LOCK:
         info = mt5.symbol_info(sym)
-        tk = mt5.symbol_info_tick(sym)
-        if not info or not tk:
+        if not info:
             return {"error": f"symbol {sym} not available"}
         step = info.volume_step or 0.01
         vol = round_step(vol, step)
         if vol < info.volume_min - 1e-9 or vol > info.volume_max + 1e-9:
             return {"error": f"lot {vol} is outside {info.volume_min} - {info.volume_max}"}
-        buy = side == "buy"
-        price = tk.ask if buy else tk.bid
         stops = getattr(info, "trade_stops_level", 0) * info.point
-        if buy and not sl < tk.bid - stops or not buy and not sl > tk.ask + stops:
-            return {"error": f"stop loss {sl} is on the wrong side of price or closer than the broker allows ({stops:g}). Price moved? Try again."}
-        if tp and (buy and not tp > tk.ask + stops or not buy and not tp < tk.bid - stops):
-            return {"error": f"take profit {tp} is on the wrong side of price"}
         otype = mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL
-        loss = mt5.order_calc_profit(otype, sym, vol, price, sl)
-        loss = abs(loss) if loss is not None else vol * value_per_price(sym, info, price) * abs(price - sl)
-        if loss > max_risk * RISK_TOLERANCE + 1e-9:
-            return {"error": f"price moved: the loss at your stop is now {loss:.2f} {mt5.account_info().currency}, "
-                             f"over the {max_risk:.2f} you confirmed. Check the panel and confirm again."}
-        fm = getattr(info, "filling_mode", 0)
-        fills = ([mt5.ORDER_FILLING_FOK] if fm & 1 else []) + ([mt5.ORDER_FILLING_IOC] if fm & 2 else []) + [mt5.ORDER_FILLING_RETURN]
-        res = None
-        for fill in fills:
-            res = mt5.order_send({
-                "action": mt5.TRADE_ACTION_DEAL, "symbol": sym, "volume": vol, "type": otype, "price": price,
-                "sl": round(sl, info.digits), "tp": round(tp, info.digits) if tp else 0.0, "deviation": ORDER_DEVIATION,
-                "magic": ORDER_MAGIC, "comment": "chart " + side, "type_time": mt5.ORDER_TIME_GTC, "type_filling": fill})
-            if res is None or res.retcode != 10030:
-                break
-        err = None if res else str(mt5.last_error())
-    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {side.upper()} {vol} {sym} sl={sl} tp={tp} risk={loss:.2f} -> "
-    if res is None:
-        msg = f"MT5 did not accept the order: {err}"
-        log_order(line + msg)
-        return {"error": msg}
-    if res.retcode == mt5.TRADE_RETCODE_DONE or res.retcode == 10008:
-        log_order(line + f"done ticket={res.order} price={res.price}")
-        return {"ok": True, "ticket": res.order, "price": res.price, "volume": res.volume, "risk": loss}
-    msg = f"{RETCODE_TEXT.get(res.retcode, 'rejected')} (code {res.retcode}{', ' + res.comment if res.comment else ''})"
-    log_order(line + msg)
-    return {"error": msg}
+        cur = mt5.account_info().currency
+        risk = [0.0]
+
+        def check(tk, price):
+            if buy and not sl < tk.bid - stops or not buy and not sl > tk.ask + stops:
+                return f"stop loss {sl} is on the wrong side of price or closer than the broker allows ({stops:g}). Price moved? Try again."
+            if tp and (buy and not tp > tk.ask + stops or not buy and not tp < tk.bid - stops):
+                return f"take profit {tp} is on the wrong side of price"
+            loss = mt5.order_calc_profit(otype, sym, vol, price, sl)
+            loss = abs(loss) if loss is not None else vol * value_per_price(sym, info, price) * abs(price - sl)
+            risk[0] = loss
+            if loss > max_risk * RISK_TOLERANCE + 1e-9:
+                return (f"price moved: the loss at your stop is now {loss:.2f} {cur}, over the {max_risk:.2f} you "
+                        f"confirmed. Check the panel and confirm again.")
+            return None
+
+        res, err = market_deal(sym, info, buy, vol, sl, tp, comment="chart " + side, check=check)
+    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {side.upper()} {vol} {sym} sl={sl} tp={tp} risk={risk[0]:.2f} -> "
+    if err:
+        log_order(line + err)
+        return {"error": err}
+    bad = deal_result(res)
+    if bad:
+        log_order(line + bad)
+        return {"error": bad}
+    if oid:
+        SENT_IDS[oid] = res.order
+    log_order(line + f"done ticket={res.order} price={res.price}")
+    return {"ok": True, "ticket": res.order, "price": res.price, "volume": res.volume, "risk": risk[0]}
+
+
+def close_positions(tickets=None, symbol=None):
+    """Close positions at market (all of them, one symbol's, or the given tickets). Returns per-position results."""
+    if not ALLOW_TRADING:
+        return {"error": "Trading is turned off in gold_chart.py (ALLOW_TRADING = False)."}
+    out = []
+    with MT5_LOCK:
+        pos = list(mt5.positions_get() or ())
+        if tickets is not None:
+            want = {int(t) for t in tickets}
+            pos = [p for p in pos if p.ticket in want]
+            if not pos:
+                return {"error": "that position is not open any more"}
+        if symbol:
+            pos = [p for p in pos if p.symbol == symbol]
+        for p in pos:
+            info = mt5.symbol_info(p.symbol)
+            res, err = market_deal(p.symbol, info, p.type != mt5.POSITION_TYPE_BUY, p.volume, position=p.ticket,
+                                   comment="chart close")
+            bad = err or deal_result(res)
+            pl = None
+            if not bad:
+                deals = mt5.history_deals_get(position=p.ticket) or ()
+                outd = [d for d in deals if d.entry != 0]
+                if outd:
+                    pl = sum(d.profit + d.commission + d.swap + getattr(d, "fee", 0) for d in outd)
+            log_order(f"{datetime.now():%Y-%m-%d %H:%M:%S} CLOSE {p.ticket} {p.volume} {p.symbol} -> "
+                      + (bad or f"done price={res.price} profit={pl if pl is not None else p.profit:.2f}"))
+            out.append({"ticket": p.ticket, "symbol": p.symbol, "error": bad,
+                        "price": None if bad else res.price, "profit": pl if pl is not None else p.profit})
+    errs = [o for o in out if o["error"]]
+    return {"ok": not errs, "results": out, "error": "; ".join(f"#{o['ticket']}: {o['error']}" for o in errs) or None}
 
 
 def log_order(line):
@@ -792,6 +905,8 @@ def make_handler(default_sym):
                     since = q.get("since")
                     rows, extra = get_bars(sym, kind, p, float(since) if since is not None else None)
                     return self.js({"symbol": sym, "kind": kind, "p": p, "bars": rows, "status": status(sym), **extra})
+                if url.path == "/api/history":
+                    return self.js(history(int(q.get("days", "90"))))
                 if url.path == "/api/account":
                     ensure_symbol(sym)
                     return self.js(account(sym))
@@ -817,6 +932,9 @@ def make_handler(default_sym):
                 if url.path == "/api/order":
                     ensure_symbol(str(body.get("symbol", "")))
                     return self.js(place_order(body))
+                if url.path == "/api/close":
+                    t = body.get("tickets")
+                    return self.js(close_positions([int(x) for x in t] if t is not None else None, body.get("symbol") or None))
                 self.send_error(404)
             except Exception as e:
                 self.js({"error": str(e)}, 500)
