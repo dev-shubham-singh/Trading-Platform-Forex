@@ -901,7 +901,7 @@ def make_handler():
                     lst = [{"name": s, "desc": SYMS[s]["desc"], "path": SYMS[s]["path"], "mw": True}
                            for s in watch if s in SYMS]
                     dflt = lst[0]["name"] if lst else "NSE:NIFTY50-INDEX"
-                    return self.js({"default": dflt, "symbols": lst, "search": True, "source": "Fyers",
+                    return self.js({"default": dflt, "symbols": lst, "search": True, "source": "Fyers", "srvOffset": IST,
                                     "watchLabel": "Watchlist (recorded)"})
                 if url.path == "/api/search":
                     return self.js({"symbols": search(q.get("q", ""))})
@@ -914,7 +914,7 @@ def make_handler():
                     add_watch(sym)
                     return self.js({"symbol": sym, "digits": digits_of(info["tick"]), "point": info["tick"],
                                     "desc": info["desc"] + (f"  ·  lot {info['lot']}" if info["lot"] > 1 else ""),
-                                    "box": suggest_box(sym, info["tick"]), "anchor": anchor_of(sym)})
+                                    "box": suggest_box(sym, info["tick"]), "anchor": anchor_of(sym), "srvOffset": IST})
                 if url.path == "/api/bars":
                     ensure_symbol(sym)
                     kind = q.get("kind", "time")

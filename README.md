@@ -18,6 +18,7 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
 - Candle types: Heikin Ashi, normal candles, Renko, Kagi
 - Intervals: seconds, minutes, hours, days, tick charts (e.g. `100t`), any custom value
 - Zoom/pan, invert scale, drawing tools (trend line, horizontal line, box) with colours
+- Time zone menu (bottom right, like TradingView): India time by default, plus UTC, broker time and major world cities; live clock
 - Indicators: EMA, SMMA, SMA, Bollinger Bands, pivot points (any period, R3/S3, history),
   candle high/low liquidity sweeps
 - Strategy indicators: Heikin Ashi BOS bias (two pullback cycles), EMA/SMMA stretch reversal / momentum / limit-breakout

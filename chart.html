@@ -89,7 +89,11 @@
   .row .x { margin-left:auto; padding:2px 8px; }
   .note { color:var(--muted); font-size:11px; margin-top:8px; }
   .empty { color:var(--muted); padding:8px 0; border-top:1px solid var(--line); }
-  footer { padding:4px 12px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
+  footer { padding:4px 12px; border-top:1px solid var(--line); color:var(--muted); font-size:11px;
+           display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  footer .tzbox { display:flex; align-items:center; gap:8px; white-space:nowrap; }
+  #clock { color:var(--text); font-variant-numeric:tabular-nums; }
+  #tzsel { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:4px; padding:2px 4px; font-size:11px; }
 </style>
 </head>
 <body>
@@ -169,8 +173,9 @@
   <div class="note">Source "HA close" calculates on Heikin Ashi values (TradingView's default on an HA chart).
     "Real close" uses actual market prices. Settings are saved automatically.</div>
 </div>
-<footer>Scroll to zoom &middot; drag to pan &middot; click a drawing to select, drag to move, drag its dots to resize &middot;
-  Delete removes it &middot; times are broker server time &middot; blue dashed line = real bid</footer>
+<footer><span>Scroll to zoom &middot; drag to pan &middot; click a drawing to select, drag to move, drag its dots to resize &middot;
+  Delete removes it &middot; blue dashed line = real bid</span>
+  <span class="tzbox"><span id="clock"></span><select id="tzsel" title="Time zone for the time axis, crosshair, legend and labels"></select></span></footer>
 <script>
 if (!window.LightweightCharts) {
   document.getElementById('msg').textContent = 'Could not load the chart library. Check your internet connection and refresh.';
@@ -221,13 +226,51 @@ function realOf(id) {                     // chart time (id) -> real time in sec
   return i == null ? id : raw[i][5];
 }
 const p2 = n => String(n).padStart(2, '0');
+/* ---- Time zone (like TradingView): bars stay on the broker's clock; every time shown is converted ----
+   chart time - srvOffset = real UTC;  + the chosen zone's offset at that moment (daylight saving included). */
+const TZS = [['exchange', 'Broker / exchange'], ['Etc/UTC', 'UTC'], ['Asia/Kolkata', 'Kolkata (India)'],
+  ['America/New_York', 'New York'], ['America/Chicago', 'Chicago'], ['America/Los_Angeles', 'Los Angeles'],
+  ['America/Toronto', 'Toronto'], ['America/Sao_Paulo', 'Sao Paulo'], ['Europe/London', 'London'],
+  ['Europe/Berlin', 'Frankfurt / Berlin'], ['Europe/Paris', 'Paris'], ['Europe/Zurich', 'Zurich'],
+  ['Europe/Moscow', 'Moscow'], ['Africa/Johannesburg', 'Johannesburg'], ['Asia/Dubai', 'Dubai'],
+  ['Asia/Karachi', 'Karachi'], ['Asia/Kathmandu', 'Kathmandu'], ['Asia/Dhaka', 'Dhaka'], ['Asia/Bangkok', 'Bangkok'],
+  ['Asia/Singapore', 'Singapore'], ['Asia/Hong_Kong', 'Hong Kong'], ['Asia/Shanghai', 'Shanghai'],
+  ['Asia/Tokyo', 'Tokyo'], ['Asia/Seoul', 'Seoul'], ['Australia/Sydney', 'Sydney'], ['Pacific/Auckland', 'Auckland']];
+let tzName = 'Asia/Kolkata', srvOffset = 0;
+const tzCache = new Map();
+function tzOffset(zone, utc) {                  // seconds east of UTC for `zone` at UTC time `utc` (seconds)
+  if (zone === 'Etc/UTC') return 0;
+  const key = zone + '|' + Math.floor(utc / 1800);
+  let v = tzCache.get(key);
+  if (v === undefined) {
+    try {
+      const f = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit',
+        day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const p = Object.fromEntries(f.formatToParts(new Date(Math.floor(utc / 1800) * 1800 * 1000)).map(x => [x.type, x.value]));
+      v = (Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) / 1000) - Math.floor(utc / 1800) * 1800;
+    } catch (e) { v = 0; }
+    if (tzCache.size > 20000) tzCache.clear();
+    tzCache.set(key, v);
+  }
+  return v;
+}
+function disp(sec) {                            // broker-clock seconds -> seconds to print in the chosen zone
+  if (tzName === 'exchange') return sec;
+  const utc = sec - srvOffset;
+  return utc + tzOffset(tzName, utc);
+}
+function utcLabel(off) {
+  const sgn = off < 0 ? '-' : '+', a = Math.abs(off), h = Math.floor(a / 3600), m = Math.round((a % 3600) / 60);
+  return `UTC${sgn}${h}${m ? ':' + p2(m) : ''}`;
+}
+function tzNowOffset() { const utc = Date.now() / 1000; return tzName === 'exchange' ? srvOffset : tzOffset(tzName, utc); }
 function fullTime(sec) {
-  const d = new Date(sec * 1000);
+  const d = new Date(disp(sec) * 1000);
   return `${p2(d.getUTCDate())} ${MON[d.getUTCMonth()]} '${String(d.getUTCFullYear()).slice(2)} ` +
          `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}`;
 }
 function axisLabel(t, type) {
-  const d = new Date(realOf(t) * 1000);
+  const d = new Date(disp(realOf(t)) * 1000);
   const hm = `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`;
   if (kind !== 'time') return `${hm}:${p2(d.getUTCSeconds())}`;
   if (type === 0) return String(d.getUTCFullYear());
@@ -754,7 +797,7 @@ function stretchOutcome(s) {
   }
 }
 function tstr(t) {                       // t = chart time (id)
-  const iso = new Date(realOf(t) * 1000).toISOString();
+  const iso = new Date(disp(realOf(t)) * 1000).toISOString();
   return kind === 'time' && tfSec >= 3600 ? iso.slice(5, 16).replace('T', ' ') : iso.slice(11, 19);
 }
 function refreshBos() {
@@ -986,7 +1029,7 @@ function hdojiCalc(ind) {
   }
   ind.hd.sort((x, y) => y.T - x.T);                          // big timeframes first, small ones drawn on top
 }
-const hhmm = sec => { const d = new Date(sec * 1000); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
+const hhmm = sec => { const d = new Date(disp(sec) * 1000); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
 function drawHDoji(pw, ph) {
   const r = ts.getVisibleLogicalRange(); if (!r) return;
   const bottom = inds.some(i => i.type === 'macd' && i.visible !== false && i.series.length) ? ph * MACD_TOP : ph;
@@ -1523,6 +1566,30 @@ async function poll() {
 }
 setInterval(poll, 500);
 
+// ---- time zone menu + clock ----
+tzName = store.get('gc_tz', 'Asia/Kolkata');
+if (!TZS.some(z => z[0] === tzName)) tzName = 'Asia/Kolkata';
+$('tzsel').innerHTML = TZS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+function tzChanged() {
+  const now = Date.now() / 1000;
+  [...$('tzsel').options].forEach(o => {
+    const off = o.value === 'exchange' ? srvOffset : tzOffset(o.value, now);
+    o.textContent = `(${utcLabel(off)}) ${TZS.find(z => z[0] === o.value)[1]}`;
+  });
+  $('tzsel').value = tzName;
+  chart.applyOptions({ localization: { timeFormatter: t => fullTime(realOf(t)) },
+                       timeScale: { tickMarkFormatter: (t, type) => axisLabel(t, type) } });
+  updClock();
+  if (raw.length) legend(null);
+}
+function updClock() {
+  const off = tzNowOffset(), d = new Date(Date.now() + off * 1000);
+  $('clock').textContent = `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())} ${utcLabel(off)}`;
+}
+$('tzsel').onchange = () => { tzName = $('tzsel').value; store.set('gc_tz', tzName); tzChanged(); };
+setInterval(updClock, 1000);
+tzChanged();
+
 let inverted = store.get('gc_invert', false);
 function applyInvert() {
   chart.applyOptions({ rightPriceScale: { invertScale: inverted } });
@@ -1959,6 +2026,7 @@ async function setSymbol(name) {
   if (id !== reqId) return;
   if (m.error) { $('msg').textContent = m.error; return; }
   symMeta = m; digits = m.digits; symbol = m.symbol; anchor = m.anchor || 0;
+  if (m.srvOffset != null && m.srvOffset !== srvOffset) { srvOffset = m.srvOffset; tzChanged(); }
   series.applyOptions({ priceFormat: { type: 'price', precision: digits, minMove: Math.pow(10, -digits) } });
   $('symname').textContent = m.symbol; $('symdesc').textContent = m.desc || '';
   $('boxin').step = m.point;
@@ -2041,6 +2109,8 @@ $('boxin').addEventListener('keydown', e => {
     symbols = list.symbols;
     if (list.source) { SRC = list.source; document.title = `${SRC} Chart`; }
     symSearch = !!list.search; if (list.watchLabel) watchLabel = list.watchLabel;
+    if (list.srvOffset != null) srvOffset = list.srvOffset;
+    tzChanged();
     if (SRC !== 'MT5') {                                    // MACD + volume are only on the MT5 (forex) chart for now
       document.querySelectorAll('.mt5only').forEach(b => b.style.display = 'none');
       inds = inds.filter(i => i.type !== 'macd' && i.type !== 'vol' && i.type !== 'hdoji');

@@ -379,6 +379,48 @@ def live_loop():
         time.sleep(POLL_SEC)
 
 
+# ---------------- broker clock ----------------
+# MT5 times are the broker's server clock. Its offset from real UTC (Exness: usually 0) is measured from a fresh
+# tick: tick time - real time, rounded to 15 minutes. Remembered in broker_tz.json for weekends / closed markets.
+TZ_FILE = HERE / "broker_tz.json"
+_tz = {"offset": None, "at": 0.0}
+
+
+def broker_offset(sym=None):
+    if _tz["offset"] is not None and time.time() - _tz["at"] < 600:
+        return _tz["offset"]
+    found = None
+    try:
+        with MT5_LOCK:
+            names = ([sym] if sym else []) + [s.name for s in (mt5.symbols_get() or []) if getattr(s, "visible", False)][:80]
+            for name in names:
+                tk = mt5.symbol_info_tick(name)
+                if not tk or not tk.time:
+                    continue
+                diff = tk.time - time.time()
+                r = round(diff / 900) * 900
+                if abs(diff - r) < 90 and abs(r) <= 14 * 3600:          # a tick from the last minute or so
+                    found = int(r)
+                    break
+    except Exception as e:
+        print("Could not read the broker clock:", e)
+    if found is not None:
+        if found != _tz["offset"]:
+            try:
+                TZ_FILE.write_text(json.dumps({"offset": found}))
+            except Exception:
+                pass
+        _tz["offset"], _tz["at"] = found, time.time()
+        return found
+    if _tz["offset"] is None:
+        try:
+            _tz["offset"] = int(json.loads(TZ_FILE.read_text())["offset"])
+        except Exception:
+            _tz["offset"] = 0
+    _tz["at"] = time.time()
+    return _tz["offset"]
+
+
 def status(sym):
     with MT5_LOCK:
         tk = mt5.symbol_info_tick(sym)
@@ -433,12 +475,13 @@ def make_handler(default_sym):
                 if url.path in ("/", "/index.html"):
                     return self.send(page, "text/html; charset=utf-8")
                 if url.path == "/api/symbols":
-                    return self.js({"default": default_sym, "symbols": symbol_list()})
+                    return self.js({"default": default_sym, "symbols": symbol_list(), "srvOffset": broker_offset(default_sym)})
                 sym = q.get("symbol") or default_sym
                 if url.path == "/api/meta":
                     info = ensure_symbol(sym)
                     return self.js({"symbol": sym, "digits": info.digits, "point": info.point,
-                                    "desc": getattr(info, "description", ""), "box": suggest_box(sym, info.point)})
+                                    "desc": getattr(info, "description", ""), "box": suggest_box(sym, info.point),
+                                    "srvOffset": broker_offset(sym)})
                 if url.path == "/api/bars":
                     ensure_symbol(sym)
                     kind = q.get("kind", "time")
