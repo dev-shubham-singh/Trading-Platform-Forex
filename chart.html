@@ -2545,6 +2545,15 @@ chartEl.addEventListener('pointerdown', e => {
     if (!closing.has(ph_.ticket)) closeTickets([ph_.ticket]);
     bump(); return;
   }
+  const pl_ = !plan && tool === 'cursor' ? posLineAt(x, y) : null;
+  if (pl_) {                                           // grab an open position's SL / TP (or its entry line)
+    const p = (ACC.positions || []).find(q => q.ticket === pl_.ticket);
+    if (p) {
+      e.stopPropagation(); e.preventDefault(); lockChart(true);
+      posDrag = { ticket: p.ticket, which: pl_.which === 'entry' ? null : pl_.which, fromEntry: pl_.which === 'entry', price: null, sy: y };
+      drag = { kind: 'posline' }; bump(); return;
+    }
+  }
   if (plan && planCur && RISK.lotMode === 'auto') {    // grab the planned stop-loss line
     const ys = series.priceToCoordinate(planCur.sl);
     if (ys != null && Math.abs(y - ys) < 7) { e.stopPropagation(); e.preventDefault(); lockChart(true); drag = { kind: 'plansl' }; return; }
@@ -2572,6 +2581,16 @@ chartEl.addEventListener('mousedown', e => { if (drag || tool !== 'cursor') e.st
 window.addEventListener('pointermove', e => {
   const { x, y } = local(e);
   if (pending) { const pt = ptAt(x, y); if (pt) pending.p2 = pt; }
+  if (drag && drag.kind === 'posline' && posDrag) {
+    const pr = series.coordinateToPrice(y), p = (ACC.positions || []).find(q => q.ticket === posDrag.ticket);
+    if (pr != null && p && Math.abs(y - posDrag.sy) > 2) {
+      if (posDrag.fromEntry) {                          // from the entry line: profit side = TP, loss side = SL
+        const up = pr > p.open; posDrag.which = (up === (p.side === 'buy')) ? 'tp' : 'sl';
+      }
+      posDrag.price = pr; bump();
+    }
+    return;
+  }
   if (drag && drag.kind === 'plansl') {
     const p = series.coordinateToPrice(y);
     if (p != null && plan) { const k = Math.pow(10, digits); plan.slManual = Math.round(p * k) / k; updatePlan(); bump(); }
@@ -2591,6 +2610,15 @@ window.addEventListener('pointermove', e => {
 window.addEventListener('pointerup', e => {
   if (!drag) return;
   if (drag.kind === 'plansl') { drag = null; lockChart(false); return; }
+  if (drag.kind === 'posline') {
+    drag = null; lockChart(false);
+    const d = posDrag; posDrag = null; bump();
+    const p = d && (ACC.positions || []).find(q => q.ticket === d.ticket);
+    if (!p || d.price == null || !d.which) return;     // just a click: nothing changes
+    if (!levelOK(p, d.which, d.price)) { tbNote(`${d.which.toUpperCase()} not moved: it would be on the wrong side of the price`, 'pl-dn'); return; }
+    savePosLevel(p, d.which, d.price);
+    return;
+  }
   if (drag.kind === 'create') {
     const { x, y } = local(e);
     if (pending && Math.hypot(x - drag.sx, y - drag.sy) > 4) commit(pending);   // click-drag finished
@@ -2601,7 +2629,10 @@ window.addEventListener('pointerup', e => {
 });
 document.addEventListener('keydown', e => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
-  if (e.key === 'Escape') { setTool('cursor'); sel = null; lockChart(false); if (plan) closePlan(); }
+  if (e.key === 'Escape') {
+    setTool('cursor'); sel = null; lockChart(false); if (plan) closePlan();
+    if (posDrag) { posDrag = null; drag = null; bump(); }       // cancel a SL / TP drag
+  }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel) { deleteSel(); e.preventDefault(); }
 });
 function deleteSel() { drawings = drawings.filter(d => d.id !== sel); sel = null; saveDrawings(); }
@@ -3248,7 +3279,7 @@ function drawPlan(pw) {
 }
 let posHits = [];                              // clickable close boxes on the chart
 function drawPositions(pw) {
-  posHits = [];
+  posHits = []; posLines = [];
   if (SRC !== 'MT5' || !ACC || !ACC.positions) return;
   for (const p of ACC.positions) {
     const y = series.priceToCoordinate(p.open); if (y == null) continue;
@@ -3263,10 +3294,58 @@ function drawPositions(pw) {
     ctx.fillStyle = armed ? '#fff' : TH().bg; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
     ctx.fillText(armed ? 'closing...' : '\u2715', bx + bw / 2, y); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
     posHits.push({ x: bx, y: y - 9, w: bw, h: 18, ticket: p.ticket });
-    if (p.sl) { const ys = series.priceToCoordinate(p.sl); if (ys != null) { hLine(ys, pw, '#ef5350', 1, [2, 3]); priceTag(ys, pw, `SL ${fmt(p.sl)}`, '#ef5350', false); } }
-    if (p.tp) { const yt = series.priceToCoordinate(p.tp); if (yt != null) { hLine(yt, pw, '#26a69a', 1, [2, 3]); priceTag(yt, pw, `TP ${fmt(p.tp)}`, '#26a69a', false); } }
+    posLines.push({ ticket: p.ticket, which: 'entry', y });
+    const dragging = posDrag && posDrag.ticket === p.ticket ? posDrag : null;
+    for (const which of ['sl', 'tp']) {
+      const moving = dragging && dragging.which === which && dragging.price != null;
+      const price = moving ? dragging.price : p[which];
+      if (!price) continue;
+      const yy = series.priceToCoordinate(price); if (yy == null) continue;
+      const m = levelMoney(p, price), ok = !moving || levelOK(p, which, price);
+      const col = !ok ? '#9e9e9e' : which === 'sl' ? '#ef5350' : '#26a69a';
+      hLine(yy, pw, col, moving ? 2 : 1.5, moving ? [] : [6, 3]);
+      const pct = ACC.balance > 0 ? ` (${m >= 0 ? '+' : ''}${(m / ACC.balance * 100).toFixed(1)}%)` : '';
+      const pend = posPending[p.ticket + which];
+      priceTag(yy, pw, `${which.toUpperCase()} ${fmt(price)}  ${m >= 0 ? '+' : ''}${money(m)}${pct}` +
+        (!ok ? '  wrong side of price' : pend ? '  saving...' : moving ? '' : '  \u2195'), col, true);
+      posLines.push({ ticket: p.ticket, which, y: yy });
+    }
   }
 }
+// ---- drag an open position's SL / TP (or pull a new one out of its entry line); sent to MT5 on release
+let posLines = [], posDrag = null, posPending = {};
+function levelMoney(p, price) {        // account money at this price: negative = loss if hit, positive = profit locked
+  const vpp = ACC && ACC.sym ? ACC.sym.vpp : 0;
+  return (price - p.open) * (p.side === 'buy' ? 1 : -1) * p.volume * vpp;
+}
+function levelOK(p, which, price) {    // SL / TP must be on the right side of the price that triggers them
+  if (!status || status.bid == null) return true;
+  const px = p.side === 'buy' ? status.bid : status.ask, st = ACC && ACC.sym ? ACC.sym.stops : 0;
+  const below = (which === 'sl') === (p.side === 'buy');
+  return below ? price < px - st : price > px + st;
+}
+function posLineAt(x, y) {
+  let best = null, bd = 6;
+  for (const l of posLines) { const d = Math.abs(y - l.y); if (d < bd || (d === bd && l.which !== 'entry')) { bd = d; best = l; } }
+  return best;
+}
+async function savePosLevel(p, which, price) {
+  const k = Math.pow(10, digits); price = Math.round(price * k) / k;
+  const sl = which === 'sl' ? price : p.sl || 0, tp = which === 'tp' ? price : p.tp || 0;
+  const old = p[which]; p[which] = price; posPending[p.ticket + which] = true; bump();
+  const res = await postJSON('/api/modify', { ticket: p.ticket, sl, tp });
+  delete posPending[p.ticket + which];
+  if (res.ok) tbNote(`${which.toUpperCase()} moved to ${fmt(price)}: ${levelMoney(p, price) >= 0 ? '+' : ''}${money(levelMoney(p, price))} if hit`,
+                     levelMoney(p, price) >= 0 ? 'pl-up' : 'pl-dn');
+  else { p[which] = old; tbNote(res.error || 'MT5 did not accept the change', 'pl-dn'); }
+  await accTick(); renderBar(true); bump();
+}
+chartEl.addEventListener('pointermove', e => {           // hover: show that the line can be dragged
+  if (posDrag || drag || tool !== 'cursor' || !posLines.length) return;
+  const { x, y } = local(e);
+  const on = x < paneW() && y < paneH() && posLineAt(x, y) && !posHits.some(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
+  chartEl.style.cursor = on ? 'ns-resize' : '';
+});
 
 /* ---------------- trades panel: open positions, live P/L, close, history and account growth ---------------- */
 let HIST = null, histBusy = false, tbTab = 'pos', tbKey = '', tbArm = {}, closing = new Set();

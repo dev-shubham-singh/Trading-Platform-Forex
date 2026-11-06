@@ -646,6 +646,39 @@ def place_order(req):
     return {"ok": True, "ticket": res.order, "price": res.price, "volume": res.volume, "risk": risk[0]}
 
 
+def modify_position(ticket, sl, tp):
+    """Move an open position's stop loss / take profit (0 = none). Checked against the current price first."""
+    if not ALLOW_TRADING:
+        return {"error": "Trading is turned off in gold_chart.py (ALLOW_TRADING = False)."}
+    with MT5_LOCK:
+        pos = mt5.positions_get(ticket=int(ticket)) or ()
+        if not pos:
+            return {"error": "that position is not open any more"}
+        p = pos[0]
+        info = mt5.symbol_info(p.symbol)
+        tk = mt5.symbol_info_tick(p.symbol)
+        if not info or not tk:
+            return {"error": f"no price for {p.symbol}"}
+        buy = p.type == mt5.POSITION_TYPE_BUY
+        stops = getattr(info, "trade_stops_level", 0) * info.point
+        sl, tp = round(float(sl or 0), info.digits), round(float(tp or 0), info.digits)
+        # a buy's SL / TP trigger on the bid, a sell's on the ask
+        px = tk.bid if buy else tk.ask
+        if sl and (buy and not sl < px - stops or not buy and not sl > px + stops):
+            return {"error": f"stop loss {sl} must be {'below' if buy else 'above'} the current price {px}"
+                             + (f" by at least {stops:g}" if stops else "")}
+        if tp and (buy and not tp > px + stops or not buy and not tp < px - stops):
+            return {"error": f"take profit {tp} must be {'above' if buy else 'below'} the current price {px}"
+                             + (f" by at least {stops:g}" if stops else "")}
+        res = mt5.order_send({"action": mt5.TRADE_ACTION_SLTP, "symbol": p.symbol, "position": p.ticket,
+                              "sl": sl, "tp": tp, "magic": p.magic})
+        err = None if res else f"MT5 did not accept the change: {mt5.last_error()}"
+    bad = err or (None if res.retcode in (mt5.TRADE_RETCODE_DONE, 10008, 10025) else
+                  f"{RETCODE_TEXT.get(res.retcode, 'rejected')} (code {res.retcode}{', ' + res.comment if res.comment else ''})")
+    log_order(f"{datetime.now():%Y-%m-%d %H:%M:%S} MODIFY {p.ticket} {p.symbol} sl={sl} tp={tp} -> " + (bad or "done"))
+    return {"error": bad} if bad else {"ok": True, "ticket": p.ticket, "sl": sl, "tp": tp}
+
+
 def close_positions(tickets=None, symbol=None):
     """Close positions at market (all of them, one symbol's, or the given tickets). Returns per-position results."""
     if not ALLOW_TRADING:
@@ -932,6 +965,8 @@ def make_handler(default_sym):
                 if url.path == "/api/order":
                     ensure_symbol(str(body.get("symbol", "")))
                     return self.js(place_order(body))
+                if url.path == "/api/modify":
+                    return self.js(modify_position(body.get("ticket"), body.get("sl"), body.get("tp")))
                 if url.path == "/api/close":
                     t = body.get("tickets")
                     return self.js(close_positions([int(x) for x in t] if t is not None else None, body.get("symbol") or None))
