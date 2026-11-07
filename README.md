@@ -27,6 +27,9 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
 - Strategy indicators: Heikin Ashi BOS bias (two pullback cycles), EMA/SMMA stretch reversal / momentum / limit-breakout
 - **Volume candles** (tick box next to the chart type): Heikin Ashi or normal candles whose width shows volume;
   **Line** chart type (traditional close line)
+- **Sideways / chop filter**: tick any timeframes; each is judged on its own (closed) candles by EMA 9 / EMA 15 vs
+  SMMA 50 gap in ATR (default), Choppiness Index, ADX, or a 2-of-3 vote. A strip per timeframe (green up, red down,
+  grey sideways), grey shading when sideways, a warning in the Buy / Sell panel and an optional trade block.
 - **Heikin Ashi switch boxes**: every colour flip (green after red / red after green) on any timeframes at once
   (5s–4h + custom), boxed over the chart candles inside it, last N switches per timeframe
 - Gold/forex chart only: MACD pane with doji dots, tick volume, multi-timeframe **doji boxes** (1m–4h, Heikin Ashi or normal)
