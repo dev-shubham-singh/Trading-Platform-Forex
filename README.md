@@ -42,6 +42,9 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
 - **Fixed lot**: the SL is where your lot loses exactly your risk, so it moves with price. The **SL candle** (orange box)
   is the most recent candle whose real low (buy) / high (sell) reached that level.
 - Optional take profit at N x risk. Open positions on the symbol show as dotted lines with live P/L.
+- **Commission** is part of the risk: round-trip commission per lot (detected from your last closed trade on the symbol,
+  or typed in the panel) is added to the loss at SL, so lot size / fixed-lot SL keep the total loss within your risk,
+  and the take profit is placed so the profit *after* commission is N x the total loss. The server's risk check includes it.
 - The server re-checks lot limits, SL side and risk on fresh prices (refuses if the loss at SL grew over 1.25x),
   accepts orders only from the chart page itself, and logs every order to `orders.log`.
 - MT5 must have **Algo Trading** switched on (toolbar button), or MT5 rejects the order.

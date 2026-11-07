@@ -238,6 +238,8 @@
         <input id="tp_lot" type="number" step="0.01" min="0"></div>
       <div class="tpr" id="tp_slrow"><label>Start SL at</label><span>last</span><input id="tp_slb" type="number" min="1" max="50" step="1"><span>candles' low / high</span></div>
       <div class="tpr"><label>Take profit</label><input id="tp_rr" type="number" step="0.5" min="0"><span>&times; risk (0 = none)</span></div>
+      <div class="tpr" title="Round-trip commission (open + close) for 1.00 lot, in your account currency. Exness Standard / Pro accounts: 0. Raw Spread / Zero: your commission per lot both ways."><label>Commission</label><input id="tp_comm" type="number" step="any" min="0">
+        <span id="tp_commsrc" style="color:var(--muted);font-size:11px"></span><button id="tp_commauto" style="display:none;background:none;border:1px solid var(--line);color:var(--text);border-radius:3px;cursor:pointer;font-size:11px;padding:0 5px">auto</button></div>
       <div id="tp_info"></div>
       <label class="tpl"><input type="checkbox" id="tp_live"> Live orders on: Confirm sends a real order to MT5</label>
       <div class="tpb"><button id="tp_go"></button><button id="tp_cancel">Cancel</button></div>
@@ -3093,7 +3095,7 @@ $('boxin').addEventListener('keydown', e => {
 //   Fixed lot: SL = the price where your fixed lot loses exactly your risk -> moves with price; the "SL candle"
 //              is the most recent candle that reached that level
 // Nothing is sent until Confirm, and only with "Live orders on". The server re-checks everything on fresh prices.
-const RISK = Object.assign({ mode: 'pct', pct: 5, usd: 1, lotMode: 'auto', lot: 0.01, rr: 0, slBars: 2, live: false },
+const RISK = Object.assign({ mode: 'pct', pct: 5, usd: 1, lotMode: 'auto', lot: 0.01, rr: 0, slBars: 2, live: false, commMan: {} },
                            store.get('gc_risk', {}));
 let ACC = null, plan = null, planCur = null, accBusy = false, accAt = 0;
 function saveRisk() { store.set('gc_risk', RISK); }
@@ -3138,29 +3140,41 @@ function computePlan() {
   const r = { buy, entry, risk, warn: [], ok: true };
   if (!(vpp > 0)) { r.warn.push('MT5 did not give the value of a price move for this symbol.'); r.ok = false; return r; }
   if (!(risk > 0)) { r.warn.push('Set your risk per trade.'); r.ok = false; return r; }
+  const c = commLot();                    // round-trip commission per 1.00 lot: part of what you lose at the SL
+  r.commLot = c;
   if (RISK.lotMode === 'fixed') {
     r.lot = Math.max(S.vmin, Math.min(S.vmax, Math.round((+RISK.lot || S.vmin) / S.vstep) * S.vstep));
     r.lot = +r.lot.toFixed(8);
-    const dist = risk / (r.lot * vpp);
+    const left = risk - r.lot * c;        // risk left for the price move after paying commission
+    if (!(left > 0)) {
+      r.warn.push(`The commission alone (${money(r.lot * c)}) is your whole risk of ${money(risk)}. Raise your risk or use a smaller lot.`);
+      r.ok = false;
+    }
+    const dist = Math.max(left, 0) / (r.lot * vpp) || Math.max(S.point, S.stops) * 2;
     r.sl = buy ? roundPx(entry - dist, 1) : roundPx(entry + dist, -1);      // rounded toward entry: never over your risk
   } else {
     r.sl = plan.slManual != null ? plan.slManual : defaultSL(buy);
-    const dist = Math.abs(entry - r.sl);
-    let lot = dist > 0 ? Math.floor(risk / (dist * vpp) / S.vstep + 1e-9) * S.vstep : 0;
+    const dist = Math.abs(entry - r.sl), perLot = dist * vpp + c;            // money lost per 1.00 lot at the SL
+    let lot = dist > 0 ? Math.floor(risk / perLot / S.vstep + 1e-9) * S.vstep : 0;
     lot = Math.min(S.vmax, lot);
     if (lot < S.vmin - 1e-9) {
-      r.warn.push(`The smallest lot (${S.vmin}) would lose ${money(S.vmin * dist * vpp)} at this SL, more than your ` +
-                  `${money(risk)}. Drag the SL closer or raise your risk.`);
+      r.warn.push(`The smallest lot (${S.vmin}) would lose ${money(S.vmin * perLot)} at this SL` + (c ? ' (commission included)' : '') +
+                  `, more than your ${money(risk)}. Drag the SL closer or raise your risk.`);
       lot = S.vmin; r.ok = false;
     }
     r.lot = +lot.toFixed(8);
   }
-  r.dist = Math.abs(entry - r.sl); r.loss = r.lot * r.dist * vpp;
-  if (buy ? !(r.sl < status.bid - S.stops) : !(r.sl > status.ask + S.stops)) {
+  r.dist = Math.abs(entry - r.sl); r.comm = r.lot * c;
+  r.priceLoss = r.lot * r.dist * vpp; r.loss = r.priceLoss + r.comm;
+  if (r.ok && (buy ? !(r.sl < status.bid - S.stops) : !(r.sl > status.ask + S.stops))) {
     r.warn.push(`The SL must be ${buy ? 'below' : 'above'} the price` + (S.stops ? ` by at least ${fmt(S.stops)} (broker minimum).` : '.'));
     r.ok = false;
   }
-  if (RISK.rr > 0) { r.tp = roundPx(buy ? entry + r.dist * RISK.rr : entry - r.dist * RISK.rr, 0); r.gain = r.lot * Math.abs(r.tp - entry) * vpp; }
+  if (RISK.rr > 0) {                      // TP where the profit AFTER commission = R:R x your total loss at the SL
+    const gross = RISK.rr * r.loss + r.comm, d = gross / (r.lot * vpp);
+    r.tp = buy ? roundPx(entry + d, 1) : roundPx(entry - d, -1);            // rounded away: never under the R:R
+    r.gain = r.lot * Math.abs(r.tp - entry) * vpp - r.comm;
+  }
   r.slc = slCandle(buy, r.sl);
   if (!ACC.allow) { r.warn.push('Trading is turned off in gold_chart.py (ALLOW_TRADING = False).'); r.ok = false; }
   if (!ACC.algo) { r.warn.push("Algo Trading is OFF in MT5. Click the 'Algo Trading' button in the MT5 toolbar (it turns green)."); r.ok = false; }
@@ -3177,6 +3191,7 @@ function openPlan(side) {
   $('tp_rm').value = RISK.mode; $('tp_rv').value = RISK.mode === 'pct' ? RISK.pct : RISK.usd;
   $('tp_lm').value = RISK.lotMode; $('tp_lot').value = RISK.lot; $('tp_slb').value = RISK.slBars; $('tp_rr').value = RISK.rr;
   $('tp_live').checked = !!RISK.live; $('tp_msg').textContent = '';
+  showComm();
   $('tradep').style.display = 'block';
   layoutPlanForm(); accTick(); updatePlan(); keepPanelOnScreen(); bump();
 }
@@ -3192,6 +3207,7 @@ function layoutPlanForm() {
 }
 function updatePlan() {
   if (!plan) return;
+  showComm();
   const old = planCur, r = planCur = computePlan(), buy = plan.side === 'buy';
   if (!old || !r || old.sl !== r.sl || old.entry !== r.entry || old.lot !== r.lot || old.tp !== r.tp || old.slc !== r.slc) bump();
   $('tp_acc').textContent = ACC && !ACC.error ? `Balance ${money(ACC.balance)}` : ACC && ACC.error ? ACC.error : 'reading account...';
@@ -3205,7 +3221,9 @@ function updatePlan() {
       ? `<div>SL candle <b style="color:#ff9800">${tstr(raw[r.slc][0])}</b> <span class="m">${raw.length - 1 - r.slc} candles back, the last one whose ${buy ? 'low' : 'high'} reached your SL</span></div>`
       : `<div>SL candle <span class="m">no candle in the last ${Math.min(raw.length, 5000)} reached this level</span></div>`;
     h += `<div>Lot <b>${r.lot}</b> &middot; loss at SL <b style="color:#ef5350">${money(r.loss)}</b><span class="m">${pc}</span></div>`;
-    if (r.tp) h += `<div>Take profit <b style="color:#26a69a">${fmt(r.tp)}</b> &middot; gain <b style="color:#26a69a">${money(r.gain)}</b></div>`;
+    if (r.comm > 0) h += `<div class="m">= ${money(r.priceLoss)} price move + ${money(r.comm)} commission</div>`;
+    if (r.tp) h += `<div>Take profit <b style="color:#26a69a">${fmt(r.tp)}</b> &middot; gain <b style="color:#26a69a">${money(r.gain)}</b>` +
+                   (r.comm > 0 ? ' <span class="m">after commission</span>' : '') + ` <span class="m">(${(r.gain / r.loss).toFixed(2)} R)</span></div>`;
     h += `<div class="m">Your risk: ${money(r.risk)}${RISK.mode === 'pct' ? ` (${RISK.pct}% of balance)` : ''}</div>`;
     r.warn.forEach(w => h += `<div class="w">${w}</div>`);
   } else h = '<div class="m">Waiting for the account and price from MT5...</div>';
@@ -3237,7 +3255,7 @@ async function sendOrder() {
   try {
     res = await (await fetch('/api/order', { method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Chart-Token': ACC.token },
-      body: JSON.stringify({ symbol, side, volume: r.lot, sl: r.sl, tp: r.tp || 0, risk: r.loss, id: plan.id }) })).json();
+      body: JSON.stringify({ symbol, side, volume: r.lot, sl: r.sl, tp: r.tp || 0, risk: r.loss, commission: r.commLot, id: plan.id }) })).json();
   } catch (e) { res = { error: 'Lost connection to the chart server. Check MT5 to see if the order went through.' }; }
   if (!plan) return;
   if (res.ok) plan.done = true;
@@ -3286,6 +3304,25 @@ $('tp_lot').oninput = () => { const v = Number($('tp_lot').value); if (v > 0) { 
 $('tp_slb').oninput = () => { const v = Math.round(Number($('tp_slb').value)); if (v >= 1) { RISK.slBars = Math.min(50, v); if (plan) plan.slManual = null; saveRisk(); updatePlan(); bump(); } };
 $('tp_rr').oninput = () => { const v = Number($('tp_rr').value); if (v >= 0) { RISK.rr = v; saveRisk(); updatePlan(); bump(); } };
 $('tp_live').onchange = () => { RISK.live = $('tp_live').checked; saveRisk(); updatePlan(); };
+// ---- commission: typed by you (per symbol) or detected from your last closed trade on the symbol
+function commLot() {
+  const man = (RISK.commMan || {})[symbol];
+  if (man != null) return man;
+  return ACC && ACC.commDetected > 0 ? ACC.commDetected : 0;
+}
+function showComm() {
+  const man = (RISK.commMan || {})[symbol];
+  if (document.activeElement !== $('tp_comm')) $('tp_comm').value = +commLot().toFixed(4);
+  $('tp_commsrc').textContent = man != null ? 'per lot, round trip (yours)'
+    : ACC && ACC.commDetected > 0 ? 'per lot, round trip (from your last trade)'
+    : ACC && ACC.commDetected === 0 ? 'none on your last trade' : 'no closed trade found: type yours';
+  $('tp_commauto').style.display = man != null ? '' : 'none';
+}
+$('tp_comm').oninput = () => {
+  const v = Number($('tp_comm').value);
+  if ($('tp_comm').value !== '' && v >= 0) { RISK.commMan = RISK.commMan || {}; RISK.commMan[symbol] = v; saveRisk(); showComm(); updatePlan(); bump(); }
+};
+$('tp_commauto').onclick = () => { if (RISK.commMan) delete RISK.commMan[symbol]; saveRisk(); $('tp_comm').blur(); showComm(); updatePlan(); bump(); };
 function priceTag(y, pw, txt, col, solid) {
   ctx.font = '11px sans-serif';
   const w = ctx.measureText(txt).width + 10, x = pw - w - 4;
@@ -3364,9 +3401,9 @@ function drawPositions(pw) {
 }
 // ---- drag an open position's SL / TP (or pull a new one out of its entry line); sent to MT5 on release
 let posLines = [], posDrag = null, posPending = {};
-function levelMoney(p, price) {        // account money at this price: negative = loss if hit, positive = profit locked
+function levelMoney(p, price) {        // account money at this price, after commission: negative = loss if hit
   const vpp = ACC && ACC.sym ? ACC.sym.vpp : 0;
-  return (price - p.open) * (p.side === 'buy' ? 1 : -1) * p.volume * vpp;
+  return (price - p.open) * (p.side === 'buy' ? 1 : -1) * p.volume * vpp - commLot() * p.volume;
 }
 function levelOK(p, which, price) {    // SL / TP must be on the right side of the price that triggers them
   if (!status || status.bid == null) return true;
@@ -3671,9 +3708,11 @@ function rpOpen(side, lot, sl, tp) {
   const p = { ticket: t, symbol, side, volume: lot, open: price, cur: buy ? status.bid : status.ask, sl, tp, profit: 0, swap: 0,
               magic: 0, time: RP.t, digits };
   p.profit = (p.cur - p.open) * (buy ? 1 : -1) * lot * rpVpp();
+  const comm = commLot() * lot;           // round-trip commission, charged when the trade opens
+  RP.bal -= comm;
   RP.pos.push(p);
   RP.deals.push({ ticket: 10000 + RP.deals.length, time: RP.t, type: buy ? 0 : 1, entry: 0, symbol, volume: lot, price,
-                  profit: 0, commission: 0, swap: 0, fee: 0, position: t, comment: 'practice' });
+                  profit: 0, commission: -comm, swap: 0, fee: 0, position: t, comment: 'practice' });
   rpView(); bump();
   return p;
 }

@@ -488,6 +488,36 @@ def pos_dict(p):
 
 
 SYMBOL_DIGITS = {}
+COMM_CACHE = {}        # symbol -> (checked_at, round-trip commission per 1.00 lot or None)
+
+
+def detect_commission(sym):
+    """Round-trip commission per 1.00 lot, read from your most recent closed trade on this symbol
+    (all its deals' commission / its lot size). None = no closed trade in the last 90 days. Call with MT5_LOCK held."""
+    hit = COMM_CACHE.get(sym)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    val = None
+    try:
+        now = datetime.now(timezone.utc) + timedelta(days=2)
+        deals = [d for d in (mt5.history_deals_get(now - timedelta(days=92), now) or ())
+                 if d.symbol == sym and d.type in (0, 1)]
+        by_pos = {}
+        for d in deals:
+            by_pos.setdefault(d.position_id, []).append(d)
+        for pid in sorted(by_pos, key=lambda k: max(d.time for d in by_pos[k]), reverse=True):
+            ds = by_pos[pid]
+            ins = [d for d in ds if d.entry == 0]
+            if not ins or not any(d.entry != 0 for d in ds):
+                continue                                  # still open: its closing commission is not known yet
+            vol = sum(d.volume for d in ins)
+            if vol > 0:
+                val = round(abs(sum(d.commission + getattr(d, "fee", 0) for d in ds)) / vol, 4)
+                break
+    except Exception:
+        val = None
+    COMM_CACHE[sym] = (time.time(), val)
+    return val
 
 
 def account(sym):
@@ -502,6 +532,7 @@ def account(sym):
                 si = mt5.symbol_info(p.symbol)
                 SYMBOL_DIGITS[p.symbol] = si.digits if si else 5
         vpp = value_per_price(sym, info, tk.bid) if info and tk else 0.0
+        comm = detect_commission(sym)
     if not acc or not info:
         return {"error": "MT5 account or symbol not available"}
     algo = bool(getattr(term, "trade_allowed", True)) if term else True
@@ -515,6 +546,7 @@ def account(sym):
                 "vstep": info.volume_step, "stops": getattr(info, "trade_stops_level", 0) * info.point,
                 "contract": getattr(info, "trade_contract_size", 0), "vpp": vpp,
                 "tradeMode": getattr(info, "trade_mode", 4)},
+        "commDetected": comm,
         "positions": [p for p in allp if p["symbol"] == sym],
         "all": allp,
     }
@@ -596,6 +628,7 @@ def place_order(req):
     sym, side = str(req.get("symbol", "")), req.get("side")
     vol, sl, tp = float(req.get("volume", 0)), float(req.get("sl", 0)), float(req.get("tp", 0) or 0)
     max_risk, oid = float(req.get("risk", 0)), str(req.get("id", ""))[:64]
+    comm_lot = max(0.0, float(req.get("commission", 0) or 0))     # round-trip commission per 1.00 lot
     if side not in ("buy", "sell"):
         return {"error": "side must be buy or sell"}
     if not sl > 0:
@@ -625,6 +658,7 @@ def place_order(req):
                 return f"take profit {tp} is on the wrong side of price"
             loss = mt5.order_calc_profit(otype, sym, vol, price, sl)
             loss = abs(loss) if loss is not None else vol * value_per_price(sym, info, price) * abs(price - sl)
+            loss += comm_lot * vol                                  # what you really lose at the stop
             risk[0] = loss
             if loss > max_risk * RISK_TOLERANCE + 1e-9:
                 return (f"price moved: the loss at your stop is now {loss:.2f} {cur}, over the {max_risk:.2f} you "
