@@ -269,6 +269,7 @@
     <button data-add="atr">ATR</button>
     <button data-add="macd" class="mt5only">MACD + doji</button>
     <button data-add="vol" class="mt5only">Volume</button>
+    <button data-add="htf" title="Candles of a higher timeframe (Heikin Ashi or normal) drawn as boxes over the candles they cover">Higher timeframe candles</button>
     <button data-add="hdoji" class="mt5only">Doji boxes (5m, 15m, 1h...)</button>
     <button data-add="hswitch">Heikin Ashi switch boxes</button>
     <button data-add="chop">Sideways / chop filter</button>
@@ -542,6 +543,8 @@ const IND_DEFAULTS = {
            on_1m: false, c_1m: '#b0bec5', on_3m: false, c_3m: '#80deea', on_5m: true, c_5m: '#ffd54f',
            on_15m: true, c_15m: '#ce93d8', on_30m: false, c_30m: '#a5d6a7', on_1h: true, c_1h: '#4fc3f7',
            on_4h: false, c_4h: '#ffb74d' },
+  htf: { mode: 'fixed', iv: '4h', nx: 4, style: 'ha', last: 'all', alpha: '0.12', border: 1, body: true, forming: true, labels: true,
+         cUp: '#26a69a', cDn: '#ef5350' },
   hl: { iv: '1h', ext: 24, show: 'sweeps', fit: true, cH: '#ff9800', cL: '#29b6f6', width: 2 },
   stretch: { fast: 9, slow: 15, base: 50, k: 4, look: 40, need: 1, level: 'wick', trend: true, tpLook: 300,
              trade: 'limit', entry: 'close', ext: 0.5, win: 5, rr: 2, be: 0.3, hold: 10, stall: true, comm: 0.07,
@@ -1036,6 +1039,7 @@ function refreshBos() {
   bump();
   refreshPivots();
   const markers = [];
+  inds.filter(i => i.type === 'htf').forEach(htfCalc);
   inds.filter(i => i.type === 'hdoji').forEach(hdojiCalc);
   inds.filter(i => i.type === 'hswitch').forEach(hswitchCalc);
   inds.filter(i => i.type === 'chop').forEach(chopCalc);
@@ -1602,6 +1606,48 @@ function hdojiCalc(ind) {
   }
   ind.hd.sort((x, y) => y.T - x.T);                          // big timeframes first, small ones drawn on top
 }
+/* ---- Higher timeframe candles ----
+   Builds candles of a longer timeframe (Heikin Ashi or normal) from the chart's own candles and draws each one as a
+   box over the chart candles that make it up: a light box from its high to its low, and a stronger box inside from
+   its open to its close. The length is either fixed (4h, 1d, 1w, 30d ...) or "chart x N" so it follows the chart
+   interval (on a 15s chart, x2 = 30s candles). Closed candles never change; only the last one is still forming. */
+function htfLen(ind) {                         // length of one higher candle in seconds, or null
+  if (ind.mode === 'mult') return kind === 'time' ? tfSec * Math.max(2, Math.floor(Number(ind.nx)) || 2) : null;
+  const iv = parseIv(ind.iv);
+  return iv && iv.kind === 'time' ? iv.n : null;
+}
+function htfName(T) {
+  return T % 604800 === 0 ? T / 604800 + 'w' : T % 86400 === 0 ? T / 86400 + 'd' : T % 3600 === 0 ? T / 3600 + 'h' : T % 60 === 0 ? T / 60 + 'm' : T + 's';
+}
+function htfStart(t, T) {                       // weeks start on Monday, not on the 1970 Thursday
+  if (T % 604800 === 0) { const w = 345600 + anchor; return Math.floor((t - w) / T) * T + w; }
+  return periodStart(t, T, anchor);
+}
+function htfCalc(ind) {
+  ind.hd = []; ind.hWarn = ''; ind.hName = '';
+  const n = raw.length, T = htfLen(ind);
+  if (!n) return;
+  if (!T) { ind.hWarn = ind.mode === 'mult' ? 'needs a time chart' : 'type a time length such as 4h, 1d, 1w or 30d'; return; }
+  ind.hName = htfName(T);
+  if (kind === 'time' && T <= tfSec) { ind.hWarn = `${ind.hName} must be longer than the chart interval (${tf})`; return; }
+  const per = [];
+  for (let i = 0; i < n; i++) {
+    const r = raw[i], st = htfStart(r[5], T), p = per[per.length - 1];
+    if (!p || st > p.start) per.push({ start: st, a: i, b: i, o: r[1], h: r[2], l: r[3], c: r[4] });
+    else { p.b = i; if (r[2] > p.h) p.h = r[2]; if (r[3] < p.l) p.l = r[3]; p.c = r[4]; }
+  }
+  let hO = NaN, hC = NaN; const all = [];
+  per.forEach((p, k) => {
+    const c = (p.o + p.h + p.l + p.c) / 4, o = isNaN(hO) ? (p.o + p.c) / 2 : (hO + hC) / 2;
+    hO = o; hC = c;
+    if (k === 0 && raw[0][5] > p.start) return;                 // first candle only partly loaded
+    const b = ind.style === 'candle' ? { open: p.o, high: p.h, low: p.l, close: p.c }
+      : { open: o, close: c, high: Math.max(p.h, o, c), low: Math.min(p.l, o, c) };
+    all.push({ start: p.start, a: p.a, b: p.b, o: b.open, c: b.close, hi: b.high, lo: b.low, up: b.close >= b.open, forming: k === per.length - 1 });
+  });
+  const pool = ind.forming ? all : all.filter(d => !d.forming), N = Math.floor(Number(ind.last));
+  ind.hd = N > 0 ? pool.slice(-N) : pool;
+}
 /* ---- Heikin Ashi switch boxes ----
    A switch is a candle whose colour flips: green after red, or red after green (optionally only after at least
    N candles of the old colour). For each ticked timeframe its candles are built from the chart's bars (real
@@ -1766,6 +1812,44 @@ function drawChop(pw, ph) {
   });
 }
 const hhmm = sec => { const d = new Date(disp(sec) * 1000); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
+function drawHtf(pw, ph) {
+  const r = ts.getVisibleLogicalRange(); if (!r) return;
+  const bottom = ph * paneTop();
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pw, bottom); ctx.clip();
+  ctx.font = '11px sans-serif'; ctx.textBaseline = 'middle';
+  inds.filter(i => i.type === 'htf' && i.visible !== false && i.hd && i.hd.length).forEach(ind => {
+    const alpha = Math.min(0.8, Math.max(0, parseFloat(ind.alpha) || 0)), bw = Number(ind.border) || 1;
+    for (const d of ind.hd) {
+      if (d.b < r.from - 1 || d.a > r.to + 1) continue;
+      const xa = l2x(d.a - 0.5), xb = l2x(d.b + 0.5), yH = series.priceToCoordinate(d.hi), yL = series.priceToCoordinate(d.lo);
+      if (xa == null || xb == null || yH == null || yL == null) continue;
+      const col = d.up ? ind.cUp : ind.cDn;
+      const x = Math.min(xa, xb) + 1, w = Math.max(3, Math.abs(xb - xa) - 2);   // 1px gap so neighbouring candles stay apart
+      let y = Math.min(yH, yL), h = Math.abs(yL - yH);
+      if (h < 4) { y -= (4 - h) / 2; h = 4; }
+      ctx.setLineDash(d.forming ? [5, 4] : []);
+      ctx.fillStyle = rgba(col, alpha); ctx.fillRect(x, y, w, h);                 // high to low
+      ctx.strokeStyle = rgba(col, 0.85); ctx.lineWidth = bw;
+      ctx.strokeRect(Math.round(x) + (bw % 2) / 2, Math.round(y) + (bw % 2) / 2, Math.round(w), Math.round(h));
+      if (ind.body) {                                                              // open to close
+        const yO = series.priceToCoordinate(d.o), yC = series.priceToCoordinate(d.c);
+        if (yO != null && yC != null) {
+          const inset = Math.min(4, w / 6);
+          let by = Math.min(yO, yC), bh = Math.abs(yC - yO); if (bh < 2) { by -= (2 - bh) / 2; bh = 2; }
+          ctx.fillStyle = rgba(col, Math.min(0.7, alpha * 2.4 + 0.1)); ctx.fillRect(x + inset, by, Math.max(1, w - 2 * inset), bh);
+          ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 1;
+          ctx.strokeRect(Math.round(x + inset) + 0.5, Math.round(by) + 0.5, Math.max(1, Math.round(w - 2 * inset)), Math.round(bh));
+        }
+      }
+      ctx.setLineDash([]);
+      if (ind.labels && w > 34) {
+        const txt = ind.hName + (d.forming && w > 90 ? ' forming' : '');
+        ctx.fillStyle = col; ctx.fillText(txt, x + 4, y + 8 + bw);
+      }
+    }
+  });
+  ctx.restore();
+}
 function drawHDoji(pw, ph) {
   const r = ts.getVisibleLogicalRange(); if (!r) return;
   const bottom = ph * paneTop();
@@ -1816,6 +1900,7 @@ function label(ind) {
   if (ind.type === 'vprof') return ind.mode === 'visible' ? 'Visible range volume profile' : 'Session volume profile';
   if (ind.type === 'foot') return 'Footprint';
   if (ind.type === 'cvd') return ind.show === 'delta' ? 'Volume delta (ticks)' : 'Cumulative volume delta (ticks)';
+  if (ind.type === 'htf') return `Higher timeframe ${ind.hName || ind.iv}`;
   if (ind.type === 'hdoji') return 'Doji boxes';
   if (ind.type === 'hswitch') return 'HA switch boxes';
   if (ind.type === 'chop') return 'Sideways filter';
@@ -1859,7 +1944,7 @@ function makeSeries(ind) {
     layoutPanes(); return;
   }
   if (ind.type === 'chop') return;
-  if (ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch') { ind.hlN = 0; return; }       // lanes are created by fillHL as needed
+  if (ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'htf') { ind.hlN = 0; return; }       // lanes are created by fillHL as needed
   if (ind.type === 'pivot' || ind.type === 'pdhl') {
     ind.pnames = pivotNames(ind);
     ind.pnames.forEach(n => {
@@ -1894,7 +1979,7 @@ function fullData(ind) {
   if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind);
   if (ind.type === 'vprof' || ind.type === 'foot') return;
   if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, 0); }
-  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop') return;
+  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf') return;
   ind.vals = calc(ind);
   ind.series.forEach((s, j) => {
     const v = ind.vals[j], d = [];
@@ -1906,7 +1991,7 @@ function tailData(ind, first) {
   if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind, first);
   if (ind.type === 'vprof' || ind.type === 'foot') return;
   if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, first); }
-  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop') return;
+  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf') return;
   ind.vals = calc(ind);
   ind.series.forEach((s, j) => {
     const v = ind.vals[j];
@@ -1920,7 +2005,7 @@ function addInd(type) {
   const ind = { id: Date.now() + Math.random(), type, src: 'ha', width: type === 'bb' ? 1 : 2,
                 visible: true, ...IND_DEFAULTS[type], series: [], vals: null, res: null };
   inds.push(ind); makeSeries(ind); if (raw.length) fullData(ind);
-  if (type === 'bos' || type === 'stretch' || type === 'pivot' || type === 'pdhl' || type === 'hl' || type === 'hdoji' || type === 'hswitch' || type === 'chop') refreshBos();
+  if (type === 'bos' || type === 'stretch' || type === 'pivot' || type === 'pdhl' || type === 'hl' || type === 'hdoji' || type === 'hswitch' || type === 'chop' || type === 'htf') refreshBos();
   saveInds(); renderPanel(); legend(null);
 }
 function renderPanel() {
@@ -2032,6 +2117,25 @@ function renderPanel() {
       `<label title="Histogram: above zero rising / falling, below zero falling / rising">Hist ` +
       `<input type="color" data-k="cUp" value="${ind.cUp}"><input type="color" data-k="cUp2" value="${ind.cUp2}">` +
       `<input type="color" data-k="cDn" value="${ind.cDn}"><input type="color" data-k="cDn2" value="${ind.cDn2}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'htf') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Higher timeframe candles</b>` +
+      `<label title="Fixed: always the same length, e.g. 4h. Chart x N: follows the chart interval, e.g. x4 on a 1h chart is 4h, on a 15s chart x2 is 30s.">Length <select data-k="mode">` +
+      opt('mode', 'fixed', 'Fixed') + opt('mode', 'mult', 'Chart x N') + `</select></label>` +
+      (ind.mode === 'mult'
+        ? `<label title="How many chart candles each higher candle covers">x <input type="number" data-k="nx" min="2" step="1" value="${ind.nx}" style="width:54px"></label>`
+        : `<label title="Any time length: 30s, 5m, 1h, 4h, 1d, 1w, 4w, 30d (1 month = 30d). Press Enter."><input type="text" data-k="iv" list="htfl" value="${ind.iv}" placeholder="4h" style="width:62px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px">` +
+          `<datalist id="htfl">${['15s', '30s', '1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d', '1w', '2w', '4w', '30d'].map(v => `<option value="${v}">`).join('')}</datalist></label>`) +
+      `<label>Candles <select data-k="style">` + opt('style', 'ha', 'Heikin Ashi') + opt('style', 'candle', 'Normal') + `</select></label>` +
+      `<label title="How many of the latest higher candles to show. Type a number, or leave it as all.">Last <input type="text" data-k="last" value="${ind.last}" placeholder="all" style="width:44px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px"></label>` +
+      `<label>Up <input type="color" data-k="cUp" value="${ind.cUp}"></label><label>Down <input type="color" data-k="cDn" value="${ind.cDn}"></label>` +
+      `<label title="How strongly the high-to-low box is filled">Fill <select data-k="alpha">` +
+      opt('alpha', '0', 'None') + opt('alpha', '0.06', 'Very light') + opt('alpha', '0.12', 'Light') + opt('alpha', '0.2', 'Medium') + opt('alpha', '0.32', 'Strong') + `</select></label>` +
+      `<label>Border <select data-k="border">${[1, 2, 3].map(w => `<option ${w == ind.border ? 'selected' : ''}>${w}</option>`).join('')}</select></label>` +
+      `<label title="The stronger box inside from open to close"><input type="checkbox" data-k="body" ${ind.body ? 'checked' : ''}> Body</label>` +
+      `<label title="Also draw the higher candle that is still forming (dashed)"><input type="checkbox" data-k="forming" ${ind.forming ? 'checked' : ''}> Forming</label>` +
+      `<label><input type="checkbox" data-k="labels" ${ind.labels ? 'checked' : ''}> Label</label>` +
       `<button class="x" title="Remove">Remove</button>`;
     else if (ind.type === 'hdoji') row.innerHTML =
       `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide all doji boxes">` +
@@ -2192,7 +2296,7 @@ function renderPanel() {
       el.addEventListener(el.type === 'number' || el.type === 'color' ? 'input' : 'change', () => {
         const k = el.dataset.k;
         if ((ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop') && k === 'iv' && !el.value.trim()) { ind.iv = ''; ind.on_custom = false; }
-        else if ((ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop') && k === 'iv') {
+        else if ((ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf') && k === 'iv') {
           const iv = parseIv(el.value), ok = iv && iv.kind === 'time';
           el.style.borderColor = ok ? '' : 'var(--down)';
           el.title = ok ? '' : 'Use a time length: 1m, 5m, 15m, 1h, 4h, 1d (tick counts are not allowed here)';
@@ -2215,10 +2319,11 @@ function renderPanel() {
           }
           refreshBos();
           if (k === 'trade') { saveInds(); renderPanel(); legend(null); return; }
-        } else if (ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop') {
+        } else if (ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf') {
           if (k === 'iv' && ind.iv) ind.on_custom = true;
           refreshBos();
           if (ind.type === 'chop' && plan) updatePlan();
+          if (ind.type === 'htf' && k === 'mode') { saveInds(); renderPanel(); legend(null); return; }
           if (k.startsWith('c_') || k.startsWith('on_') || k === 'iv' || (ind.type === 'chop' && ['fast', 'mid', 'slow'].includes(k))) { saveInds(); renderPanel(); legend(null); return; }
         } else if (ind.type === 'hl') {
           if (k === 'visible') ind.series.forEach(x => x.applyOptions({ visible: ind.visible }));
@@ -2372,6 +2477,14 @@ function legend(idx) {
   inds.filter(i => i.type === 'vol' && i.visible !== false && raw[idx]).forEach(i => {
     html += `<div>${eye(i)}<span style="color:var(--text)">Vol</span> <span style="color:${volColor(i, idx)}">${(raw[idx][6] || 0).toLocaleString()}</span></div>`;
   });
+  inds.filter(i => i.type === 'htf' && i.visible !== false && i.hd).forEach(i => {
+    const d = raw[idx] && i.hd.find(x => idx >= x.a && idx <= x.b), col = d && (d.up ? i.cUp : i.cDn);
+    html += `<div>${eye(i)}<span style="color:var(--text)">Higher TF ${i.hName || ''} ${i.style === 'candle' ? '(normal)' : '(HA)'}</span> ` + (i.hWarn
+      ? `<span style="color:var(--down)">${i.hWarn}</span>`
+      : d ? `O ${fmt(d.o)} H ${fmt(d.hi)} L ${fmt(d.lo)} C <b style="color:${col}">${fmt(d.c)}</b> <b style="color:${col}">${d.up ? 'up' : 'down'}</b>` +
+            `${d.forming ? ' <span style="color:var(--muted)">(forming)</span>' : ''} <span style="color:var(--muted)">${tstr(raw[d.a][0])}</span>`
+        : '<span style="color:var(--muted)">no higher candle here</span>') + '</div>';
+  });
   inds.filter(i => i.type === 'hdoji' && i.visible !== false && i.hdTf).forEach(i => {
     const parts = i.hdTf.map(t => {
       if (t.warn) return `<span style="color:${t.color}">${t.iv}</span> <span style="color:var(--muted)">${t.warn}</span>`;
@@ -2407,7 +2520,7 @@ function legend(idx) {
     });
     html += `<div>${eye(i)}<span style="color:var(--text)">Switch ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
   });
-  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'hswitch', 'chop', 'vprof', 'foot', 'cvd'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
+  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'hswitch', 'chop', 'htf', 'vprof', 'foot', 'cvd'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
     const v = i.vals.map(a => fmt(a[idx])).join(' / ');
     html += `<div>${eye(i)}<span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${v}</span></div>`;
   });
@@ -2561,6 +2674,7 @@ function applyNewBars(first) {                   // raw grew / changed from inde
   inds.forEach(i => tailData(i, first));
   tailPivots(first); tailHL(first);
   if (ha.length - 1 !== lastClosedCount) { lastClosedCount = ha.length - 1; refreshBos(); }
+  else inds.forEach(i => { if (i.type === 'htf') htfCalc(i); });      // the forming higher candle follows every tick
   legend(null); bump();
 }
 
@@ -2935,6 +3049,7 @@ function render() {
     drawStretch();
     drawPivots(pw);
     drawPanes(pw, ph);
+    drawHtf(pw, ph);
     drawHDoji(pw, ph);
     drawChop(pw, ph);
     drawProfiles(pw, ph);
