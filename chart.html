@@ -114,6 +114,10 @@
   #tb_curve { flex:1; width:100%; min-height:0; }
   #tb_empty { color:var(--muted); padding:14px; }
   #tb_note { color:var(--muted); padding:0 8px; }
+  #tb_commbox { display:flex; align-items:center; gap:5px; color:var(--muted); padding:0 8px; white-space:nowrap; }
+  #tb_commbox input { width:62px; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:3px; padding:2px 4px; }
+  #tb_commbox button { background:none; border:1px solid var(--line); color:var(--text); border-radius:3px; cursor:pointer; font-size:11px; padding:0 5px; }
+  #tb_commsrc { font-size:11px; }
   #rpbar { position:absolute; left:50%; bottom:38px; transform:translateX(-50%); z-index:7; display:flex; align-items:center; gap:6px;
            background:var(--panel); border:1px solid #ff9800; border-radius:6px; padding:5px 10px; font-size:12px;
            box-shadow:0 4px 16px rgba(0,0,0,.35); white-space:nowrap; }
@@ -285,6 +289,8 @@
   <div class="tbh">
     <button data-tab="pos" class="on">Positions <span id="tb_n"></span></button>
     <button data-tab="hist">History &amp; growth</button>
+    <span id="tb_commbox" title="Round-trip commission (open + close) for 1.00 lot, in your account currency. Exness Standard / Pro accounts: 0. Raw Spread / Zero: your commission per lot both ways. It is used for the risk, the SL / TP money and the Net column.">
+      <label>Commission</label><input id="tb_comm" type="number" step="any" min="0"><span>per lot</span><span id="tb_commsrc"></span><button id="tb_commauto" style="display:none">auto</button></span>
     <span id="tb_note"></span>
     <div id="tb_sum"></div>
     <button id="tb_closeall" title="Close every open position at market (two clicks)">Close all</button>
@@ -3632,19 +3638,31 @@ function commLot() {
   if (man != null) return man;
   return ACC && ACC.commDetected > 0 ? ACC.commDetected : 0;
 }
-function showComm() {
+function showComm() {                     // the Buy/Sell panel and the trades toolbar show (and edit) the same number
   const man = (RISK.commMan || {})[symbol];
-  if (document.activeElement !== $('tp_comm')) $('tp_comm').value = +commLot().toFixed(4);
+  for (const id of ['tp_comm', 'tb_comm']) if (document.activeElement !== $(id)) $(id).value = +commLot().toFixed(4);
   $('tp_commsrc').textContent = man != null ? 'per lot, round trip (yours)'
     : ACC && ACC.commDetected > 0 ? 'per lot, round trip (from your last trade)'
     : ACC && ACC.commDetected === 0 ? 'none on your last trade' : 'no closed trade found: type yours';
-  $('tp_commauto').style.display = man != null ? '' : 'none';
+  $('tb_commsrc').textContent = man != null ? '(yours)' : ACC && ACC.commDetected > 0 ? '(from your last trade)'
+    : ACC && ACC.commDetected === 0 ? '(none on your last trade)' : '(type yours)';
+  $('tp_commauto').style.display = $('tb_commauto').style.display = man != null ? '' : 'none';
 }
-$('tp_comm').oninput = () => {
-  const v = Number($('tp_comm').value);
-  if ($('tp_comm').value !== '' && v >= 0) { RISK.commMan = RISK.commMan || {}; RISK.commMan[symbol] = v; saveRisk(); showComm(); updatePlan(); bump(); }
-};
-$('tp_commauto').onclick = () => { if (RISK.commMan) delete RISK.commMan[symbol]; saveRisk(); $('tp_comm').blur(); showComm(); updatePlan(); bump(); };
+function setComm(src) {
+  const v = Number($(src).value);
+  if ($(src).value !== '' && v >= 0) { RISK.commMan = RISK.commMan || {}; RISK.commMan[symbol] = v; saveRisk(); showComm(); updatePlan(); renderBar(true); bump(); }
+}
+function autoComm() { if (RISK.commMan) delete RISK.commMan[symbol]; saveRisk(); $('tp_comm').blur(); $('tb_comm').blur(); showComm(); updatePlan(); renderBar(true); bump(); }
+$('tp_comm').oninput = () => setComm('tp_comm');
+$('tb_comm').oninput = () => setComm('tb_comm');
+$('tp_commauto').onclick = $('tb_commauto').onclick = autoComm;
+// Commission one position pays over its whole life (open + close, a positive number). MT5 only shows what it has charged so far
+// (often just the opening half), so the larger of that and your round-trip commission x lots is used.
+function posComm(p) {
+  const charged = Math.abs(p.commission || 0);
+  if (RP.on) return charged;
+  return Math.max(charged, p.symbol === symbol ? commLot() * p.volume : 0);
+}
 function priceTag(y, pw, txt, col, solid) {
   ctx.font = '11px sans-serif';
   const w = ctx.measureText(txt).width + 10, x = pw - w - 4;
@@ -3692,10 +3710,10 @@ function drawPositions(pw) {
   if (SRC !== 'MT5' || !ACC || !ACC.positions) return;
   for (const p of ACC.positions) {
     const y = series.priceToCoordinate(p.open); if (y == null) continue;
-    const pl = livePL(p).pl, col = pl >= 0 ? '#26a69a' : '#ef5350';
+    const cm = posComm(p), pl = livePL(p).pl - cm, col = pl >= 0 ? '#26a69a' : '#ef5350';     // net of commission
     const armed = closing.has(p.ticket);                // closing: show it on the tag
     hLine(y, pw, TH().text, 1, [2, 3]);
-    const txt = `${p.side.toUpperCase()} ${p.volume}  ${pl >= 0 ? '+' : ''}${money(pl)}`;
+    const txt = `${p.side.toUpperCase()} ${p.volume}  ${pl >= 0 ? '+' : ''}${money(pl)}${cm > 0 ? ' net' : ''}`;
     priceTag(y, pw, txt, col, true);
     ctx.font = '11px sans-serif';
     const tw = ctx.measureText(txt).width + 10, bx = pw - tw - 4 - (armed ? 70 : 22), bw = armed ? 66 : 18;
@@ -3809,16 +3827,26 @@ const dealNet = d => d.profit + d.commission + d.swap + (d.fee || 0);
 const isTrade = d => d.type === 0 || d.type === 1;
 function growthStats() {
   if (!HIST) return null;
-  let dep = 0, wd = 0, trade = 0, today = 0, wins = 0, losses = 0, n = 0;
+  let dep = 0, wd = 0, trade = 0, today = 0, wins = 0, losses = 0, n = 0, comm = 0, commToday = 0;
   const day = Math.floor(disp(Date.now() / 1000 + srvOffset) / 86400);
+  const opens = {}; HIST.forEach(d => { if (isTrade(d) && d.entry === 0) opens[d.position] = d; });
   for (const d of HIST) {
     if (d.type === 2) { if (d.profit >= 0) dep += d.profit; else wd -= d.profit; continue; }
-    if (!isTrade(d) && d.type !== 2) { trade += dealNet(d); continue; }        // other money: commission, bonus...
+    if (!isTrade(d) && d.type !== 2) {                                          // other money: commission charges, bonus...
+      trade += dealNet(d);
+      if (d.type >= 7 && d.type <= 11) { comm += d.profit; if (Math.floor(disp(d.time) / 86400) === day) commToday += d.profit; }
+      continue;
+    }
     trade += dealNet(d);
-    if (d.entry !== 0) { n++; const v = dealNet(d); if (v >= 0) wins++; else losses++; if (Math.floor(disp(d.time) / 86400) === day) today += v; }
-    else if (Math.floor(disp(d.time) / 86400) === day) today += dealNet(d);     // entry commission today
+    const cm = d.commission + (d.fee || 0); comm += cm;
+    if (d.entry !== 0) {
+      n++; const o = opens[d.position], full = dealNet(d) + (o ? o.commission + (o.fee || 0) : 0);     // a win is judged after both commissions
+      if (full >= 0) wins++; else losses++;
+      if (Math.floor(disp(d.time) / 86400) === day) { today += dealNet(d); commToday += cm; }
+    }
+    else if (Math.floor(disp(d.time) / 86400) === day) { today += dealNet(d); commToday += cm; }     // entry commission today
   }
-  return { dep, wd, trade, today, wins, losses, n, growth: dep > 0 ? trade / dep * 100 : null };
+  return { dep, wd, trade, today, wins, losses, n, comm, commToday, growth: dep > 0 ? trade / dep * 100 : null };
 }
 function liveEquity() {
   if (!ACC || ACC.error) return null;
@@ -3829,11 +3857,14 @@ function liveEquity() {
 function renderBar(force) {
   if ($('tradebar').style.display === 'none' || !ACC || ACC.error) return;
   const all = ACC.all || [], eq = liveEquity();
-  let fl = 0; all.forEach(p => fl += livePL(p).pl);
+  let fl = 0, fc = 0; all.forEach(p => { fl += livePL(p).pl; fc += posComm(p); });
+  showComm();
   const g = growthStats(), cls = v => v >= 0 ? 'pl-up' : 'pl-dn', sg = v => (v >= 0 ? '+' : '') + money(v);
   let sum = `<span>Balance <b>${money(ACC.balance)}</b></span><span>Equity <b>${money(eq)}</b></span>` +
-            `<span>Open P/L <b class="${cls(fl)}">${sg(fl)}</b></span>`;
+            `<span>Open P/L <b class="${cls(fl)}">${sg(fl)}</b></span>` +
+            (fc > 0 ? `<span title="Open P/L minus the commission of the open positions (open + close)">After commission <b class="${cls(fl - fc)}">${sg(fl - fc)}</b></span>` : '');
   if (RP.on) sum = `<span style="color:#ff9800">Practice account (replay)</span>` + sum;
+  if (g && g.comm) sum += `<span title="Commission paid in total, and today">Commission <b class="pl-dn">${money(g.comm)}</b>` + (g.commToday ? ` <span>(today ${money(g.commToday)})</span>` : '') + `</span>`;
   if (g) sum += (RP.on ? '' : `<span>Today <b class="${cls(g.today + fl)}">${sg(g.today + fl)}</b></span>`) +
                 (g.growth != null ? `<span>Growth <b class="${cls(eq - g.dep + g.wd)}">${((eq - g.dep + g.wd) / g.dep * 100).toFixed(1)}%</b> <span title="deposits">of ${money(g.dep)}</span></span>` : '');
   if ($('tb_sum').innerHTML !== sum) $('tb_sum').innerHTML = sum;
@@ -3844,10 +3875,10 @@ function renderBar(force) {
   if (force || key !== tbKey) {
     tbKey = key;
     $('tb_pos').innerHTML = !all.length ? '<div id="tb_empty">No open positions. Use Buy / Sell at the top to place a trade.</div>' :
-      `<table><tr><th>Symbol</th><th>Ticket</th><th>Time</th><th>Type</th><th>Lot</th><th>Open</th><th>Price</th><th>S/L</th><th>T/P</th><th>Profit</th><th></th></tr>` +
+      `<table><tr><th>Symbol</th><th>Ticket</th><th>Time</th><th>Type</th><th>Lot</th><th>Open</th><th>Price</th><th>S/L</th><th>T/P</th><th>Profit</th><th title="Commission this position pays, open + close">Commission</th><th title="Profit minus commission">Net</th><th></th></tr>` +
       all.map(p => `<tr data-t="${p.ticket}"><td>${p.symbol}</td><td>${p.ticket}</td><td>${fullTime(p.time)}</td>` +
         `<td class="side-${p.side}">${p.side}</td><td>${p.volume}</td><td>${(+p.open).toFixed(p.digits)}</td><td class="c-cur"></td>` +
-        `<td>${p.sl ? (+p.sl).toFixed(p.digits) : '-'}</td><td>${p.tp ? (+p.tp).toFixed(p.digits) : '-'}</td><td class="c-pl"></td>` +
+        `<td>${p.sl ? (+p.sl).toFixed(p.digits) : '-'}</td><td>${p.tp ? (+p.tp).toFixed(p.digits) : '-'}</td><td class="c-pl"></td><td class="c-cm"></td><td class="c-net"></td>` +
         `<td><button class="xbtn" data-close="${p.ticket}" title="Close at market">${closing.has(p.ticket) ? 'Closing...' : '&#10005; Close'}</button></td></tr>`).join('') + '</table>';
   }
   for (const p of all) {                                  // live cells, updated in place so buttons keep working
@@ -3855,6 +3886,9 @@ function renderBar(force) {
     const { pl, cur } = livePL(p);
     row.querySelector('.c-cur').textContent = cur ? (+cur).toFixed(p.digits) : '-';
     const c = row.querySelector('.c-pl'); c.textContent = sg(pl); c.className = 'c-pl ' + cls(pl);
+    const cm = posComm(p), cmEl = row.querySelector('.c-cm'), nt = row.querySelector('.c-net');
+    cmEl.textContent = money(-cm); cmEl.className = 'c-cm' + (cm > 0 ? ' pl-dn' : '');
+    nt.textContent = sg(pl - cm); nt.className = 'c-net ' + cls(pl - cm);
     const b = row.querySelector('.xbtn'), want = closing.has(p.ticket) ? 'Closing...' : '✕ Close';
     if (b.textContent !== want) { b.textContent = want; b.classList.toggle('arm', closing.has(p.ticket)); }
   }
@@ -3871,13 +3905,16 @@ function renderHist() {
   const opens = {}; HIST.forEach(d => { if (isTrade(d) && d.entry === 0) opens[d.position] = d; });
   const closes = HIST.filter(d => isTrade(d) && d.entry !== 0).slice(-200).reverse();
   $('tb_hlist').innerHTML = !closes.length ? '<div id="tb_empty">No closed trades yet.</div>' :
-    '<table><tr><th>Closed</th><th>Symbol</th><th>Type</th><th>Lot</th><th>Open</th><th>Close</th><th>Profit</th></tr>' +
-    closes.map(d => { const o = opens[d.position], side = d.type === 1 ? 'buy' : 'sell', v = dealNet(d) + (o ? o.commission + (o.fee || 0) : 0);
+    '<table><tr><th>Closed</th><th>Symbol</th><th>Type</th><th>Lot</th><th>Open</th><th>Close</th><th title="Before commission (swap included)">Profit</th><th title="Commission paid, open + close">Commission</th><th title="Profit minus commission">Net</th></tr>' +
+    closes.map(d => { const o = opens[d.position], side = d.type === 1 ? 'buy' : 'sell', cm = d.commission + (d.fee || 0) + (o ? o.commission + (o.fee || 0) : 0),
+        gross = d.profit + d.swap, v = gross + cm, sg = x => (x >= 0 ? '+' : '') + money(x);
       return `<tr><td>${fullTime(d.time)}</td><td>${d.symbol}</td><td class="side-${side}">${side}</td><td>${d.volume}</td>` +
-             `<td>${o ? pxFmt(d.symbol, o.price) : '-'}</td><td>${pxFmt(d.symbol, d.price)}</td><td class="${v >= 0 ? 'pl-up' : 'pl-dn'}">${v >= 0 ? '+' : ''}${money(v)}</td></tr>`; }).join('') + '</table>';
+             `<td>${o ? pxFmt(d.symbol, o.price) : '-'}</td><td>${pxFmt(d.symbol, d.price)}</td><td class="${gross >= 0 ? 'pl-up' : 'pl-dn'}">${sg(gross)}</td>` +
+             `<td class="${cm < 0 ? 'pl-dn' : ''}">${money(cm)}</td><td class="${v >= 0 ? 'pl-up' : 'pl-dn'}">${sg(v)}</td></tr>`; }).join('') + '</table>';
   const g = growthStats(), eq = liveEquity();
   if (g) $('tb_gstats').innerHTML = `Deposits <b>${money(g.dep)}</b>` + (g.wd ? ` &middot; withdrawals <b>${money(g.wd)}</b>` : '') +
-    ` &middot; closed trades <b class="${g.trade >= 0 ? 'pl-up' : 'pl-dn'}">${g.trade >= 0 ? '+' : ''}${money(g.trade)}</b>` +
+    ` &middot; closed trades net <b class="${g.trade >= 0 ? 'pl-up' : 'pl-dn'}">${g.trade >= 0 ? '+' : ''}${money(g.trade)}</b>` +
+    (g.comm ? ` (before commission ${g.trade - g.comm >= 0 ? '+' : ''}${money(g.trade - g.comm)}, commission paid <b class="pl-dn">${money(g.comm)}</b>)` : '') +
     ` &middot; ${g.n} trades, ${g.wins} won (${g.n ? Math.round(g.wins / g.n * 100) : 0}%)` +
     (g.growth != null && eq != null ? ` &middot; account growth <b class="${eq - g.dep + g.wd >= 0 ? 'pl-up' : 'pl-dn'}">${((eq - g.dep + g.wd) / g.dep * 100).toFixed(1)}%</b>` : '');
   drawCurve();
@@ -4027,10 +4064,10 @@ function replayExit(noLoad) {
 function rpVpp() { return RP.accReal && RP.accReal.sym ? RP.accReal.sym.vpp : 1; }
 function rpOpen(side, lot, sl, tp) {
   const buy = side === 'buy', price = buy ? status.ask : status.bid, t = RP.next++;
-  const p = { ticket: t, symbol, side, volume: lot, open: price, cur: buy ? status.bid : status.ask, sl, tp, profit: 0, swap: 0,
-              magic: 0, time: RP.t, digits };
-  p.profit = (p.cur - p.open) * (buy ? 1 : -1) * lot * rpVpp();
   const comm = commLot() * lot;           // round-trip commission, charged when the trade opens
+  const p = { ticket: t, symbol, side, volume: lot, open: price, cur: buy ? status.bid : status.ask, sl, tp, profit: 0, swap: 0,
+              magic: 0, time: RP.t, digits, commission: -comm };
+  p.profit = (p.cur - p.open) * (buy ? 1 : -1) * lot * rpVpp();
   RP.bal -= comm;
   RP.pos.push(p);
   RP.deals.push({ ticket: 10000 + RP.deals.length, time: RP.t, type: buy ? 0 : 1, entry: 0, symbol, volume: lot, price,

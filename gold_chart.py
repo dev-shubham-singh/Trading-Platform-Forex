@@ -480,8 +480,28 @@ def value_per_price(sym, info, price):
     return float(tv) / float(ts_) if tv and ts_ else 0.0
 
 
-def pos_dict(p):
-    return {"ticket": p.ticket, "symbol": p.symbol, "side": "buy" if p.type == mt5.POSITION_TYPE_BUY else "sell",
+POS_COMM = {}          # (ticket, volume) -> commission + fees already charged on that position's deals (a negative number)
+
+
+def position_commission(p):
+    """Commission MT5 has charged so far on an open position (read from its deals; they never change while it stays open).
+    Call with MT5_LOCK held."""
+    key = (p.ticket, p.volume)
+    if key in POS_COMM:
+        return POS_COMM[key]
+    try:
+        ds = mt5.history_deals_get(position=p.ticket)
+    except Exception:
+        ds = None
+    if not ds:
+        return 0.0
+    val = round(sum(d.commission + getattr(d, "fee", 0) for d in ds), 2)
+    POS_COMM[key] = val
+    return val
+
+
+def pos_dict(p, comm=0.0):
+    return {"ticket": p.ticket, "commission": comm, "symbol": p.symbol, "side": "buy" if p.type == mt5.POSITION_TYPE_BUY else "sell",
             "volume": p.volume, "open": p.price_open, "cur": getattr(p, "price_current", 0), "sl": p.sl, "tp": p.tp,
             "profit": p.profit, "swap": getattr(p, "swap", 0), "magic": p.magic, "time": p.time,
             "digits": SYMBOL_DIGITS.get(p.symbol, 5)}
@@ -533,10 +553,11 @@ def account(sym):
                 SYMBOL_DIGITS[p.symbol] = si.digits if si else 5
         vpp = value_per_price(sym, info, tk.bid) if info and tk else 0.0
         comm = detect_commission(sym)
+        pcomm = {p.ticket: position_commission(p) for p in allpos}
     if not acc or not info:
         return {"error": "MT5 account or symbol not available"}
     algo = bool(getattr(term, "trade_allowed", True)) if term else True
-    allp = [pos_dict(p) for p in allpos]
+    allp = [pos_dict(p, pcomm.get(p.ticket, 0.0)) for p in allpos]
     return {
         "token": TOKEN, "allow": ALLOW_TRADING, "algo": algo, "accTrade": bool(getattr(acc, "trade_allowed", True)),
         "login": acc.login, "server": acc.server, "currency": acc.currency, "balance": acc.balance, "equity": acc.equity,
