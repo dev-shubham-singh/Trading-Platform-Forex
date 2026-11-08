@@ -146,6 +146,12 @@
   #panel .add button, #panel .x { background:var(--bg); color:var(--text); border:1px solid var(--line);
            border-radius:4px; padding:4px 10px; cursor:pointer; }
   #panel .add button:hover { border-color:var(--accent); }
+  #indpop { position:fixed; z-index:30; display:none; background:var(--panel); border:1px solid var(--line); border-radius:6px;
+            padding:10px 12px; width:min(540px, calc(100vw - 24px)); box-shadow:0 8px 24px rgba(0,0,0,.45); }
+  #indpop .ph { display:flex; justify-content:space-between; align-items:center; font-weight:600; margin-bottom:4px; gap:10px; }
+  #indpop .ph .x { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:4px; padding:3px 10px; cursor:pointer; }
+  #indpop .row { border-top:0; padding-bottom:2px; }
+  #indpop .row .x { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:4px; cursor:pointer; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:7px 0; border-top:1px solid var(--line); }
   .row b { width:52px; }
   .row label { color:var(--muted); display:flex; gap:4px; align-items:center; }
@@ -257,6 +263,7 @@
   </div>
 </div>
 <div id="sympop" class="pop"><input id="symq" placeholder="Search symbols" autocomplete="off"><div id="symlist"></div></div>
+<div id="indpop"><div class="ph"><span id="pop_title"></span><button class="x" id="pop_close">Close</button></div><div id="pop_body"></div></div>
 <div id="panel">
   <div class="ph">Indicators <button class="x" id="pclose">Close</button></div>
   <div class="add">Add:
@@ -1114,6 +1121,44 @@ function sma(x, n) {
   for (let i = 0; i < x.length; i++) { s += x[i]; if (i >= n) s -= x[i - n]; if (i >= n - 1) o[i] = s / n; }
   return o;
 }
+/* ---- Multi-timeframe: any line indicator can be calculated on the candles of another timeframe ----
+   The indicator is computed on higher-timeframe candles built from the chart's own candles (Heikin Ashi or normal,
+   like the chart), then every chart candle shows the value of the higher candle it belongs to. Closed mode (default):
+   the value of the last CLOSED higher candle, so nothing repaints and nothing looks into the future. Live mode also
+   follows the higher candle that is still forming. The timeframe must be longer than the chart interval. */
+const MTF_TYPES = ['ema', 'smma', 'sma', 'bb', 'macd', 'atr'];
+const MTF_PRESETS = ['5s', '10s', '15s', '30s', '1m', '2m', '3m', '5m', '10m', '15m', '30m', '1h', '2h', '4h', '1d'];
+function mtfLen(ind) {
+  if (!MTF_TYPES.includes(ind.type) || !ind.tf || kind !== 'time') return null;
+  const iv = parseIv(ind.tf);
+  return iv && iv.kind === 'time' && iv.n > tfSec ? iv.n : null;
+}
+function mtf(ind, fn) {
+  const T = mtfLen(ind), n = raw.length;
+  if (!T || !n) return fn(ind);
+  const rows = [], idx = new Array(n); let last = null;
+  for (let i = 0; i < n; i++) {
+    const r = raw[i], st = htfStart(r[5], T);
+    if (st !== last) { last = st; rows.push([r[0], r[1], r[2], r[3], r[4], r[5], r[6] || 0]); }
+    else { const h = rows[rows.length - 1]; if (r[2] > h[2]) h[2] = r[2]; if (r[3] < h[3]) h[3] = r[3]; h[4] = r[4]; h[6] += r[6] || 0; }
+    idx[i] = rows.length - 1;
+  }
+  if (raw[0][5] > htfStart(raw[0][5], T)) { rows.shift(); for (let i = 0; i < n; i++) idx[i]--; }   // first higher candle only partly loaded
+  if (!rows.length) return fn(ind).map(a => a.map(() => NaN));
+  const sRaw = raw, sHa = ha; let vals;
+  try {
+    raw = rows; ha = [];
+    if (ctype === 'ha') haFrom(0);
+    else for (let k = 0; k < rows.length; k++) ha[k] = { time: rows[k][0], open: rows[k][1], high: rows[k][2], low: rows[k][3], close: rows[k][4] };
+    vals = fn(ind);
+  } finally { raw = sRaw; ha = sHa; }
+  const lastP = rows.length - 1, live = !!ind.tfLive;
+  return vals.map(a => {
+    const o = new Array(n);
+    for (let i = 0; i < n; i++) { let p = idx[i]; if (!(live && p === lastP)) p--; o[i] = p >= 0 ? a[p] : NaN; }
+    return o;
+  });
+}
 function seeded(x, n, step) {
   const o = new Array(x.length).fill(NaN); let s = 0, prev = NaN;
   for (let i = 0; i < x.length; i++) {
@@ -1133,7 +1178,8 @@ function bands(x, n, m) {
   }
   return [up, mid, lo];
 }
-function calc(ind) {
+function calc(ind) { return mtf(ind, calcNow); }
+function calcNow(ind) {
   if (ind.type === 'stretch') return stretchLines(ha, ind);
   const src = ind.src === 'real' ? raw.map(r => r[4]) : ha.map(b => b.close);
   const n = Math.max(1, Math.floor(ind.len) || 1);
@@ -1146,7 +1192,8 @@ function calc(ind) {
    MACD = EMA(fast) - EMA(slow), signal = EMA(MACD, sig), histogram = MACD - signal (TradingView colours).
    Doji: both the upper and the lower wick are longer than the body - on Heikin Ashi candles (default) or on
    normal candles. Every finished doji gets a dot on the MACD line. */
-function macdCalc(ind) {
+function macdCalc(ind) { return mtf(ind, macdNow); }
+function macdNow(ind) {
   const src = ind.src === 'real' ? raw.map(r => r[4]) : ha.map(b => b.close);
   const f = ema(src, Math.max(1, ind.fast | 0)), sl = ema(src, Math.max(1, ind.slow | 0));
   const m = src.map((_, i) => f[i] - sl[i]);
@@ -1214,7 +1261,8 @@ function runFill(ind, from) {                 // per-day lines: two series per l
   ind.series.forEach((s, j) => s.applyOptions({ lastValueVisible: j % 2 === curPar && j < 2 }));
 }
 /* ---- ATR (own pane): true range smoothed (RMA = Wilder, like TradingView's default) ---- */
-function atrCalc(ind) {
+function atrCalc(ind) { return mtf(ind, atrNow); }
+function atrNow(ind) {
   const n = raw.length, len = Math.max(1, ind.len | 0), tr = new Array(n);
   const B = i => ind.src === 'ha' ? ha[i] : { high: raw[i][2], low: raw[i][3], close: raw[i][4] };
   for (let i = 0; i < n; i++) {
@@ -1895,6 +1943,11 @@ function drawHDoji(pw, ph) {
   ctx.restore(); ctx.textBaseline = 'alphabetic';
 }
 function label(ind) {
+  const b = labelBase(ind);
+  if (!ind.tf || !MTF_TYPES.includes(ind.type) || kind !== 'time') return b;
+  return b + (mtfLen(ind) ? ` · ${ind.tf}${ind.tfLive ? ' live' : ''}` : ` · ${ind.tf} ignored (not longer than the chart)`);
+}
+function labelBase(ind) {
   if (ind.type === 'bos') return 'HA BOS';
   if (ind.type === 'pivot') return `Pivots ${ind.iv}`;
   if (ind.type === 'hl') return `H/L ${ind.iv}`;
@@ -1994,6 +2047,7 @@ function fullData(ind) {
   });
 }
 function tailData(ind, first) {
+  if (ind.tfLive && mtfLen(ind)) return fullData(ind);            // the forming higher candle moves every older bar of its period
   if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind, first);
   if (ind.type === 'vprof' || ind.type === 'foot') return;
   if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, first); }
@@ -2016,7 +2070,7 @@ function addInd(type) {
 }
 function renderPanel() {
   const list = $('ilist');
-  if (!inds.length) { list.innerHTML = '<div class="empty">No indicators yet. Add one above.</div>'; return; }
+  if (!inds.length) { list.innerHTML = '<div class="empty">No indicators yet. Add one above.</div>'; if (POP) { POP = null; $('indpop').style.display = 'none'; $('pop_body').innerHTML = ''; } return; }
   list.innerHTML = '';
   inds.forEach(ind => {
     const row = document.createElement('div'); row.className = 'row';
@@ -2298,6 +2352,13 @@ function renderPanel() {
       `<label><input type="color" data-k="color" value="${ind.color}"></label>` +
       `<label>Width <select data-k="width">${[1, 2, 3, 4].map(w => `<option ${w == ind.width ? 'selected' : ''}>${w}</option>`).join('')}</select></label>` +
       `<button class="x" title="Remove">Remove</button>`;
+    if (MTF_TYPES.includes(ind.type)) {
+      const cur = ind.tf || '', opts = !cur || MTF_PRESETS.includes(cur) ? MTF_PRESETS : [...MTF_PRESETS, cur];
+      const html = `<label title="Calculate this indicator on the candles of another timeframe and show it on this chart. Chart = this chart's own candles. It must be longer than the chart interval.">Timeframe <select data-k="tf"><option value="">Chart</option>` +
+        opts.map(v => `<option value="${v}" ${v === cur ? 'selected' : ''}>${v}</option>`).join('') + `</select></label>` +
+        (cur ? `<label title="Off: the value of the last closed higher candle (never repaints). On: also follows the higher candle that is still forming, so it can move until that candle closes."><input type="checkbox" data-k="tfLive" ${ind.tfLive ? 'checked' : ''}> Live</label>` : '');
+      const xb = row.querySelector('.x'); if (xb) xb.insertAdjacentHTML('beforebegin', html); else row.insertAdjacentHTML('beforeend', html);
+    }
     row.querySelectorAll('[data-k]').forEach(el => {
       el.addEventListener(el.type === 'number' || el.type === 'color' ? 'input' : 'change', () => {
         const k = el.dataset.k;
@@ -2354,6 +2415,7 @@ function renderPanel() {
         } else {
           makeSeries(ind); if (raw.length) fullData(ind);
         }
+        if (k === 'tf' && MTF_TYPES.includes(ind.type)) { saveInds(); renderPanel(); legend(null); return; }
         saveInds(); legend(null);
       });
     });
@@ -2363,10 +2425,16 @@ function renderPanel() {
     };
     list.appendChild(row);
   });
+  if (POP) {                                                    // the open settings window takes its indicator's row
+    const k = inds.indexOf(POP);
+    if (k < 0) { POP = null; $('indpop').style.display = 'none'; $('pop_body').innerHTML = ''; }
+    else { $('pop_title').textContent = label(POP) + ' settings'; $('pop_body').replaceChildren(list.children[k]); }
+  }
 }
 $('indbtn').onclick = () => {
   const p = $('panel'), open = p.style.display === 'block';
   if (open) { p.style.display = 'none'; return; }
+  if (POP) closePop();
   const r = $('indbtn').getBoundingClientRect();
   p.style.left = Math.max(12, Math.min(r.left, innerWidth - p.offsetWidth - 12, innerWidth - 572)) + 'px';
   p.style.top = (r.bottom + 6) + 'px';
@@ -2378,6 +2446,7 @@ document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => addInd(b.
 /* ---------------- legend ---------------- */
 let hoverIdx = null;
 function legend(idx) {
+  if (POP && inds.includes(POP)) $('pop_title').textContent = label(POP) + ' settings';
   if (idx == null) idx = hoverIdx != null ? hoverIdx : ha.length - 1;
   const bar = ha[idx];
   if (!bar) { $('legend').innerHTML = ''; return; }
@@ -2541,7 +2610,10 @@ function eye(i) {
   return `<b class="eye" data-i="${inds.indexOf(i)}" title="${off ? 'Show' : 'Hide'} this indicator">` +
     `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
     `<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>` +
-    (off ? `<path d="M3 3l18 18"/>` : '') + `</svg></b>`;
+    (off ? `<path d="M3 3l18 18"/>` : '') + `</svg></b>` +
+    `<b class="eye" data-act="gear" data-i="${inds.indexOf(i)}" title="Settings"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+    `<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></b>` +
+    `<b class="eye" data-act="del" data-i="${inds.indexOf(i)}" title="Remove this indicator"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></b>`;
 }
 function toggleInd(n) {
   const ind = inds[n]; if (!ind) return;
@@ -2556,8 +2628,29 @@ $('legend').addEventListener('mousedown', e => {
   const el = e.target.closest && e.target.closest('.eye');
   if (!el) return;
   e.preventDefault(); e.stopPropagation();
-  toggleInd(Number(el.dataset.i));
+  const n = Number(el.dataset.i), act = el.dataset.act || 'eye';
+  if (act === 'gear') openPop(n, e);
+  else if (act === 'del') { if (inds[n] && confirm(`Remove ${label(inds[n])} from the chart?`)) removeInd(inds[n]); }
+  else toggleInd(n);
 });
+function removeInd(ind) {
+  ind.series.forEach(s => chart.removeSeries(s));
+  inds = inds.filter(i => i !== ind); layoutPanes(); refreshBos(); saveInds(); renderPanel(); legend(null);
+}
+/* settings of one indicator, opened from its gear in the legend: the same fields as the Indicators panel, applied live */
+let POP = null;
+function openPop(n, ev) {
+  const ind = inds[n]; if (!ind) return;
+  $('panel').style.display = 'none';
+  POP = ind; renderPanel();
+  const p = $('indpop'); p.style.display = 'block';
+  const x = ev ? ev.clientX + 14 : 60, y = ev ? ev.clientY + 12 : 60;
+  p.style.left = Math.max(8, Math.min(x, innerWidth - p.offsetWidth - 8)) + 'px';
+  p.style.top = Math.max(8, Math.min(y, innerHeight - p.offsetHeight - 8)) + 'px';
+}
+function closePop() { POP = null; $('indpop').style.display = 'none'; $('pop_body').innerHTML = ''; renderPanel(); }
+$('pop_close').onclick = closePop;
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && POP) closePop(); });
 chart.subscribeCrosshairMove(p => {
   hoverIdx = p && p.time != null ? idxOfTime(p.time) : null;
   legend(null); bump();
