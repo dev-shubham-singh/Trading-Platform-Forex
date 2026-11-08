@@ -126,6 +126,9 @@
             font-size:12px; color:var(--muted); line-height:1.6; }
   #legend .t { color:var(--text); font-weight:500; margin-right:8px; }
   #legend span { margin-right:8px; }
+  #legend .eye { pointer-events:auto; cursor:pointer; display:inline-block; width:14px; height:14px; margin-right:6px;
+                 vertical-align:-2px; opacity:.5; color:var(--muted); } #legend .eye:hover { opacity:1; color:var(--text); }
+  #legend .eye svg { display:block; }
   #msg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
          color:var(--muted); z-index:4; pointer-events:none; }
   #hint { position:absolute; left:50%; bottom:40px; transform:translateX(-50%); z-index:4;
@@ -2276,7 +2279,7 @@ function legend(idx) {
   inds.filter(i => i.type === 'pivot' && i.visible !== false && i.piv).forEach(i => {
     const rt = raw[idx] ? raw[idx][5] : null, pv = i.piv.find(p => rt >= p.start && rt < p.end) || i.piv[i.piv.length - 1];
     const col = n => n === 'P' ? i.cP : n[0] === 'R' ? i.cR : i.cS;
-    html += `<div><span style="color:var(--text)">Pivots ${i.iv} ${PIVOT_TYPES[i.ptype]}</span> ` + (i.pivWarn
+    html += `<div>${eye(i)}<span style="color:var(--text)">Pivots ${i.iv} ${PIVOT_TYPES[i.ptype]}</span> ` + (i.pivWarn
       ? `<span style="color:var(--down)">${i.pivWarn}</span>`
       : pv ? [...pv.lv].sort((a, b) => b[1] - a[1]).map(([n, v]) => `<span style="color:${col(n)}">${n}</span> ${fmt(v)}`).join(' ')
            : 'needs one full period of data') + '</div>';
@@ -2285,7 +2288,7 @@ function legend(idx) {
     const lastH = [...i.hl].reverse().find(g => g.side === 'H'), lastL = [...i.hl].reverse().find(g => g.side === 'L');
     const ev = i.hlEv.filter(e => i.show === 'all' || e.type === 'sweep').slice(-1)[0];
     const live = i.hl.filter(g => g.active).length;
-    html += `<div><span style="color:var(--text)">Candle H/L ${i.iv}</span> ` + (i.hlWarn
+    html += `<div>${eye(i)}<span style="color:var(--text)">Candle H/L ${i.iv}</span> ` + (i.hlWarn
       ? `<span style="color:var(--down)">${i.hlWarn}</span>`
       : lastH ? `last candle <span style="color:${i.cH}">H</span> ${fmt(lastH.v)} <span style="color:${i.cL}">L</span> ${fmt(lastL.v)}` +
         ` &middot; ${live} untouched &middot; ` + (ev
@@ -2301,7 +2304,7 @@ function legend(idx) {
       `<span style="color:${i.c3}">SMMA ${i.base}</span> ${fmt(i.vals[2][idx])} &middot; ` : '';
     if ((i.trade === 'momentum' || i.trade === 'limit') && i.mom) {
       const lt = [...i.mom].reverse().find(m => m.j != null);
-      html += `<div><span style="color:var(--text)">Stretch ${i.trade === 'limit' ? 'limit + breakout' : 'momentum'}</span> ${lines}gap ` +
+      html += `<div>${eye(i)}<span style="color:var(--text)">Stretch ${i.trade === 'limit' ? 'limit + breakout' : 'momentum'}</span> ${lines}gap ` +
         `<b style="color:${hot ? '#f7c948' : 'var(--text)'}">${isNaN(g) ? '-' : (g > 0 ? '+' : '') + g.toFixed(1)} ATR</b>` +
         ` (arms at ${i.k}) &middot; ` + (lt
           ? `last <b style="color:${lt.side === 'sell' ? i.sellColor : i.buyColor}">${lt.side.toUpperCase()}${lt.fill ? ' ' + lt.fill : ''}</b> ${tstr(raw[lt.j][0])}` +
@@ -2309,7 +2312,7 @@ function legend(idx) {
           : 'no entry yet') + '</div>';
       return;
     }
-    html += `<div><span style="color:var(--text)">Stretch</span> ${lines}gap ` +
+    html += `<div>${eye(i)}<span style="color:var(--text)">Stretch</span> ${lines}gap ` +
       `<b style="color:${hot ? '#f7c948' : 'var(--text)'}">${isNaN(g) ? '-' : (g > 0 ? '+' : '') + g.toFixed(1)} ATR</b>` +
       ` (arms at ${i.k}) &middot; ` + (last
         ? `last <b style="color:${last.side === 'sell' ? i.sellColor : i.buyColor}">${last.side.toUpperCase()}</b> ${tstr(raw[last.idx][0])}` +
@@ -2318,38 +2321,38 @@ function legend(idx) {
   });
   inds.filter(i => i.type === 'bos' && i.visible !== false && i.res).forEach(i => {
     const r = i.res, c = r.bias === 'sell' ? i.sellColor : i.buyColor;
-    html += `<div><span style="color:var(--text)">HA BOS</span> ` + (r.bias
+    html += `<div>${eye(i)}<span style="color:var(--text)">HA BOS</span> ` + (r.bias
       ? `bias <b style="color:${c}">${r.bias.toUpperCase()}</b> since ${tstr(raw[r.since][0])} &middot; ${r.sig.length} breaks in loaded history`
       : 'no break of structure yet') + '</div>';
   });
   inds.filter(i => i.type === 'macd' && i.visible !== false && i.vals).forEach(i => {
     const [h, m, sg] = i.vals, f = v => isNaN(v) ? '-' : v.toFixed(Math.min(8, digits + 2));
     const dj = i.doji !== 'off' && raw[idx] && dojiAt(i, idx);
-    html += `<div><span style="color:var(--text)">${label(i)}</span> <span style="color:${histColor(i, h, idx)}">${f(h[idx])}</span> ` +
+    html += `<div>${eye(i)}<span style="color:var(--text)">${label(i)}</span> <span style="color:${histColor(i, h, idx)}">${f(h[idx])}</span> ` +
       `<span style="color:${i.cMacd}">${f(m[idx])}</span> <span style="color:${i.cSig}">${f(sg[idx])}</span>` +
       (dj ? ` <b style="color:${i.cDoji}">doji</b>` : '') + '</div>';
   });
   inds.filter(i => i.type === 'pdhl' && i.visible !== false && i.piv).forEach(i => {
     const rt = raw[idx] ? raw[idx][5] : null, pv = i.piv.find(p => rt >= p.start && rt < p.end) || i.piv[i.piv.length - 1];
-    html += `<div><span style="color:var(--text)">Prev day</span> ` + (i.pivWarn ? `<span style="color:var(--down)">${i.pivWarn}</span>`
+    html += `<div>${eye(i)}<span style="color:var(--text)">Prev day</span> ` + (i.pivWarn ? `<span style="color:var(--down)">${i.pivWarn}</span>`
       : pv ? pv.lv.map(([n, v]) => `<span style="color:${pivotColor(i, n)}">${n.slice(2)}</span> ${fmt(v)}`).join(' ') : 'needs one full day of data') + '</div>';
   });
   inds.filter(i => i.type === 'vwap' && i.visible !== false && i.vals && raw[idx]).forEach(i => {
     const v = i.vals[0][idx], sd = i.vals.length > 1 ? i.vals[1][idx] - v : NaN;
-    html += `<div><span style="color:${i.color}">VWAP</span> ${isNaN(v) ? '-' : fmt(v)}` +
+    html += `<div>${eye(i)}<span style="color:${i.color}">VWAP</span> ${isNaN(v) ? '-' : fmt(v)}` +
       (i.vals.length > 1 && !isNaN(sd) ? ` <span style="color:${i.cBand}">&plusmn;${fmt(sd)}</span>` : '') +
       (i.noVol ? ' <span style="color:var(--muted)">(no volume: equal weights)</span>' : '') + '</div>';
   });
   inds.filter(i => i.type === 'atr' && i.visible !== false && i.vals && raw[idx]).forEach(i => {
     const v = i.vals[0][idx];
-    html += `<div><span style="color:${i.color}">${label(i)}</span> ${isNaN(v) ? '-' : v.toFixed(Math.min(8, digits + 1))}</div>`;
+    html += `<div>${eye(i)}<span style="color:${i.color}">${label(i)}</span> ${isNaN(v) ? '-' : v.toFixed(Math.min(8, digits + 1))}</div>`;
   });
   inds.filter(i => i.type === 'vprof' && i.visible !== false).forEach(i => {
     let pr = null;
     if (i.mode === 'visible') pr = FLOW.prof.get(i.visKey);
     else if (raw[idx]) pr = FLOW.prof.get(`ses|${periodStart(raw[idx][5], 86400, dayAnchor(i))}|${Math.max(4, Math.min(200, i.rows | 0))}|${i.day}`);
     const st = profStats(i, pr);
-    html += `<div><span style="color:var(--text)">${label(i)}</span> ` + (st
+    html += `<div>${eye(i)}<span style="color:var(--text)">${label(i)}</span> ` + (st
       ? `<span style="color:${i.cPoc}">POC</span> ${fmt(st.pocP)} &middot; VAH ${fmt(st.vah)} &middot; VAL ${fmt(st.val)} &middot; ${pr.ticks.toLocaleString()} ticks` +
         (pr.covered === false ? ' <span style="color:var(--muted)">(only the part inside the 3-day tick history)</span>' : '')
       : '<span style="color:var(--muted)">loading / no ticks for this range</span>') + '</div>';
@@ -2357,17 +2360,17 @@ function legend(idx) {
   inds.filter(i => i.type === 'foot' && i.visible !== false).forEach(i => {
     const sp = ts.logicalToCoordinate(1) - ts.logicalToCoordinate(0), fp = raw[idx] && FLOW.foot.get(`${FLOW.footStep}|${raw[idx][0]}`);
     const B = fp ? fp[1].reduce((x, y) => x + y, 0) : 0, S_ = fp ? fp[2].reduce((x, y) => x + y, 0) : 0;
-    html += `<div><span style="color:var(--text)">Footprint</span> ` + (!(sp >= 14) ? '<span style="color:var(--muted)">zoom in to see order flow</span>'
+    html += `<div>${eye(i)}<span style="color:var(--text)">Footprint</span> ` + (!(sp >= 14) ? '<span style="color:var(--muted)">zoom in to see order flow</span>'
       : fp ? `<span style="color:${i.cBuy}">buys ${B}</span> &middot; <span style="color:${i.cSell}">sells ${S_}</span> &middot; delta <b style="color:${B >= S_ ? i.cBuy : i.cSell}">${B - S_ > 0 ? '+' : ''}${B - S_}</b>` +
         (sp < 34 ? ' <span style="color:var(--muted)">(zoom in more for prices)</span>' : '')
       : '<span style="color:var(--muted)">no ticks for this candle</span>') + '</div>';
   });
   inds.filter(i => i.type === 'cvd' && i.visible !== false && i.vals && raw[idx]).forEach(i => {
     const v = i.vals[0][idx];
-    html += `<div><span style="color:${i.color}">${i.show === 'delta' ? 'Delta' : 'CVD'}</span> ${isNaN(v) ? '<span style="color:var(--muted)">no ticks</span>' : (v > 0 ? '+' : '') + v.toLocaleString()}</div>`;
+    html += `<div>${eye(i)}<span style="color:${i.color}">${i.show === 'delta' ? 'Delta' : 'CVD'}</span> ${isNaN(v) ? '<span style="color:var(--muted)">no ticks</span>' : (v > 0 ? '+' : '') + v.toLocaleString()}</div>`;
   });
   inds.filter(i => i.type === 'vol' && i.visible !== false && raw[idx]).forEach(i => {
-    html += `<div><span style="color:var(--text)">Vol</span> <span style="color:${volColor(i, idx)}">${(raw[idx][6] || 0).toLocaleString()}</span></div>`;
+    html += `<div>${eye(i)}<span style="color:var(--text)">Vol</span> <span style="color:${volColor(i, idx)}">${(raw[idx][6] || 0).toLocaleString()}</span></div>`;
   });
   inds.filter(i => i.type === 'hdoji' && i.visible !== false && i.hdTf).forEach(i => {
     const parts = i.hdTf.map(t => {
@@ -2377,7 +2380,7 @@ function legend(idx) {
       return `<b style="color:${t.color}">${t.iv}</b> ` + (here ? `<b style="color:${t.color}">&#9632; this candle${here.forming ? ' so far' : ''}</b> ` : '') +
         (times.length ? times.join(', ') : 'none');
     });
-    html += `<div><span style="color:var(--text)">Doji ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
+    html += `<div>${eye(i)}<span style="color:var(--text)">Doji ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
   });
   inds.filter(i => i.type === 'chop' && i.visible !== false && i.chTf).forEach(i => {
     const name = { 1: '<span style="color:var(--up)">up trend</span>', '-1': '<span style="color:var(--down)">down trend</span>', 2: '<b style="color:#bdbdbd">SIDEWAYS</b>' };
@@ -2391,7 +2394,7 @@ function legend(idx) {
         : ` gap ${v.atr > 0 ? ((Math.min(Math.abs(v.eF - v.sm), Math.abs(v.eM - v.sm))) / v.atr).toFixed(1) : '-'} ATR`;
       return `<b style="color:${t.color}">${t.iv}</b> ${name[code]}<span style="color:var(--muted)">${det}</span>`;
     });
-    html += `<div><span style="color:var(--text)">Sideways filter</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
+    html += `<div>${eye(i)}<span style="color:var(--text)">Sideways filter</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
   });
   inds.filter(i => i.type === 'hswitch' && i.visible !== false && i.hdTf).forEach(i => {
     const parts = i.hdTf.map(t => {
@@ -2402,14 +2405,40 @@ function legend(idx) {
       return `<b style="color:${t.color}">${t.iv}</b> ` + (here ? `<b style="color:${t.color}">&#9632; this candle switched ${arrow(here)}${here.forming ? ' so far' : ''}</b> ` : '') +
         (last.length ? last.join(' ') : 'none');
     });
-    html += `<div><span style="color:var(--text)">Switch ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
+    html += `<div>${eye(i)}<span style="color:var(--text)">Switch ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
   });
   inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'hswitch', 'chop', 'vprof', 'foot', 'cvd'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
     const v = i.vals.map(a => fmt(a[idx])).join(' / ');
-    html += `<div><span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${v}</span></div>`;
+    html += `<div>${eye(i)}<span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${v}</span></div>`;
+  });
+  inds.filter(i => i.visible === false).forEach(i => {
+    html += `<div style="opacity:.6">${eye(i)}<span style="text-decoration:line-through">${label(i)}</span><span>hidden</span></div>`;
   });
   $('legend').innerHTML = html;
 }
+/* eye icon in front of every indicator line: click to hide / show it, like TradingView */
+function eye(i) {
+  const off = i.visible === false;
+  return `<b class="eye" data-i="${inds.indexOf(i)}" title="${off ? 'Show' : 'Hide'} this indicator">` +
+    `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+    `<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>` +
+    (off ? `<path d="M3 3l18 18"/>` : '') + `</svg></b>`;
+}
+function toggleInd(n) {
+  const ind = inds[n]; if (!ind) return;
+  renderPanel();                                   // the panel's own show/hide checkbox does the per-type work
+  const row = $('ilist').children[n], cb = row && row.querySelector('[data-k="visible"]');
+  if (!cb) return;
+  cb.checked = !(ind.visible !== false);
+  cb.dispatchEvent(new Event('change'));
+  legend(null); bump();
+}
+$('legend').addEventListener('mousedown', e => {
+  const el = e.target.closest && e.target.closest('.eye');
+  if (!el) return;
+  e.preventDefault(); e.stopPropagation();
+  toggleInd(Number(el.dataset.i));
+});
 chart.subscribeCrosshairMove(p => {
   hoverIdx = p && p.time != null ? idxOfTime(p.time) : null;
   legend(null); bump();

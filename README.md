@@ -96,3 +96,5 @@ the `.bat` files also install what they need on first run.
 Not on GitHub (they stay on the old PC): `fyers_config.json`, your recorded Fyers ticks (`fyers_ticks/`), and the chart's
 saved drawings / indicators / settings, which live in the browser. Copy `fyers_ticks/` across if you want the old tick history.
 The servers save lightweight-charts 4.2.0 next to the page on first start (fallback: unpkg), so the chart loads instantly and offline.
+
+- **Eye icon on every indicator.** In the legend at the top left of the chart each indicator has an eye. Click it to hide or show that indicator (like TradingView). Hidden ones stay listed, struck through, so you can switch them back on without opening the Indicators panel.
