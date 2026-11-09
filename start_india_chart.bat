@@ -3,7 +3,15 @@ title India chart (Fyers)
 cd /d "%~dp0"
 
 echo Checking Python...
-where py >nul 2>nul && (set PY=py) || (set PY=python)
+set PY=
+where py >nul 2>nul && (
+    rem the Fyers libraries have no ready-made files for Python 3.14 yet, so prefer 3.12, 3.13 or 3.11
+    for %%V in (3.12 3.13 3.11) do (
+        if not defined PY (py -%%V --version >nul 2>nul && set PY=py -%%V)
+    )
+    if not defined PY set PY=py
+)
+if not defined PY set PY=python
 %PY% --version >nul 2>nul
 if errorlevel 1 (
     echo.
@@ -13,8 +21,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo Using: & %PY% --version
 echo Installing / checking libraries (first run takes a minute)...
-%PY% -m pip install --quiet --disable-pip-version-check fyers-apiv3 pandas numpy
+%PY% -m pip install --quiet --disable-pip-version-check --prefer-binary fyers-apiv3 pandas numpy
 if errorlevel 1 (
     echo.
     echo Library install failed. Copy the message above and share it.
