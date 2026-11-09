@@ -45,8 +45,8 @@
   .symrow:hover, .symrow.on { background:rgba(41,98,255,.15); }
   .symrow b { font-weight:600; min-width:110px; }
   .symrow span { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .symtabs { display:flex; gap:6px; margin-top:6px; }
-  .symtabs button { flex:1; background:var(--bg); color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:4px; cursor:pointer; font:inherit; }
+  .symtabs { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .symtabs button { flex:1 1 auto; white-space:nowrap; padding-left:8px; padding-right:8px; background:var(--bg); color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:4px; cursor:pointer; font:inherit; }
   .symtabs button.on { color:var(--text); border-color:#2962ff; background:rgba(41,98,255,.15); }
   .star { cursor:pointer; color:var(--muted); font-size:15px; line-height:1; margin-left:auto; padding:0 2px; flex:none; }
   .star:hover { color:#ffb300; } .star.on { color:#ffb300; }
@@ -270,7 +270,7 @@
   </div>
 </div>
 <div id="sympop" class="pop"><input id="symq" placeholder="Search symbols" autocomplete="off">
-  <div class="symtabs"><button id="symtab_all" class="on">All symbols</button><button id="symtab_fav">&#9733; Favorites</button></div><div id="symlist"></div></div>
+  <div class="symtabs" id="symtabs"><button id="symtab_all" class="on">All symbols</button><button id="symtab_fav">&#9733; Favorites</button></div><div id="symlist"></div></div>
 <div id="indpop"><div class="ph"><span id="pop_title"></span><button class="x" id="pop_close">Close</button></div><div id="pop_body"></div></div>
 <div id="panel">
   <div class="ph">Indicators <button class="x" id="pclose">Close</button></div>
@@ -3417,6 +3417,7 @@ requestAnimationFrame(render);
 /* ---------------- start ---------------- */
 /* ---------------- symbol, chart type and interval controls ---------------- */
 let favs = store.get('gc_favs', []), favTab = store.get('gc_favtab', false);
+let LISTS = [], listTab = store.get('gc_listtab', ''), LDATA = {}, listTimer = 0;   // server lists (Indian chart): F&O, Nifty 50 / 100 / 500, top gainers
 const isFav = n => favs.some(f => f.name === n);
 function toggleFav(n, d) {
   if (isFav(n)) favs = favs.filter(f => f.name !== n); else favs.push({ name: n, desc: d || '' });
@@ -3427,7 +3428,24 @@ function favUI() {
   $('favbtn').innerHTML = on ? '&#9733;' : '&#9734;'; $('favbtn').classList.toggle('on', on);
   $('favbtn').title = on ? 'Remove from favorites' : 'Add this symbol to your favorites';
   $('symtab_fav').innerHTML = '&#9733; Favorites' + (favs.length ? ` (${favs.length})` : '');
-  $('symtab_all').classList.toggle('on', !favTab); $('symtab_fav').classList.toggle('on', favTab);
+  $('symtab_all').classList.toggle('on', !favTab && !listTab); $('symtab_fav').classList.toggle('on', favTab && !listTab);
+  document.querySelectorAll('#symtabs button[data-l]').forEach(b => b.classList.toggle('on', b.dataset.l === listTab));
+}
+function buildTabs() {
+  $('symtabs').querySelectorAll('button[data-l]').forEach(b => b.remove());
+  LISTS.forEach(l => {
+    const b = document.createElement('button'); b.dataset.l = l.id; b.textContent = l.label; b.title = l.title || l.label;
+    b.onclick = () => { listTab = l.id; favTab = false; store.set('gc_listtab', listTab); symSel = 0; favUI(); loadList(l.id); renderSymbols(); $('symq').focus(); };
+    $('symtabs').appendChild(b);
+  });
+  if (listTab && !LISTS.some(l => l.id === listTab)) listTab = '';
+}
+async function loadList(id) {
+  clearTimeout(listTimer);
+  try { LDATA[id] = await (await fetch('/api/list?id=' + encodeURIComponent(id))).json(); }
+  catch (e) { LDATA[id] = { status: 'error', msg: 'Could not reach the chart server.', symbols: [] }; }
+  if (listTab === id) renderSymbols();
+  if (LDATA[id].status === 'loading' && listTab === id && $('sympop').style.display === 'block') listTimer = setTimeout(() => loadList(id), 2500);
 }
 let symbols = [], symSel = 0, symSearch = false, watchLabel = 'Market Watch', found = [], findQ = '', findTimer = 0;
 async function setSymbol(name, fromSync) {
@@ -3452,10 +3470,12 @@ async function setSymbol(name, fromSync) {
 }
 function renderSymbols() {
   const q = $('symq').value.trim().toLowerCase();
-  const hits = favTab ? favs.filter(s => !q || s.name.toLowerCase().includes(q) || (s.desc || '').toLowerCase().includes(q))
+  const LD = listTab ? (LDATA[listTab] || { status: 'loading', symbols: [] }) : null;
+  const hits = LD ? LD.symbols.filter(s => !q || s.name.toLowerCase().includes(q) || (s.desc || '').toLowerCase().includes(q))
+    : favTab ? favs.filter(s => !q || s.name.toLowerCase().includes(q) || (s.desc || '').toLowerCase().includes(q))
     : symSearch && q ? (findQ === q ? found : [])
     : symbols.filter(s => !q || s.name.toLowerCase().includes(q) || s.desc.toLowerCase().includes(q)).slice(0, 300);
-  if (!favTab && symSearch && q && findQ !== q) {                     // big instrument lists are searched on the server
+  if (!listTab && !favTab && symSearch && q && findQ !== q) {                     // big instrument lists are searched on the server
     clearTimeout(findTimer);
     findTimer = setTimeout(async () => {
       try { const r = await (await fetch('/api/search?q=' + encodeURIComponent(q))).json(); found = r.symbols || []; }
@@ -3467,17 +3487,24 @@ function renderSymbols() {
   }
   symSel = Math.min(symSel, Math.max(0, hits.length - 1));
   let html = '', section = null;
-  if (!favTab && !q && favs.length) {                      // favorites pinned at the top of the full list
+  if (!listTab && !favTab && !q && favs.length) {                      // favorites pinned at the top of the full list
     html += '<div class="symhead">&#9733; Favorites</div>';
     favs.forEach(f => { html += `<div class="symrow fv" data-n="${f.name}"><b>${f.name}</b><span>${f.desc || ''}</span><i class="star on" data-s="${f.name}" title="Remove from favorites">&#9733;</i></div>`; });
   }
+  if (LD) {
+    const pr = LD.progress && LD.progress[1] ? ` (${LD.progress[0]} of ${LD.progress[1]})` : '';
+    if (LD.status === 'loading') html += `<div class="symhead">${LD.msg || 'Loading'}${pr}...</div>`;
+    else if (LD.status === 'error') html += `<div class="symhead" style="text-transform:none;color:#ef5350">${LD.msg || 'Could not load this list'}</div>`;
+    else if (LD.note) html += `<div class="symhead" style="text-transform:none">${LD.note}</div>`;
+  }
   hits.forEach((s, i) => {
+    if (LD) { html += `<div class="symrow${i === symSel ? ' on' : ''}" data-i="${i}"><b>${s.name}</b><span>${s.desc || ''}</span>${s.note ? `<em style="margin-left:auto;font-style:normal;font-size:12px;color:${String(s.note).startsWith('-') ? '#ef5350' : '#26a69a'}">${s.note}</em>` : ''}<i class="star${isFav(s.name) ? ' on' : ''}" ${s.note ? '' : 'style="margin-left:auto"'} data-s="${s.name}" title="${isFav(s.name) ? 'Remove from' : 'Add to'} favorites">${isFav(s.name) ? '&#9733;' : '&#9734;'}</i></div>`; return; }
     if (favTab) { if (i === 0) html += ''; html += `<div class="symrow${i === symSel ? ' on' : ''}" data-i="${i}"><b>${s.name}</b><span>${s.desc || ''}</span><i class="star on" data-s="${s.name}" title="Remove from favorites">&#9733;</i></div>`; return; }
     const sec = s.mw ? watchLabel : (s.path.split('\\')[0] || 'Other');
     if (sec !== section) { html += `<div class="symhead">${sec}</div>`; section = sec; }
     html += `<div class="symrow${i === symSel ? ' on' : ''}" data-i="${i}"><b>${s.name}</b><span>${s.desc}</span><i class="star${isFav(s.name) ? ' on' : ''}" data-s="${s.name}" title="${isFav(s.name) ? "Remove from" : "Add to"} favorites">${isFav(s.name) ? '&#9733;' : '&#9734;'}</i></div>`;
   });
-  $('symlist').innerHTML = html || `<div class="symhead">${favTab ? 'No favorites yet - click the star next to a symbol' : 'No matching symbols'}</div>`;
+  $('symlist').innerHTML = html || (LD ? '' : `<div class="symhead">${favTab ? 'No favorites yet - click the star next to a symbol' : 'No matching symbols'}</div>`);
   const all = favTab ? hits : hits;
   $('symlist').querySelectorAll('.symrow').forEach(r => r.onclick = () => { closeSymbols(); setSymbol(r.dataset.n || hits[+r.dataset.i].name); });
   $('symlist').querySelectorAll('.star').forEach(st => st.onclick = e => {
@@ -3494,12 +3521,13 @@ async function openSymbols() {
     $('symlist').innerHTML = '<div class="symhead">Loading symbols...</div>';
     try { symbols = (await (await fetch('/api/symbols')).json()).symbols; } catch (e) { symbols = []; }
   }
+  if (listTab) loadList(listTab);
   renderSymbols(); $('symq').focus();
 }
 function closeSymbols() { $('sympop').style.display = 'none'; }
 $('favbtn').onclick = () => toggleFav(symbol, symMeta && symMeta.desc);
-$('symtab_all').onclick = () => { favTab = false; store.set('gc_favtab', false); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
-$('symtab_fav').onclick = () => { favTab = true; store.set('gc_favtab', true); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
+$('symtab_all').onclick = () => { favTab = false; listTab = ''; store.set('gc_listtab', ''); store.set('gc_favtab', false); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
+$('symtab_fav').onclick = () => { favTab = true; listTab = ''; store.set('gc_listtab', ''); store.set('gc_favtab', true); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
 $('symbtn').onclick = e => { e.stopPropagation(); $('sympop').style.display === 'block' ? closeSymbols() : openSymbols(); };
 $('symq').addEventListener('input', () => { symSel = 0; renderSymbols(); });
 $('symq').addEventListener('keydown', e => {
@@ -4316,6 +4344,7 @@ $('rp_exit').onclick = () => replayExit(false);
     symbols = list.symbols;
     if (list.source) { SRC = list.source; document.title = `${SRC} Chart`; }
     symSearch = !!list.search; if (list.watchLabel) watchLabel = list.watchLabel;
+    LISTS = list.lists || []; buildTabs(); favUI();
     if (list.srvOffset != null) srvOffset = list.srvOffset;
     tzChanged();
     PA = Object.assign({ bal: 100000, startBal: 100000, pos: [], next: 1, deals: [] }, store.get('gc_paper', {}));

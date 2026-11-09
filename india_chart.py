@@ -183,6 +183,7 @@ def api_history(data):
 
 # ---------------- symbol master ----------------
 SYMS, SYM_INDEX = {}, []          # name -> info ; list of (search text, info)
+CM_BY_CODE, FNO_CODES = {}, set()  # NSE cash symbol by scrip code ; scrip codes of everything that has options
 
 
 def download_masters():
@@ -234,6 +235,10 @@ def load_masters():
                     exp = int(float(row[8])) if len(row) > 8 and row[8] else 0
                 except ValueError:
                     exp = 0
+                if f == "NSE_CM" and len(row) > 12:
+                    CM_BY_CODE[row[12].strip()] = name
+                elif f == "NSE_FO" and len(row) > 16 and row[16].strip() in ("CE", "PE"):
+                    FNO_CODES.add(row[14].strip())          # the underlying has options
                 info = {"name": name, "desc": row[1].strip() if len(row) > 1 else "", "seg": f, "path": label,
                         "tick": tick if tick > 0 else 0.05, "lot": lot, "exp": exp}
                 SYMS[name] = info
@@ -935,6 +940,132 @@ def flow_footprint(sym, starts, ends, step):
     return out
 
 
+# ---------------- symbol lists: F&O (options), Nifty 50 / 100 / 500, top gainers ----------------
+INDEX_FILES = {"nifty50": ("Nifty 50", "ind_nifty50list.csv"), "nifty100": ("Nifty 100", "ind_nifty100list.csv"),
+               "nifty500": ("Nifty 500", "ind_nifty500list.csv")}
+INDEX_URLS = ["https://www.niftyindices.com/IndexConstituent/{f}", "https://nsearchives.nseindia.com/content/indices/{f}",
+              "https://archives.nseindia.com/content/indices/{f}"]
+GAINERS = {"status": "idle", "done": 0, "total": 0, "rows": [], "at": 0.0, "msg": ""}
+GAIN_LOCK = threading.Lock()
+
+
+def sym_desc(n):
+    i = SYMS.get(n)
+    return i["desc"] if i else ""
+
+
+def fno_members():
+    names = [CM_BY_CODE[c] for c in FNO_CODES if c in CM_BY_CODE]
+    stocks = sorted(n for n in names if n.endswith("-EQ"))
+    idx = sorted(n for n in names if not n.endswith("-EQ"))
+    return idx + stocks
+
+
+def index_members(key):
+    """Constituents of a Nifty index as Fyers symbols (NSE:SBIN-EQ). The CSV comes from NSE and is kept for a week."""
+    label, fname = INDEX_FILES[key]
+    SYM_DIR.mkdir(exist_ok=True)
+    p = SYM_DIR / f"idx_{fname}"
+    if not p.exists() or time.time() - p.stat().st_mtime > 7 * 86400:
+        for u in INDEX_URLS:
+            try:
+                req = urllib.request.Request(u.format(f=fname), headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+                    "Accept": "text/csv,*/*"})
+                with urllib.request.urlopen(req, timeout=25) as r:
+                    data = r.read()
+                if data and b"Symbol" in data[:400]:
+                    p.write_bytes(data)
+                    break
+            except Exception as e:
+                print(f"  could not download {label} from {u.split('/')[2]} ({e})")
+    if not p.exists():
+        return None
+    out = []
+    with open(p, newline="", encoding="utf-8-sig", errors="replace") as fh:
+        rd = csv.reader(fh)
+        head = next(rd, [])
+        col = next((i for i, v in enumerate(head) if v.strip().lower() == "symbol"), 2)
+        for row in rd:
+            if len(row) > col and row[col].strip():
+                n = f"NSE:{row[col].strip()}-EQ"
+                if n in SYMS:
+                    out.append(n)
+    return out
+
+
+def gainers_universe():
+    u = [n for n in fno_members() if n.endswith("-EQ")]
+    m = index_members("nifty500") if (SYM_DIR / "idx_ind_nifty500list.csv").exists() else None
+    for n in (m or []):
+        if n not in u:
+            u.append(n)
+    return u[:700]
+
+
+def gainers_job():
+    try:
+        uni = gainers_universe()
+        if not uni:
+            with GAIN_LOCK:
+                GAINERS.update(status="error", msg="No stocks to rank yet - open the Nifty 500 tab once so its list is downloaded.")
+            return
+        with GAIN_LOCK:
+            GAINERS.update(status="loading", done=0, total=len(uni), rows=[], msg="Working out the 7-day gainers")
+        rows, now = [], time.time()
+        for k, n in enumerate(uni):
+            try:
+                c = fetch_history(n, "D", 86400, 16, now)
+            except Exception as e:
+                if "limit" in str(e).lower():
+                    time.sleep(8)
+                    try: c = fetch_history(n, "D", 86400, 16, now)
+                    except Exception: c = None
+                else:
+                    c = None
+            if c and len(c) >= 3:
+                last = c[-1]
+                cut = last[0] - 7 * 86400
+                base = next((x for x in reversed(c[:-1]) if x[0] <= cut + 43200), c[0])
+                if base[4] > 0:
+                    rows.append((round((last[4] / base[4] - 1) * 100, 2), n, last[4]))
+            with GAIN_LOCK:
+                GAINERS["done"] = k + 1
+                GAINERS["rows"] = sorted(rows, reverse=True)[:50]
+        with GAIN_LOCK:
+            GAINERS.update(status="ready", at=time.time(), msg="")
+    except Exception as e:
+        with GAIN_LOCK:
+            GAINERS.update(status="error", msg=f"Could not work out the gainers: {e}")
+
+
+def list_view(lid):
+    if lid == "fno":
+        m = fno_members()
+        return {"status": "ready", "symbols": [{"name": n, "desc": sym_desc(n)} for n in m],
+                "note": f"{len(m)} symbols that have options (indices first)"}
+    if lid in INDEX_FILES:
+        m = index_members(lid)
+        if m is None:
+            f = INDEX_FILES[lid][1]
+            return {"status": "error", "symbols": [],
+                    "msg": f"Could not download the {INDEX_FILES[lid][0]} list from NSE. Download {f} from niftyindices.com "
+                           f"(Indices > Index constituents) and save it in the fyers_symbols folder as idx_{f}, then reopen this tab."}
+        return {"status": "ready", "symbols": [{"name": n, "desc": sym_desc(n)} for n in m]}
+    if lid == "gainers":
+        with GAIN_LOCK:
+            stale = GAINERS["status"] in ("idle", "error") or (GAINERS["status"] == "ready" and time.time() - GAINERS["at"] > 3600)
+            if stale and AUTH is not None and AUTH.ok:
+                GAINERS["status"] = "loading"; GAINERS["done"] = 0
+                threading.Thread(target=gainers_job, daemon=True).start()
+            g = dict(GAINERS)
+        syms = [{"name": n, "desc": sym_desc(n), "note": f"{pct:+.2f}%  ·  {px:g}"} for pct, n, px in g["rows"]]
+        return {"status": g["status"], "msg": g["msg"], "progress": [g["done"], g["total"]], "symbols": syms,
+                "note": "Biggest 7-day gains (last close vs the close 7 days ago) among F&O stocks and the Nifty 500"
+                        + (" (partial - still counting)" if g["status"] == "loading" else "")}
+    return {"status": "error", "symbols": [], "msg": "Unknown list"}
+
+
 # ---------------- web server ----------------
 LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Fyers login</title>
 <style>body{background:#131722;color:#d1d4dc;font:15px sans-serif;display:flex;justify-content:center;padding-top:12vh}
@@ -1048,7 +1179,14 @@ def make_handler():
                            for s in watch if s in SYMS]
                     dflt = lst[0]["name"] if lst else "NSE:NIFTY50-INDEX"
                     return self.js({"default": dflt, "symbols": lst, "search": True, "source": "Fyers", "srvOffset": IST,
-                                    "watchLabel": "Watchlist (recorded)"})
+                                    "watchLabel": "Watchlist (recorded)",
+                                    "lists": [{"id": "fno", "label": "Options (F&O)", "title": "Everything that has options"},
+                                              {"id": "nifty50", "label": "Nifty 50"}, {"id": "nifty100", "label": "Nifty 100"},
+                                              {"id": "nifty500", "label": "Nifty 500"},
+                                              {"id": "gainers", "label": "Top gainers 7d",
+                                               "title": "Highest 7-day gainers, combined"}]})
+                if url.path == "/api/list":
+                    return self.js(list_view(q.get("id", "")))
                 if url.path == "/api/search":
                     return self.js({"symbols": search(q.get("q", ""))})
                 sym = q.get("symbol") or "NSE:NIFTY50-INDEX"

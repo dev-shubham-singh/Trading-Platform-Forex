@@ -90,6 +90,11 @@ charts and up (tick counts on seconds / tick charts). The Fyers app is data-only
 there trades a **paper account** (starts at 100,000 INR, saved in the browser, "New paper account" resets it): lot
 sizing, SL / TP lines, drag to move, commission, history and growth all work, nothing is sent to Fyers.
 
+On the Indian chart the symbol search has extra tabs: **Options (F&O)** (everything that has options, from the Fyers
+symbol list), **Nifty 50 / 100 / 500** (the NSE constituent lists, downloaded once and kept for a week in `fyers_symbols/`)
+and **Top gainers 7d** (the biggest 7-day gains among F&O stocks and the Nifty 500, worked out from Fyers daily candles;
+it takes a few minutes the first time and is refreshed hourly).
+
 ## Backtest
 `run_backtest.bat` runs `backtest.py` on recent MT5 ticks for the strategy set in `STRATEGY` and writes
 `backtest_report.html` (per-trade drawdown, variants, threshold sweep) and `backtest_trades.csv`.
