@@ -72,6 +72,11 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
   shows the practice account (balance you choose, history, win rate, growth curve). Nothing is sent to MT5.
 - Exit replay returns to the live chart and your real account.
 
+## Favorite symbols
+Click the star next to the symbol name to add or remove it from your favorites. In the symbol search, the **Favorites** tab
+lists them, favorites are also pinned at the top of the full list, and every row has its own star. Saved in the browser,
+separately for the gold and the Indian chart.
+
 ## Indian chart (Fyers)
 See `FYERS_SETUP.txt`. Copy `fyers_config.example.json` to `fyers_config.json` and put in your App ID and Secret
 (this file is git-ignored). Minute charts and up have full history; second / tick / Renko / Kagi charts are built from

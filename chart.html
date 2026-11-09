@@ -45,6 +45,12 @@
   .symrow:hover, .symrow.on { background:rgba(41,98,255,.15); }
   .symrow b { font-weight:600; min-width:110px; }
   .symrow span { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .symtabs { display:flex; gap:6px; margin-top:6px; }
+  .symtabs button { flex:1; background:var(--bg); color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:4px; cursor:pointer; font:inherit; }
+  .symtabs button.on { color:var(--text); border-color:#2962ff; background:rgba(41,98,255,.15); }
+  .star { cursor:pointer; color:var(--muted); font-size:15px; line-height:1; margin-left:auto; padding:0 2px; flex:none; }
+  .star:hover { color:#ffb300; } .star.on { color:#ffb300; }
+  #favbtn { font-size:17px; padding:2px 8px; } #favbtn.on { color:#ffb300; }
   .symhead { color:var(--muted); font-size:11px; padding:8px 8px 4px; text-transform:uppercase; letter-spacing:.04em; }
   .quote { margin-left:auto; display:flex; gap:14px; align-items:center; color:var(--muted); }
   .quote b { color:var(--text); font-weight:500; }
@@ -172,6 +178,7 @@
 <body>
 <header>
   <button class="tool symbtn" id="symbtn" title="Change symbol"><span id="symname">-</span><small id="symdesc"></small> &#9662;</button>
+  <button class="tool" id="favbtn" title="Add this symbol to your favorites">&#9734;</button>
   <div class="sep"></div>
   <select id="ctype" title="Chart type">
     <option value="ha">Heikin Ashi</option><option value="candle">Candles</option>
@@ -262,7 +269,8 @@
     <div id="hint"></div>
   </div>
 </div>
-<div id="sympop" class="pop"><input id="symq" placeholder="Search symbols" autocomplete="off"><div id="symlist"></div></div>
+<div id="sympop" class="pop"><input id="symq" placeholder="Search symbols" autocomplete="off">
+  <div class="symtabs"><button id="symtab_all" class="on">All symbols</button><button id="symtab_fav">&#9733; Favorites</button></div><div id="symlist"></div></div>
 <div id="indpop"><div class="ph"><span id="pop_title"></span><button class="x" id="pop_close">Close</button></div><div id="pop_body"></div></div>
 <div id="panel">
   <div class="ph">Indicators <button class="x" id="pclose">Close</button></div>
@@ -3408,6 +3416,19 @@ requestAnimationFrame(render);
 
 /* ---------------- start ---------------- */
 /* ---------------- symbol, chart type and interval controls ---------------- */
+let favs = store.get('gc_favs', []), favTab = store.get('gc_favtab', false);
+const isFav = n => favs.some(f => f.name === n);
+function toggleFav(n, d) {
+  if (isFav(n)) favs = favs.filter(f => f.name !== n); else favs.push({ name: n, desc: d || '' });
+  store.set('gc_favs', favs); favUI();
+}
+function favUI() {
+  const on = isFav(symbol);
+  $('favbtn').innerHTML = on ? '&#9733;' : '&#9734;'; $('favbtn').classList.toggle('on', on);
+  $('favbtn').title = on ? 'Remove from favorites' : 'Add this symbol to your favorites';
+  $('symtab_fav').innerHTML = '&#9733; Favorites' + (favs.length ? ` (${favs.length})` : '');
+  $('symtab_all').classList.toggle('on', !favTab); $('symtab_fav').classList.toggle('on', favTab);
+}
 let symbols = [], symSel = 0, symSearch = false, watchLabel = 'Market Watch', found = [], findQ = '', findTimer = 0;
 async function setSymbol(name, fromSync) {
   if (booted && !fromSync) send({ type: 'symbol', symbol: name });
@@ -3420,7 +3441,7 @@ async function setSymbol(name, fromSync) {
   symMeta = m; digits = m.digits; symbol = m.symbol; anchor = m.anchor || 0;
   if (m.srvOffset != null && m.srvOffset !== srvOffset) { srvOffset = m.srvOffset; tzChanged(); }
   series.applyOptions({ priceFormat: { type: 'price', precision: digits, minMove: Math.pow(10, -digits) } });
-  $('symname').textContent = m.symbol; $('symdesc').textContent = m.desc || '';
+  $('symname').textContent = m.symbol; $('symdesc').textContent = m.desc || ''; favUI();
   $('boxin').step = m.point;
   drawings = store.get('gc_draw_' + symbol, []); sel = null;
   if (plan) closePlan();
@@ -3431,9 +3452,10 @@ async function setSymbol(name, fromSync) {
 }
 function renderSymbols() {
   const q = $('symq').value.trim().toLowerCase();
-  const hits = symSearch && q ? (findQ === q ? found : [])
+  const hits = favTab ? favs.filter(s => !q || s.name.toLowerCase().includes(q) || (s.desc || '').toLowerCase().includes(q))
+    : symSearch && q ? (findQ === q ? found : [])
     : symbols.filter(s => !q || s.name.toLowerCase().includes(q) || s.desc.toLowerCase().includes(q)).slice(0, 300);
-  if (symSearch && q && findQ !== q) {                     // big instrument lists are searched on the server
+  if (!favTab && symSearch && q && findQ !== q) {                     // big instrument lists are searched on the server
     clearTimeout(findTimer);
     findTimer = setTimeout(async () => {
       try { const r = await (await fetch('/api/search?q=' + encodeURIComponent(q))).json(); found = r.symbols || []; }
@@ -3445,13 +3467,23 @@ function renderSymbols() {
   }
   symSel = Math.min(symSel, Math.max(0, hits.length - 1));
   let html = '', section = null;
+  if (!favTab && !q && favs.length) {                      // favorites pinned at the top of the full list
+    html += '<div class="symhead">&#9733; Favorites</div>';
+    favs.forEach(f => { html += `<div class="symrow fv" data-n="${f.name}"><b>${f.name}</b><span>${f.desc || ''}</span><i class="star on" data-s="${f.name}" title="Remove from favorites">&#9733;</i></div>`; });
+  }
   hits.forEach((s, i) => {
+    if (favTab) { if (i === 0) html += ''; html += `<div class="symrow${i === symSel ? ' on' : ''}" data-i="${i}"><b>${s.name}</b><span>${s.desc || ''}</span><i class="star on" data-s="${s.name}" title="Remove from favorites">&#9733;</i></div>`; return; }
     const sec = s.mw ? watchLabel : (s.path.split('\\')[0] || 'Other');
     if (sec !== section) { html += `<div class="symhead">${sec}</div>`; section = sec; }
-    html += `<div class="symrow${i === symSel ? ' on' : ''}" data-i="${i}"><b>${s.name}</b><span>${s.desc}</span></div>`;
+    html += `<div class="symrow${i === symSel ? ' on' : ''}" data-i="${i}"><b>${s.name}</b><span>${s.desc}</span><i class="star${isFav(s.name) ? ' on' : ''}" data-s="${s.name}" title="${isFav(s.name) ? "Remove from" : "Add to"} favorites">${isFav(s.name) ? '&#9733;' : '&#9734;'}</i></div>`;
   });
-  $('symlist').innerHTML = html || '<div class="symhead">No matching symbols</div>';
-  $('symlist').querySelectorAll('.symrow').forEach(r => r.onclick = () => { closeSymbols(); setSymbol(hits[+r.dataset.i].name); });
+  $('symlist').innerHTML = html || `<div class="symhead">${favTab ? 'No favorites yet - click the star next to a symbol' : 'No matching symbols'}</div>`;
+  const all = favTab ? hits : hits;
+  $('symlist').querySelectorAll('.symrow').forEach(r => r.onclick = () => { closeSymbols(); setSymbol(r.dataset.n || hits[+r.dataset.i].name); });
+  $('symlist').querySelectorAll('.star').forEach(st => st.onclick = e => {
+    e.stopPropagation(); const n = st.dataset.s, h = hits.find(x => x.name === n) || favs.find(x => x.name === n);
+    toggleFav(n, h && h.desc); const top = $('symlist').scrollTop; renderSymbols(); $('symlist').scrollTop = top;
+  });
   return hits;
 }
 async function openSymbols() {
@@ -3465,6 +3497,9 @@ async function openSymbols() {
   renderSymbols(); $('symq').focus();
 }
 function closeSymbols() { $('sympop').style.display = 'none'; }
+$('favbtn').onclick = () => toggleFav(symbol, symMeta && symMeta.desc);
+$('symtab_all').onclick = () => { favTab = false; store.set('gc_favtab', false); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
+$('symtab_fav').onclick = () => { favTab = true; store.set('gc_favtab', true); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
 $('symbtn').onclick = e => { e.stopPropagation(); $('sympop').style.display === 'block' ? closeSymbols() : openSymbols(); };
 $('symq').addEventListener('input', () => { symSel = 0; renderSymbols(); });
 $('symq').addEventListener('keydown', e => {
