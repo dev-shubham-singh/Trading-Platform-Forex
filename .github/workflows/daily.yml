@@ -1,0 +1,21 @@
+name: Daily log
+on:
+  schedule:
+    - cron: "40 18 * * *"      # 00:10 India time every day
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Append today's line and commit it as the repo owner
+        run: |
+          d=$(TZ=Asia/Kolkata date +%F)
+          echo "- $d: chart running log" >> daily_log.md
+          git config user.name "${{ github.repository_owner }}"
+          git config user.email "${{ github.repository_owner_id }}+${{ github.repository_owner }}@users.noreply.github.com"
+          git add daily_log.md
+          git commit -m "Daily log $d"
+          git push
