@@ -95,6 +95,18 @@ symbol list), **Nifty 50 / 100 / 500** (the NSE constituent lists, downloaded on
 and **Top gainers 7d** (the biggest 7-day gains among F&O stocks and the Nifty 500, worked out from Fyers daily candles;
 it takes a few minutes the first time and is refreshed hourly).
 
+## Troubleshooting
+| Problem | Fix |
+|---|---|
+| Gold chart says it cannot connect to MT5 | Open MetaTrader 5 first, log in to the Exness account, and turn on **Tools > Options > Expert Advisors > Allow algorithmic trading**. Then restart `start_gold_chart.bat`. |
+| Buy / Sell does nothing on the gold chart | Check the green "live" switch in the Trades bar and that the MT5 terminal shows no "trading disabled" message. |
+| India chart shows a Fyers login page | Normal once a day: Fyers logins expire at 6:30 AM India time. Click the login link and sign in. |
+| `aiohttp` / "Microsoft Visual C++ 14.0" error on install | You are on a very new Python. The launcher picks Python 3.12 / 3.13 / 3.11 if installed; install one of those from python.org (tick **Add Python to PATH**). |
+| New features are missing after an update | Press **Ctrl+F5** in the browser. If the update touched a `.py` file, close the black window and start the `.bat` again. |
+| India chart: Nifty 100 / 500 tab says it could not download | NSE blocked the download. Save the CSV from niftyindices.com into `fyers_symbols/` as `idx_ind_nifty500list.csv` (same pattern for the others). |
+| Second / tick charts on the India chart are short | Fyers gives no seconds history on the Standard plan; those charts use ticks recorded while the app runs, so keep it open. |
+| Port already in use | A previous black window is still open. Close it and start again. |
+
 ## Backtest
 `run_backtest.bat` runs `backtest.py` on recent MT5 ticks for the strategy set in `STRATEGY` and writes
 `backtest_report.html` (per-trade drawdown, variants, threshold sweep) and `backtest_trades.csv`.

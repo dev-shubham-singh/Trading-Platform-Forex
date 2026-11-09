@@ -5,7 +5,7 @@ Each item is small, so it fits in a short chat or a few minutes of your own edit
 
 - [ ] Day 1  - Write down your trading rules (entry, exit, risk per trade) in `RULES.md`
 - [ ] Day 2  - Add a screenshot of each chart to the README
-- [ ] Day 3  - Add a "Troubleshooting" section to the README (MT5 not connecting, Fyers login expired)
+- [x] Day 3  - Add a "Troubleshooting" section to the README (MT5 not connecting, Fyers login expired)
 - [ ] Day 4  - Add a keyboard shortcuts list to the README (and a `?` help popup in the chart)
 - [ ] Day 5  - Add a trade journal note box in the Trades bar (one text note per trade)
 - [ ] Day 6  - Add a "daily P/L" line in the growth panel
