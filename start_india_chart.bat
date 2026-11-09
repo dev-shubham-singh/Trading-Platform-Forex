@@ -21,6 +21,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem pure-Python install of the async libraries: no C++ compiler needed (any Python version)
+set AIOHTTP_NO_EXTENSIONS=1
+set MULTIDICT_NO_EXTENSIONS=1
+set YARL_NO_EXTENSIONS=1
+set FROZENLIST_NO_EXTENSIONS=1
 echo Using: & %PY% --version
 echo Installing / checking libraries (first run takes a minute)...
 %PY% -m pip install --quiet --disable-pip-version-check --prefer-binary fyers-apiv3 pandas numpy
