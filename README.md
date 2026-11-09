@@ -77,6 +77,14 @@ See `FYERS_SETUP.txt`. Copy `fyers_config.example.json` to `fyers_config.json` a
 (this file is git-ignored). Minute charts and up have full history; second / tick / Renko / Kagi charts are built from
 ticks the app records while it runs (`fyers_ticks/`).
 
+The Fyers chart has the same screen as the gold chart: every indicator (MACD, Volume, Doji boxes, Volume profile,
+Footprint, CVD, higher-timeframe candles, multi-timeframe lines...), the legend eye / gear icons, bar replay and the
+Trades bar. Differences: Fyers sends no buy / sell flag, so footprint, delta and volume profile use the tick rule
+(an up-tick counts as a buy) on the ticks the app has recorded; the Volume bars are Fyers' traded volume on minute
+charts and up (tick counts on seconds / tick charts). The Fyers app is data-only and cannot place orders, so Buy / Sell
+there trades a **paper account** (starts at 100,000 INR, saved in the browser, "New paper account" resets it): lot
+sizing, SL / TP lines, drag to move, commission, history and growth all work, nothing is sent to Fyers.
+
 ## Backtest
 `run_backtest.bat` runs `backtest.py` on recent MT5 ticks for the strategy set in `STRATEGY` and writes
 `backtest_report.html` (per-trade drawdown, variants, threshold sweep) and `backtest_trades.csv`.

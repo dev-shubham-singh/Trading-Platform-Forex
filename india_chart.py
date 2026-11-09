@@ -405,6 +405,26 @@ class TickStore:
             n = self.n
             return self.t[start:n], self.b[start:n], n
 
+    def flow_view(self):
+        """(times, prices, side, cum buys, cum sells) for order flow. Fyers sends no trade direction, so a tick
+        above the last price counts as a buy and one below as a sell (tick rule), a flat tick keeps the last side."""
+        with self.lock:
+            n = self.n
+            fc = getattr(self, "_fc", None)
+            if fc is None or fc[0] != n:
+                b = self.b[:n]
+                if n:
+                    d = np.sign(np.diff(b, prepend=b[0])).astype(np.int8)
+                    idx = np.where(d != 0, np.arange(n), -1)
+                    np.maximum.accumulate(idx, out=idx)
+                    sg = np.where(idx >= 0, d[np.maximum(idx, 0)], 1).astype(np.int8)
+                else:
+                    sg = np.empty(0, np.int8)
+                cb = np.concatenate(([0], np.cumsum(sg > 0))).astype(np.int64)
+                cs = np.concatenate(([0], np.cumsum(sg < 0))).astype(np.int64)
+                fc = self._fc = (n, sg, cb, cs)
+            return self.t[:n], self.b[:n], fc[1], fc[2], fc[3]
+
     def first_at_or_after(self, ms_ist):
         with self.lock:
             return int(np.searchsorted(self.t[:self.n], ms_ist, side="left"))
@@ -540,6 +560,7 @@ class TimeBuilder:
 
     def __init__(self, sec, anchor):
         self.ms, self.a, self.rows, self.done = int(sec * 1000), int(anchor) * 1000, [], 0
+        self.count_vol = True            # volume = number of ticks (a History chart uses Fyers traded volume instead)
 
     def bucket_ms(self, t):
         return bucket(t, self.ms, self.a, 86_400_000)
@@ -549,14 +570,18 @@ class TimeBuilder:
             return
         bucket = self.bucket_ms(t)
         g = pd.DataFrame({"k": bucket, "p": b}).groupby("k", sort=True)["p"]
-        agg = zip(g.first().index.to_numpy(), g.first().to_numpy(), g.max().to_numpy(), g.min().to_numpy(), g.last().to_numpy())
-        for k, o, h, l, c in agg:
+        agg = zip(g.first().index.to_numpy(), g.first().to_numpy(), g.max().to_numpy(), g.min().to_numpy(),
+                  g.last().to_numpy(), g.size().to_numpy())
+        for k, o, h, l, c, v in agg:
             sec = int(k) // 1000
+            v = int(v) if self.count_vol else 0
             r = self.rows[-1] if self.rows else None
             if r and r[0] == sec:
                 r[2] = max(r[2], h); r[3] = min(r[3], l); r[4] = c
+                if len(r) > 6: r[6] += v
+                else: r.append(v)
             elif not r or sec > r[0]:
-                self.rows.append([sec, o, h, l, c, sec])
+                self.rows.append([sec, o, h, l, c, sec, v])
 
 
 class TickBuilder:
@@ -569,14 +594,14 @@ class TickBuilder:
         g = np.arange(self.done, self.done + len(t)) // self.n
         df = pd.DataFrame({"g": g, "p": b, "t": t}).groupby("g", sort=True)
         agg = zip(df["p"].first().index.to_numpy(), df["p"].first().to_numpy(), df["p"].max().to_numpy(),
-                  df["p"].min().to_numpy(), df["p"].last().to_numpy(), df["t"].first().to_numpy())
-        for k, o, h, l, c, t0 in agg:
+                  df["p"].min().to_numpy(), df["p"].last().to_numpy(), df["t"].first().to_numpy(), df["p"].size().to_numpy())
+        for k, o, h, l, c, t0, v in agg:
             cid = int(k) + 1
             r = self.rows[-1] if self.rows else None
             if r and r[0] == cid:
-                r[2] = max(r[2], h); r[3] = min(r[3], l); r[4] = c
+                r[2] = max(r[2], h); r[3] = min(r[3], l); r[4] = c; r[6] += int(v)
             else:
-                self.rows.append([cid, o, h, l, c, int(t0) / 1000])
+                self.rows.append([cid, o, h, l, c, int(t0) / 1000, int(v)])
         self.cnt = (self.done + len(t)) % self.n or self.n
 
 
@@ -707,6 +732,7 @@ class HistBuilder(TimeBuilder):
 
     def __init__(self, sym, sec, anchor, res, rsec):
         super().__init__(sec, anchor)
+        self.count_vol = False
         self.sym, self.sec, self.res, self.rsec = sym, sec, res, rsec
         self.refreshed, self.ok = 0, False
         self.rebuild(full=True)
@@ -825,6 +851,88 @@ def get_bars(sym, kind, p, since):
         out = [list(r) for r in rows[-MAX_BARS_SENT:]]
     extra = {"cnt": bd.cnt} if kind == "tick" else {}
     return out, extra
+
+
+# ---------------- order flow (tick rule, from recorded + live ticks) ----------------
+def nice_step(x, point):
+    if not x > 0:
+        return point
+    mag = 10 ** np.floor(np.log10(x))
+    for m in (1, 2, 2.5, 5, 10):
+        if x <= m * mag:
+            return float(max(point, round(m * mag, 10)))
+    return float(max(point, x))
+
+
+def bar_bounds(sym, kind, p, since=None):
+    rows, _ = get_bars(sym, kind, p, None if kind == "renko" else since)
+    if not rows:
+        e = np.empty(0, np.int64)
+        return np.empty(0), e, e
+    ids = np.array([r[0] for r in rows], dtype=float)
+    rt = np.array([r[5] for r in rows], dtype=float) * 1000
+    now = time.time() * 1000 + 86_400_000 * 365
+    if kind == "time":
+        st = rt.astype(np.int64); en = st + int(round(float(p) * 1000))
+    elif kind == "renko":
+        st = np.concatenate(([0.0], rt[:-1])).astype(np.int64) + 1; en = rt.astype(np.int64) + 1
+        if since is not None:
+            keep = ids >= since; ids, st, en = ids[keep], st[keep], en[keep]
+    else:
+        st = rt.astype(np.int64); en = np.concatenate((rt[1:], [now])).astype(np.int64)
+    return ids, st, en
+
+
+def flow_delta(sym, kind, p, since=None):
+    st = store_for(sym)
+    ids, a, b = bar_bounds(sym, kind, p, since)
+    t, _, _, cb, cs = st.flow_view()
+    if len(t) == 0 or len(ids) == 0:
+        return {"ids": [], "buy": [], "sell": []}
+    i0, i1 = np.searchsorted(t, a, "left"), np.searchsorted(t, b, "left")
+    keep = a >= t[0]
+    buy, sell = (cb[i1] - cb[i0])[keep], (cs[i1] - cs[i0])[keep]
+    ids = ids[keep]
+    return {"ids": [int(x) if float(x).is_integer() else float(x) for x in ids], "buy": buy.tolist(), "sell": sell.tolist()}
+
+
+def flow_profile(sym, t0, t1, rows=24, step=None):
+    st = store_for(sym)
+    t, b, sg, _, _ = st.flow_view()
+    i0, i1 = np.searchsorted(t, int(t0 * 1000), "left"), np.searchsorted(t, int(t1 * 1000), "left")
+    if i1 <= i0:
+        return {"ticks": 0}
+    pb, ps = b[i0:i1], sg[i0:i1]
+    point = float(ensure_symbol(sym)["tick"])
+    lo, hi = float(pb.min()), float(pb.max())
+    step = float(step) if step else nice_step((hi - lo) / max(1, int(rows)), point)
+    k = np.floor(pb / step + 1e-9).astype(np.int64)
+    base = int(k.min()); k -= base
+    n = int(k.max()) + 1
+    buy = np.bincount(k, weights=(ps > 0), minlength=n).astype(np.int64)
+    sell = np.bincount(k, weights=(ps < 0), minlength=n).astype(np.int64)
+    return {"ticks": int(i1 - i0), "base": base, "step": step, "buy": buy.tolist(), "sell": sell.tolist(),
+            "from": float(t[i0]) / 1000, "to": float(t[i1 - 1]) / 1000, "covered": bool(t0 * 1000 >= t[0])}
+
+
+def flow_footprint(sym, starts, ends, step):
+    st = store_for(sym)
+    t, b, sg, cb, cs = st.flow_view()
+    out = []
+    if len(t) == 0:
+        return out
+    a = np.searchsorted(t, (np.asarray(starts) * 1000).astype(np.int64), "left")
+    z = np.searchsorted(t, (np.asarray(ends) * 1000).astype(np.int64), "left")
+    for s0, i0, i1 in zip(starts, a, z):
+        if i1 <= i0 or s0 * 1000 < t[0]:
+            out.append(None); continue
+        k = np.floor(b[i0:i1] / step + 1e-9).astype(np.int64)
+        base = int(k.min()); k -= base
+        n = int(k.max()) + 1
+        sgn = sg[i0:i1]
+        out.append([base, np.bincount(k, weights=(sgn > 0), minlength=n).astype(int).tolist(),
+                    np.bincount(k, weights=(sgn < 0), minlength=n).astype(int).tolist()])
+    return out
 
 
 # ---------------- web server ----------------
@@ -950,9 +1058,26 @@ def make_handler():
                         return self.js({"error": f"Live symbol limit ({MAX_SUBS}) reached. Remove symbols from "
                                                  f"{WATCH_FILE.name} and restart."}, 400)
                     add_watch(sym)
-                    return self.js({"symbol": sym, "digits": digits_of(info["tick"]), "point": info["tick"],
+                    return self.js({"symbol": sym, "digits": digits_of(info["tick"]), "point": info["tick"], "lot": info["lot"],
                                     "desc": info["desc"] + (f"  ·  lot {info['lot']}" if info["lot"] > 1 else ""),
                                     "box": suggest_box(sym, info["tick"]), "anchor": anchor_of(sym), "srvOffset": IST})
+                if url.path == "/api/delta":
+                    ensure_symbol(sym)
+                    since = q.get("since")
+                    return self.js(flow_delta(sym, q.get("kind", "time"), float(q.get("p", "15")),
+                                              float(since) if since else None))
+                if url.path == "/api/profile":
+                    ensure_symbol(sym)
+                    return self.js(flow_profile(sym, float(q["t0"]), float(q["t1"]), int(q.get("rows", 24)),
+                                                float(q["step"]) if q.get("step") else None))
+                if url.path == "/api/footprint":
+                    ensure_symbol(sym)
+                    s_ = [float(x) for x in q.get("s", "").split(",") if x]
+                    e_ = [float(x) for x in q.get("e", "").split(",") if x]
+                    if len(s_) != len(e_) or len(s_) > 600:
+                        return self.js({"error": "bad footprint request"}, 400)
+                    step = float(q.get("step", "0")) or float(ensure_symbol(sym)["tick"]) * 100
+                    return self.js({"step": step, "bars": flow_footprint(sym, s_, e_, step)})
                 if url.path == "/api/bars":
                     ensure_symbol(sym)
                     kind = q.get("kind", "time")

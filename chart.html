@@ -300,6 +300,7 @@
       <label>Commission</label><input id="tb_comm" type="number" step="any" min="0"><span>per lot</span><span id="tb_commsrc"></span><button id="tb_commauto" style="display:none">auto</button></span>
     <span id="tb_note"></span>
     <div id="tb_sum"></div>
+    <button id="tb_paperreset" style="display:none" title="Start a new paper account (asks for the balance)">New paper account</button>
     <button id="tb_closeall" title="Close every open position at market (two clicks)">Close all</button>
     <button id="tb_hide" title="Hide this panel">&#9662;</button>
   </div>
@@ -1305,7 +1306,7 @@ function sessionsInView(ind) {              // day sessions overlapping the visi
 }
 async function getJSON(url) { const r = await fetch(url); return r.json(); }
 async function flowTick() {
-  if (FLOW.busy || !raw.length || SRC !== 'MT5') return;
+  if (FLOW.busy || !raw.length) return;
   FLOW.busy = true;
   const id = reqId;
   try {
@@ -3512,6 +3513,7 @@ const RISK = Object.assign({ mode: 'pct', pct: 5, usd: 1, lotMode: 'auto', lot: 
 let ACC = null, plan = null, planCur = null, accBusy = false, accAt = 0;
 function saveRisk() { store.set('gc_risk', RISK); }
 async function accTick() {
+  if (paperOn() && symbol) { paperTick(); if (plan) updatePlan(); renderBar(); bump(); return; }
   if (SRC !== 'MT5' || accBusy || !symbol || RP.on) return;          // replay: ACC is the practice account
   accBusy = true;
   try {
@@ -3647,25 +3649,25 @@ function updatePlan() {
                    (r.comm > 0 ? ' <span class="m">after commission</span>' : '') + ` <span class="m">(${(r.gain / r.loss).toFixed(2)} R)</span></div>`;
     h += `<div class="m">Your risk: ${money(r.risk)}${RISK.mode === 'pct' ? ` (${RISK.pct}% of balance)` : ''}</div>`;
     r.warn.forEach(w => h += `<div class="w">${w}</div>`);
-  } else h = '<div class="m">Waiting for the account and price from MT5...</div>';
+  } else h = '<div class="m">Waiting for the account and price...</div>';
   if ($('tp_info').innerHTML !== h) $('tp_info').innerHTML = h;
   const go = $('tp_go');
   go.style.background = buy ? '#26a69a' : '#ef5350';
-  go.textContent = plan.done ? (RP.on ? 'Practice trade placed' : 'Order placed') : plan.sending ? 'Sending...' :
-    `Confirm ${buy ? 'BUY' : 'SELL'}${r && r.lot ? ' ' + r.lot + ' lot' : ''}${RP.on ? ' (practice)' : ''}`;
-  go.disabled = !r || !r.ok || plan.sending || plan.done || (!RISK.live && !RP.on);   // done: never send the same plan twice
+  go.textContent = plan.done ? (practice() ? 'Practice trade placed' : 'Order placed') : plan.sending ? 'Sending...' :
+    `Confirm ${buy ? 'BUY' : 'SELL'}${r && r.lot ? ' ' + r.lot + ' lot' : ''}${practice() ? ' (practice)' : ''}`;
+  go.disabled = !r || !r.ok || plan.sending || plan.done || (!RISK.live && !practice());   // done: never send the same plan twice
   go.title = !RISK.live ? 'Tick "Live orders on" first' : '';
 }
 async function sendOrder() {
   const r = computePlan();
-  if (!plan || !r || !r.ok || plan.sending || plan.done || (!RISK.live && !RP.on)) return;
+  if (!plan || !r || !r.ok || plan.sending || plan.done || (!RISK.live && !practice())) return;
   const side = plan.side, buy = side === 'buy';
-  if (RP.on) {                                     // replay: a practice trade at the replay price, nothing sent
+  if (practice()) {                                // replay / Fyers: a practice trade at the current price, nothing sent
     const p = rpOpen(side, r.lot, r.sl, r.tp || 0);
     plan.done = true;
     $('tp_msg').style.color = '#ff9800';
     $('tp_msg').textContent = `Practice ${buy ? 'buy' : 'sell'} ${p.volume} at ${fmt(p.open)}, SL ${fmt(r.sl)}` + (r.tp ? `, TP ${fmt(r.tp)}` : '') +
-      ` (risk ${money(r.loss)}). Not sent to MT5.`;
+      ` (risk ${money(r.loss)}). ${RP.on ? 'Not sent to MT5.' : 'Paper trade: nothing is sent to Fyers.'}`;
     updatePlan(); renderBar(true);
     setTimeout(() => { if (plan && plan.done) closePlan(); }, 1500);
     return;
@@ -3753,7 +3755,7 @@ $('tp_commauto').onclick = $('tb_commauto').onclick = autoComm;
 // (often just the opening half), so the larger of that and your round-trip commission x lots is used.
 function posComm(p) {
   const charged = Math.abs(p.commission || 0);
-  if (RP.on) return charged;
+  if (practice()) return charged;
   return Math.max(charged, p.symbol === symbol ? commLot() * p.volume : 0);
 }
 function priceTag(y, pw, txt, col, solid) {
@@ -3800,7 +3802,7 @@ function drawPlan(pw) {
 let posHits = [];                              // clickable close boxes on the chart
 function drawPositions(pw) {
   posHits = []; posLines = [];
-  if (SRC !== 'MT5' || !ACC || !ACC.positions) return;
+  if (!ACC || !ACC.positions) return;
   for (const p of ACC.positions) {
     const y = series.priceToCoordinate(p.open); if (y == null) continue;
     const cm = posComm(p), pl = livePL(p).pl - cm, col = pl >= 0 ? '#26a69a' : '#ef5350';     // net of commission
@@ -3851,8 +3853,8 @@ function posLineAt(x, y) {
 }
 async function savePosLevel(p, which, price) {
   const k = Math.pow(10, digits); price = Math.round(price * k) / k;
-  if (RP.on) {                                     // practice position: just move it
-    const q = RP.pos.find(x => x.ticket === p.ticket); if (q) q[which] = price;
+  if (practice()) {                                // practice position: just move it
+    const q = A().pos.find(x => x.ticket === p.ticket); if (q) q[which] = price; if (!RP.on) paperSave();
     tbNote(`Practice ${which.toUpperCase()} moved to ${fmt(price)}: ${levelMoney(p, price) >= 0 ? '+' : ''}${money(levelMoney(p, price))} if hit`,
            levelMoney(p, price) >= 0 ? 'pl-up' : 'pl-dn');
     rpView(); renderBar(true); bump(); return;
@@ -3890,10 +3892,10 @@ async function postJSON(path, body) {
   } catch (e) { return { error: 'Lost connection to the chart server. Check MT5.' }; }
 }
 async function closeTickets(tickets) {            // tickets = null: close everything
-  if (RP.on) {                                     // practice positions: close at the replay price
-    const list = RP.pos.filter(p => !tickets || tickets.includes(p.ticket));
+  if (practice()) {                                // practice positions: close at the replay / live price
+    const list = A().pos.filter(p => (!tickets || tickets.includes(p.ticket)) && (RP.on || p.symbol === symbol));
     let pl = 0; list.forEach(p => pl += rpClose(p, p.side === 'buy' ? status.bid : status.ask, 'closed'));
-    if (list.length) tbNote(`Practice: closed ${list.length} position${list.length > 1 ? 's' : ''}: ${pl >= 0 ? '+' : ''}${money(pl)}`, pl >= 0 ? 'pl-up' : 'pl-dn');
+    if (list.length) tbNote(`${RP.on ? 'Practice' : 'Paper'}: closed ${list.length} position${list.length > 1 ? 's' : ''}: ${pl >= 0 ? '+' : ''}${money(pl)}`, pl >= 0 ? 'pl-up' : 'pl-dn');
     rpView(); renderBar(true); bump(); return;
   }
   if (!ACC || !ACC.token) return;
@@ -3911,6 +3913,7 @@ async function closeTickets(tickets) {            // tickets = null: close every
 }
 function tbNote(t, cls) { $('tb_note').textContent = t; $('tb_note').className = cls || ''; clearTimeout(tbNote.t); tbNote.t = setTimeout(() => $('tb_note').textContent = '', 8000); }
 async function histTick() {
+  if (paperOn()) { HIST = PA.deals; if (tbTab === 'hist') renderHist(); return; }
   if (SRC !== 'MT5' || histBusy || $('tradebar').style.display === 'none' || RP.on) return;
   histBusy = true;
   try { const j = await (await fetch('/api/history?days=0')).json(); if (j.deals) { HIST = j.deals; renderHist(); } }
@@ -3957,12 +3960,14 @@ function renderBar(force) {
             `<span>Open P/L <b class="${cls(fl)}">${sg(fl)}</b></span>` +
             (fc > 0 ? `<span title="Open P/L minus the commission of the open positions (open + close)">After commission <b class="${cls(fl - fc)}">${sg(fl - fc)}</b></span>` : '');
   if (RP.on) sum = `<span style="color:#ff9800">Practice account (replay)</span>` + sum;
+  else if (paperOn()) sum = `<span style="color:#ff9800" title="Fyers' data-only app cannot place orders, so Buy / Sell here is a practice account. It is saved in this browser.">Paper account</span>` + sum;
   if (g && g.comm) sum += `<span title="Commission paid in total, and today">Commission <b class="pl-dn">${money(g.comm)}</b>` + (g.commToday ? ` <span>(today ${money(g.commToday)})</span>` : '') + `</span>`;
   if (g) sum += (RP.on ? '' : `<span>Today <b class="${cls(g.today + fl)}">${sg(g.today + fl)}</b></span>`) +
                 (g.growth != null ? `<span>Growth <b class="${cls(eq - g.dep + g.wd)}">${((eq - g.dep + g.wd) / g.dep * 100).toFixed(1)}%</b> <span title="deposits">of ${money(g.dep)}</span></span>` : '');
   if ($('tb_sum').innerHTML !== sum) $('tb_sum').innerHTML = sum;
   $('tb_n').textContent = all.length ? `(${all.length})` : '';
   $('tb_closeall').style.display = all.length ? '' : 'none';
+  $('tb_paperreset').style.display = paperOn() ? '' : 'none';
   if (tbTab !== 'pos') return;
   const key = all.map(p => p.ticket).join(',');
   if (force || key !== tbKey) {
@@ -4036,6 +4041,11 @@ function showBar(on) {
   store.set('gc_tbar', on);
   if (on) { accTick(); histTick(); renderBar(true); }
 }
+$('tb_paperreset').onclick = () => {
+  const v = prompt('Balance for a new paper account (INR). This clears the paper trades and history.', String(PA.startBal));
+  if (v == null) return; const b = Number(v); if (!(b > 0)) return;
+  paperReset(b); closePlan(); rpView(); HIST = PA.deals; tbKey = ''; renderBar(true); renderHist(); bump();
+};
 $('tbtoggle').onclick = () => showBar($('tradebar').style.display === 'none');
 $('tb_hide').onclick = () => showBar(false);
 document.querySelectorAll('#tradebar [data-tab]').forEach(b => b.onclick = () => {
@@ -4054,6 +4064,7 @@ $('tb_closeall').onclick = () => {
   else { tbArm.all = Date.now() + 3000; renderBar(); }
 };
 setInterval(() => {
+  if (paperOn()) paperTick();
   renderBar();
   if (tbTab === 'hist' && $('tradebar').style.display !== 'none') drawCurve();
   if (ACC && ACC.positions && ACC.positions.length) bump();      // keep the P/L on the chart's position lines live
@@ -4154,26 +4165,63 @@ function replayExit(noLoad) {
   accTick(); histTick(); bump();
 }
 // ---- practice account
-function rpVpp() { return RP.accReal && RP.accReal.sym ? RP.accReal.sym.vpp : 1; }
+function rpVpp() { return RP.on ? (RP.accReal && RP.accReal.sym ? RP.accReal.sym.vpp : 1) : SRC !== 'MT5' ? paperSym().vpp : 1; }
+// Practice trading: in bar replay it uses RP (the replay clock); on the Fyers chart, outside replay, it is a saved paper account PA
+// (Fyers' data-only app cannot place orders). A() is whichever one is in use.
+let PA = { bal: 100000, startBal: 100000, pos: [], next: 1, deals: [] };
+const paperOn = () => SRC !== 'MT5' && !RP.on;           // the Fyers chart outside replay
+const practice = () => RP.on || SRC !== 'MT5';           // any trade here is a practice trade
+const A = () => RP.on ? RP : PA;
+const nowT = () => RP.on ? RP.t : status && status.server_ms ? Math.floor(status.server_ms / 1000) : Math.floor(Date.now() / 1000);
+function paperSave() { try { store.set('gc_paper', { bal: PA.bal, startBal: PA.startBal, pos: PA.pos, next: PA.next, deals: PA.deals.slice(-2000) }); } catch (e) {} }
+function paperReset(b) {
+  b = b > 0 ? b : 100000;
+  PA.bal = PA.startBal = b; PA.pos = []; PA.next = 1;
+  PA.deals = [{ ticket: 0, time: nowT(), type: 2, entry: 0, symbol: '', volume: 0, price: 0, profit: b, commission: 0, swap: 0, fee: 0, position: 0, comment: 'paper balance' }];
+  paperSave();
+}
+function paperSym() {           // 1 lot = the exchange lot size; a price move of 1 is worth `lot` rupees per lot
+  const m = symMeta || {}, pt = m.point || Math.pow(10, -digits);
+  return { digits, point: pt, vmin: 1, vmax: 10000, vstep: 1, stops: 0, vpp: m.lot > 0 ? m.lot : 1 };
+}
+function paperTick() {          // mark open paper positions to the live price and fill their SL / TP
+  if (!paperOn() || !status || status.bid == null) return;
+  let changed = false;
+  for (const p of PA.pos.slice()) {
+    if (p.symbol !== symbol) continue;
+    const buy = p.side === 'buy', px = buy ? status.bid : status.ask;
+    const slHit = p.sl && (buy ? px <= p.sl : px >= p.sl), tpHit = p.tp && (buy ? px >= p.tp : px <= p.tp);
+    if (slHit || tpHit) {
+      const fill = slHit ? (buy ? Math.min(p.sl, px) : Math.max(p.sl, px)) : p.tp;
+      const pl = rpClose(p, fill, slHit ? 'sl' : 'tp');
+      tbNote(`Paper ${p.side} hit its ${slHit ? 'stop loss' : 'take profit'}: ${pl >= 0 ? '+' : ''}${money(pl)}`, pl >= 0 ? 'pl-up' : 'pl-dn');
+      changed = true;
+    }
+  }
+  rpMark(status.bid, status.ask);
+  rpView();
+  if (changed || Date.now() - (paperTick.at || 0) > 3000) { paperTick.at = Date.now(); paperSave(); }
+}
 function rpOpen(side, lot, sl, tp) {
-  const buy = side === 'buy', price = buy ? status.ask : status.bid, t = RP.next++;
+  const a = A(), buy = side === 'buy', price = buy ? status.ask : status.bid, t = a.next++;
   const comm = commLot() * lot;           // round-trip commission, charged when the trade opens
   const p = { ticket: t, symbol, side, volume: lot, open: price, cur: buy ? status.bid : status.ask, sl, tp, profit: 0, swap: 0,
-              magic: 0, time: RP.t, digits, commission: -comm };
+              magic: 0, time: nowT(), digits, commission: -comm };
   p.profit = (p.cur - p.open) * (buy ? 1 : -1) * lot * rpVpp();
-  RP.bal -= comm;
-  RP.pos.push(p);
-  RP.deals.push({ ticket: 10000 + RP.deals.length, time: RP.t, type: buy ? 0 : 1, entry: 0, symbol, volume: lot, price,
-                  profit: 0, commission: -comm, swap: 0, fee: 0, position: t, comment: 'practice' });
-  rpView(); bump();
+  a.bal -= comm;
+  a.pos.push(p);
+  a.deals.push({ ticket: 10000 + a.deals.length, time: nowT(), type: buy ? 0 : 1, entry: 0, symbol, volume: lot, price,
+                 profit: 0, commission: -comm, swap: 0, fee: 0, position: t, comment: 'practice' });
+  rpView(); bump(); if (!RP.on) paperSave();
   return p;
 }
 function rpClose(p, price, why) {
-  const buy = p.side === 'buy', pl = (price - p.open) * (buy ? 1 : -1) * p.volume * rpVpp();
-  RP.bal += pl;
-  RP.deals.push({ ticket: 10000 + RP.deals.length, time: RP.t, type: buy ? 1 : 0, entry: 1, symbol: p.symbol, volume: p.volume,
-                  price, profit: pl, commission: 0, swap: 0, fee: 0, position: p.ticket, comment: why });
-  RP.pos = RP.pos.filter(q => q !== p);
+  const a = A(), buy = p.side === 'buy', pl = (price - p.open) * (buy ? 1 : -1) * p.volume * rpVpp();
+  a.bal += pl;
+  a.deals.push({ ticket: 10000 + a.deals.length, time: nowT(), type: buy ? 1 : 0, entry: 1, symbol: p.symbol, volume: p.volume,
+                 price, profit: pl, commission: 0, swap: 0, fee: 0, position: p.ticket, comment: why });
+  a.pos = a.pos.filter(q => q !== p);
+  if (!RP.on) paperSave();
   return pl;
 }
 function rpCheckBar(row) {                // real candle [id, o, h, l, c, t]: SL first if both are inside (worst case)
@@ -4192,21 +4240,21 @@ function rpCheckBar(row) {                // real candle [id, o, h, l, c, t]: SL
     }
   }
 }
-function rpMark(bid, ask) {               // open practice positions at the current replay price
-  for (const p of RP.pos) {
+function rpMark(bid, ask) {               // open practice positions at the current replay / live price
+  for (const p of A().pos) {
     p.cur = p.side === 'buy' ? bid : ask;
     p.profit = (p.cur - p.open) * (p.side === 'buy' ? 1 : -1) * p.volume * rpVpp();
   }
 }
 function rpView() {                       // the trades panel / position lines show the practice account
-  if (!RP.on) return;
-  const real = RP.accReal || {};
-  let fl = 0; RP.pos.forEach(p => fl += p.profit);
+  if (!RP.on && !paperOn()) return;
+  const a = A(), real = RP.on ? (RP.accReal || {}) : { currency: 'INR', sym: paperSym() };
+  let fl = 0; a.pos.forEach(p => fl += p.profit);
   ACC = { ...real, error: null, allow: true, algo: true, accTrade: true, currency: real.currency || 'USD',
           sym: real.sym || { digits, point: Math.pow(10, -digits), vmin: 0.01, vmax: 1000, vstep: 0.01, stops: 0, vpp: 1 },
-          balance: RP.bal, equity: RP.bal + fl, profit: fl,
-          positions: RP.pos.filter(p => p.symbol === symbol), all: RP.pos.slice() };
-  HIST = RP.deals;
+          balance: a.bal, equity: a.bal + fl, profit: fl,
+          positions: a.pos.filter(p => p.symbol === symbol), all: a.pos.slice() };
+  HIST = a.deals;
   if (tbTab === 'hist') renderHist();
 }
 function drawReplayPick(pw, ph) {          // while choosing the start: a line at the candle, the future greyed out
@@ -4235,10 +4283,8 @@ $('rp_exit').onclick = () => replayExit(false);
     symSearch = !!list.search; if (list.watchLabel) watchLabel = list.watchLabel;
     if (list.srvOffset != null) srvOffset = list.srvOffset;
     tzChanged();
-    if (SRC !== 'MT5') {                                    // MACD + volume are only on the MT5 (forex) chart for now
-      document.querySelectorAll('.mt5only').forEach(b => b.style.display = 'none');
-      inds = inds.filter(i => !['macd', 'vol', 'hdoji', 'vprof', 'foot', 'cvd'].includes(i.type));
-    }
+    PA = Object.assign({ bal: 100000, startBal: 100000, pos: [], next: 1, deals: [] }, store.get('gc_paper', {}));
+    if (!PA.deals.length) paperReset(PA.bal);
     const view = store.get('gc_view' + WK, null) || { ...store.get('gc_view', {}), ...(WIN ? { tf: '5m' } : {}) };
     if (URLQ.get('tf')) view.tf = URLQ.get('tf');
     if (WIN) document.title = `${SRC} Chart (window ${WIN})`;
@@ -4250,7 +4296,7 @@ $('rp_exit').onclick = () => replayExit(false);
     await setSymbol(want);
     if (!symMeta && want !== list.default) await setSymbol(list.default);    // e.g. an expired contract
     booted = true; applySync();
-    if (SRC === 'MT5' && store.get('gc_tbar', true)) showBar(true);
+    if (store.get('gc_tbar', true)) showBar(true);
   } catch (e) {
     $('msg').textContent = 'Could not reach the chart server. Start it first, then refresh this page.';
   }
