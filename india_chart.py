@@ -1170,7 +1170,7 @@ def make_handler():
                 if url.path in ("/", "/index.html"):
                     if not AUTH.ok:
                         return self.send(LOGIN_PAGE.replace("%ERR%", state["err"]).encode(), "text/html; charset=utf-8")
-                    return self.send(page, "text/html; charset=utf-8")
+                    return self.send((HERE / "chart.html").read_bytes(), "text/html; charset=utf-8")   # read fresh: a new chart.html shows after a refresh
                 if not AUTH.ok:
                     return self.js({"error": "Not logged in to Fyers. Refresh the page and log in."}, 401)
                 if url.path == "/api/symbols":

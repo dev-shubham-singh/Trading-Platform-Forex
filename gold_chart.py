@@ -956,7 +956,7 @@ def make_handler(default_sym):
                     self.wfile.write(lib)
                     return
                 if url.path in ("/", "/index.html"):
-                    return self.send(page, "text/html; charset=utf-8")
+                    return self.send((HERE / "chart.html").read_bytes(), "text/html; charset=utf-8")   # read fresh: a new chart.html shows after a refresh
                 if url.path == "/api/symbols":
                     return self.js({"default": default_sym, "symbols": symbol_list(), "srvOffset": broker_offset(default_sym)})
                 sym = q.get("symbol") or default_sym
