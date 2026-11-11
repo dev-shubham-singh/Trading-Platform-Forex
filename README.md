@@ -95,6 +95,12 @@ symbol list), **Nifty 50 / 100 / 500** (the NSE constituent lists, downloaded on
 and **Top gainers 7d** (the biggest 7-day gains among F&O stocks and the Nifty 500, worked out from Fyers daily candles;
 it takes a few minutes the first time and is refreshed hourly).
 
+## Templates
+The **Templates** button (next to Indicators) saves the current indicators with all their settings (pivots, EMA, MACD...),
+and optionally the chart type and the timeframe, under a name. Click a saved template to switch the chart to it in one
+click, e.g. "1D pivots" (1d + pivots) and "1H trend" (1h + EMAs). **Update** replaces a template with what is on the chart now.
+Saved in the browser, separately for the gold and the Indian chart.
+
 ## Troubleshooting
 | Problem | Fix |
 |---|---|

@@ -10,7 +10,7 @@ Each item is small, so it fits in a short chat or a few minutes of your own edit
 - [ ] Day 5  - Add a trade journal note box in the Trades bar (one text note per trade)
 - [ ] Day 6  - Add a "daily P/L" line in the growth panel
 - [ ] Day 7  - Add an alert when price crosses a level (sound + on-screen message)
-- [ ] Day 8  - Save and load chart layouts (indicators + drawings) by name
+- [x] Day 8  - Save and load chart templates (indicators + chart type + timeframe) by name
 - [ ] Day 9  - Add an indicator preset button (your favourite SMMA/EMA/ATR set in one click)
 - [ ] Day 10 - Add the Wyckoff indicator (phase labels) - first version
 - [ ] Day 11 - Tune the Wyckoff indicator on gold and Nifty history

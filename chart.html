@@ -37,6 +37,17 @@
   #ivin.bad { border-color:var(--down); }
   .pop { position:absolute; z-index:30; background:var(--panel); border:1px solid var(--line); border-radius:6px;
          box-shadow:0 8px 24px rgba(0,0,0,.45); display:none; }
+  #tplpop { width:min(380px, calc(100vw - 24px)); padding:8px; }
+  #tplpop .th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; margin:2px 4px 6px; }
+  .tplrow { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:4px; cursor:pointer; }
+  .tplrow:hover { background:rgba(41,98,255,.15); } .tplrow.cur { outline:1px solid #2962ff; }
+  .tplrow b { font-weight:600; } .tplrow small { color:var(--muted); }
+  .tplrow .acts { margin-left:auto; display:flex; gap:4px; }
+  .tplrow .acts button { background:none; border:1px solid var(--line); color:var(--muted); border-radius:4px; cursor:pointer; font:inherit; font-size:11px; padding:1px 6px; }
+  .tplrow .acts button:hover { color:var(--text); border-color:#2962ff; }
+  #tplsave { border-top:1px solid var(--line); margin-top:8px; padding-top:8px; }
+  #tplsave input[type=text] { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:4px; padding:6px 8px; font:inherit; }
+  #tplsave label { display:block; color:var(--muted); margin-top:5px; }
   #sympop { width:min(420px, calc(100vw - 24px)); padding:8px; }
   #symq { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:4px;
           padding:6px 8px; font:inherit; }
@@ -191,6 +202,7 @@
     <input id="boxin" type="number" min="0" step="any" title="Price units. Press Enter."></label>
   <div class="sep"></div>
   <button class="tool" id="indbtn">&#402;x Indicators</button>
+  <button class="tool" id="tplbtn" title="Templates: save this chart's indicators, chart type and timeframe, and switch between them in one click">&#9783; Templates &#9662;</button>
   <button class="tool" id="invbtn" title="Invert price scale (Alt+I)">Invert</button>
   <button class="tool" id="replaybtn" title="Bar replay: go back to a past candle and replay the chart candle by candle, with practice trades">&#9194; Replay</button>
   <button class="tool" id="fit" title="Show all history">Fit all</button>
@@ -268,6 +280,13 @@
     <div id="msg">Loading candles from MT5...</div>
     <div id="hint"></div>
   </div>
+</div>
+<div id="tplpop" class="pop">
+  <div class="th">Templates - indicators, chart type and timeframe</div><div id="tpllist"></div>
+  <div id="tplsave"><input type="text" id="tplname" maxlength="40" placeholder="Name, e.g. 1D pivots" autocomplete="off">
+    <label><input type="checkbox" id="tpl_tf" checked> Save the timeframe (e.g. 1d) too</label>
+    <label><input type="checkbox" id="tpl_ct" checked> Save the chart type (Heikin Ashi / candles...) too</label>
+    <button class="tool" id="tplgo" style="margin-top:8px;width:100%">Save current chart as template</button></div>
 </div>
 <div id="sympop" class="pop"><input id="symq" placeholder="Search symbols" autocomplete="off">
   <div class="symtabs" id="symtabs"><button id="symtab_all" class="on">All symbols</button><button id="symtab_fav">&#9733; Favorites</button></div><div id="symlist"></div></div>
@@ -3564,6 +3583,65 @@ $('boxin').addEventListener('keydown', e => {
   if (!(v > 0)) { $('boxin').value = box; return; }
   box = v; store.set(`gc_box_${symbol}_${ctype}`, box); saveView(); load();
 });
+
+/* ---------------- templates: a saved set of indicators (+ chart type + timeframe) you can switch to in one click ---------------- */
+let TPL = store.get('gc_templates', []), tplCur = store.get('gc_tplcur' + WK, '');
+const flatInds = () => inds.map(ind => Object.fromEntries(Object.entries(ind).filter(([k, v]) => k !== 'id' && (v === null || typeof v !== 'object'))));
+function tplSave() { store.set('gc_templates', TPL); }
+function tplSummary(t) {
+  const n = t.inds.length;
+  return [t.tf, t.ct ? ({ ha: 'Heikin Ashi', candle: 'Candles', line: 'Line', renko: 'Renko', kagi: 'Kagi' })[t.ct] : '', `${n} indicator${n === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+}
+function renderTpl() {
+  const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  $('tpllist').innerHTML = TPL.length ? TPL.map((t, i) => `<div class="tplrow${t.name === tplCur ? ' cur' : ''}" data-i="${i}"><div><b>${esc(t.name)}</b><br><small>${tplSummary(t)}</small></div>
+    <div class="acts"><button data-a="upd" title="Replace this template with what is on the chart now">Update</button><button data-a="del" title="Delete this template">&times;</button></div></div>`).join('')
+    : '<div class="symhead" style="text-transform:none">No templates yet. Set up the chart (timeframe, indicators, pivots), type a name below and save.</div>';
+  $('tpllist').querySelectorAll('.tplrow').forEach(r => r.onclick = e => {
+    const i = +r.dataset.i, a = e.target.dataset.a;
+    if (a === 'del') { if (confirm(`Delete template "${TPL[i].name}"?`)) { TPL.splice(i, 1); tplSave(); renderTpl(); } return; }
+    if (a === 'upd') { tplFromChart(TPL[i].name, TPL[i].tf != null, TPL[i].ct != null); renderTpl(); return; }
+    applyTemplate(TPL[i]);
+  });
+}
+function tplFromChart(name, withTf, withCt) {
+  const t = { name, inds: flatInds(), vc: volCandles };
+  if (withTf) t.tf = tf;
+  if (withCt) t.ct = ctype;
+  const i = TPL.findIndex(x => x.name === name);
+  if (i >= 0) TPL[i] = t; else TPL.push(t);
+  tplCur = name; store.set('gc_tplcur' + WK, tplCur); tplSave();
+}
+async function applyTemplate(t) {
+  if (POP) closePop();
+  inds.forEach(i => i.series.forEach(x => { try { chart.removeSeries(x); } catch (e) {} }));
+  inds = t.inds.map(x => ({ ...(IND_DEFAULTS[x.type] || {}), ...x, id: Date.now() + Math.random(), series: [], vals: null, res: null }));
+  inds.forEach(makeSeries); layoutPanes(); saveInds();
+  if (t.ct && ['ha', 'candle', 'line', 'renko', 'kagi'].includes(t.ct)) { ctype = t.ct; volCandles = !!t.vc; }
+  if (t.tf && parseIv(t.tf)) tf = t.tf;
+  if ((ctype === 'ha' || ctype === 'candle' || ctype === 'line') && !parseIv(tf)) tf = '15s';
+  tplCur = t.name; store.set('gc_tplcur' + WK, tplCur);
+  saveView(); closeTpl();
+  await load();
+  renderPanel(); legend(null); bump();
+}
+function closeTpl() { $('tplpop').style.display = 'none'; }
+$('tplbtn').onclick = e => {
+  e.stopPropagation();
+  const p = $('tplpop');
+  if (p.style.display === 'block') { closeTpl(); return; }
+  const r = $('tplbtn').getBoundingClientRect();
+  p.style.left = Math.max(8, Math.min(r.left, innerWidth - 400)) + 'px'; p.style.top = (r.bottom + 6) + 'px';
+  $('tplname').value = tplCur; renderTpl(); p.style.display = 'block';
+};
+$('tplgo').onclick = () => {
+  const name = $('tplname').value.trim();
+  if (!name) { $('tplname').focus(); return; }
+  if (TPL.some(t => t.name === name) && !confirm(`A template called "${name}" exists. Replace it?`)) return;
+  tplFromChart(name, $('tpl_tf').checked, $('tpl_ct').checked); renderTpl();
+};
+$('tplname').addEventListener('keydown', e => { if (e.key === 'Enter') $('tplgo').click(); });
+document.addEventListener('mousedown', e => { if (!$('tplpop').contains(e.target) && e.target !== $('tplbtn')) closeTpl(); });
 
 /* ---------------- trade panel: risk-based lot size / stop loss, Buy / Sell (MT5 only) ---------------- */
 // Buy / Sell opens a plan: entry, stop loss and lot size from your risk, updated with every price tick.
