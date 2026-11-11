@@ -84,8 +84,8 @@
   #overlay { position:absolute; left:0; top:0; pointer-events:none; z-index:2; }
   #under { position:absolute; left:0; top:0; pointer-events:none; z-index:0; display:none; }
   #chart { z-index:1; }
-  #vcwrap { display:flex; align-items:center; gap:4px; color:var(--muted); cursor:pointer; white-space:nowrap; font-size:12px; }
-  #vcwrap input { margin:0; cursor:pointer; }
+  #vcwrap, #keepwrap { display:flex; align-items:center; gap:4px; color:var(--muted); cursor:pointer; white-space:nowrap; font-size:12px; }
+  #vcwrap input, #keepwrap input { margin:0; cursor:pointer; }
   .tool.tbuy { color:#fff; background:#26a69a; font-weight:600; padding:4px 12px; }
   .tool.tsell { color:#fff; background:#ef5350; font-weight:600; padding:4px 12px; }
   .tool.tbuy:hover { background:#1f8f84; } .tool.tsell:hover { background:#d84542; }
@@ -202,6 +202,7 @@
     <input id="boxin" type="number" min="0" step="any" title="Price units. Press Enter."></label>
   <div class="sep"></div>
   <button class="tool" id="indbtn">&#402;x Indicators</button>
+  <label id="keepwrap" title="ON: the indicators you have stay when you change the timeframe. OFF: every timeframe has its own indicators - a new timeframe starts clean, and going back to one brings its own indicators back. Drawings stay either way."><input type="checkbox" id="keepbox"> Keep indicators on every timeframe</label>
   <button class="tool" id="tplbtn" title="Templates: save this chart's indicators, chart type and timeframe, and switch between them in one click">&#9783; Templates &#9662;</button>
   <button class="tool" id="invbtn" title="Invert price scale (Alt+I)">Invert</button>
   <button class="tool" id="replaybtn" title="Bar replay: go back to a past candle and replay the chart candle by candle, with practice trades">&#9194; Replay</button>
@@ -2087,7 +2088,21 @@ function tailData(ind, first) {
   });
 }
 function saveInds() {
-  store.set('gc_inds' + WK, inds.map(ind => Object.fromEntries(Object.entries(ind).filter(([k, v]) => v === null || typeof v !== 'object'))));
+  const flat = inds.map(ind => Object.fromEntries(Object.entries(ind).filter(([k, v]) => v === null || typeof v !== 'object')));
+  store.set('gc_inds' + WK, flat);
+  if (!KEEP_IND && typeof tf !== 'undefined' && tf) { const m = store.get('gc_indtf' + WK, {}); m[tf] = flat; store.set('gc_indtf' + WK, m); }
+}
+/* Keep indicators when changing timeframe: ON = one set everywhere. OFF = every timeframe has its own set (a timeframe you have
+   not used starts clean), and coming back to a timeframe brings its own indicators back. Drawings are not affected. */
+let KEEP_IND = store.get('gc_keepind' + WK, store.get('gc_keepind', true)), lastTf = '';
+function swapTfInds(from, to) {
+  const m = store.get('gc_indtf' + WK, {});
+  m[from] = inds.map(ind => Object.fromEntries(Object.entries(ind).filter(([k, v]) => v === null || typeof v !== 'object')));
+  store.set('gc_indtf' + WK, m);
+  if (POP) closePop();
+  inds.forEach(i => i.series.forEach(x => { try { chart.removeSeries(x); } catch (e) {} }));
+  inds = (m[to] || []).map(x => ({ ...(IND_DEFAULTS[x.type] || {}), ...x, id: Date.now() + Math.random(), series: [], vals: null, res: null }));
+  inds.forEach(makeSeries); layoutPanes(); saveInds(); renderPanel(); legend(null);
 }
 function addInd(type) {
   const ind = { id: Date.now() + Math.random(), type, src: 'ha', width: type === 'bb' ? 1 : 2,
@@ -2740,6 +2755,8 @@ function syncControls() {
 }
 function saveView() { store.set('gc_view' + WK, { symbol, ctype, tf, vc: volCandles }); }
 async function load() {
+  if (!KEEP_IND && lastTf && lastTf !== tf) swapTfInds(lastTf, tf);
+  lastTf = tf;
   if (ctype === 'renko' || ctype === 'kagi') box = store.get(`gc_box_${symbol}_${ctype}`, symMeta ? symMeta.box : box);
   syncControls();
   if (RP.on) replayPause();                        // replay: don't step while the new candles load
@@ -3562,6 +3579,12 @@ $('ctype').onchange = () => {
   if ((ctype === 'ha' || ctype === 'candle' || ctype === 'line') && !parseIv(tf)) tf = '15s';
   saveView(); load();
 };
+$('keepbox').checked = KEEP_IND;
+$('keepbox').onchange = () => {
+  KEEP_IND = $('keepbox').checked; store.set('gc_keepind' + WK, KEEP_IND);
+  if (!KEEP_IND) saveInds();                         // what is on the chart now becomes this timeframe's own set
+  legend(null);
+};
 $('vcbox').onchange = () => {
   volCandles = $('vcbox').checked; saveView();
   styleSeries(); applyInvert(); legend(null); bump();
@@ -3621,6 +3644,7 @@ async function applyTemplate(t) {
   if (t.tf && parseIv(t.tf)) tf = t.tf;
   if ((ctype === 'ha' || ctype === 'candle' || ctype === 'line') && !parseIv(tf)) tf = '15s';
   tplCur = t.name; store.set('gc_tplcur' + WK, tplCur);
+  lastTf = tf; saveInds();                           // the template's indicators belong to the timeframe it sets
   saveView(); closeTpl();
   await load();
   renderPanel(); legend(null); bump();

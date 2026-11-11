@@ -95,6 +95,13 @@ symbol list), **Nifty 50 / 100 / 500** (the NSE constituent lists, downloaded on
 and **Top gainers 7d** (the biggest 7-day gains among F&O stocks and the Nifty 500, worked out from Fyers daily candles;
 it takes a few minutes the first time and is refreshed hourly).
 
+## Keep indicators on every timeframe
+The checkbox **Keep indicators on every timeframe** (top bar) decides what happens when you change the timeframe.
+**On** (default): your indicators stay, as before. **Off**: every timeframe has its own indicators. A timeframe you have
+not used yet starts clean (drawings such as rectangles and trend lines stay), you add what you want there, and when you
+go back to 15s you see your 15s indicators and on 15m your 15m ones. Turning it off makes the indicators on screen belong
+to the timeframe you are on. Saved separately for the gold and the Indian chart.
+
 ## Templates
 The **Templates** button (next to Indicators) saves the current indicators with all their settings (pivots, EMA, MACD...),
 and optionally the chart type and the timeframe, under a name. Click a saved template to switch the chart to it in one
