@@ -95,6 +95,11 @@ symbol list), **Nifty 50 / 100 / 500** (the NSE constituent lists, downloaded on
 and **Top gainers 7d** (the biggest 7-day gains among F&O stocks and the Nifty 500, worked out from Fyers daily candles;
 it takes a few minutes the first time and is refreshed hourly).
 
+## MACD doji dots: Heikin Ashi / normal / off
+The MACD row in the legend has a small **doji dots** button. Click it to cycle Heikin Ashi, normal candles and off. The
+Heikin Ashi doji is always worked out from the real candles, so you can see Heikin Ashi dojis on the MACD while the chart
+shows normal candles, and normal-candle dojis while the chart shows Heikin Ashi. Same choice is in the MACD settings (gear).
+
 ## Keep indicators on every timeframe
 The checkbox **Keep indicators on every timeframe** (top bar) decides what happens when you change the timeframe.
 **On** (default): your indicators stay, as before. **Off**: every timeframe has its own indicators. A timeframe you have

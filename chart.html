@@ -147,6 +147,8 @@
             font-size:12px; color:var(--muted); line-height:1.6; }
   #legend .t { color:var(--text); font-weight:500; margin-right:8px; }
   #legend span { margin-right:8px; }
+  #legend .eye.dj { width:auto; height:auto; margin:0 0 0 6px; padding:0 6px; border:1px solid #f7c948; border-radius:9px; font-size:11px; font-weight:600; color:#f7c948; vertical-align:middle; }
+  #legend .eye.dj.off { color:var(--muted); border-color:var(--line); font-weight:400; }
   #legend .eye { pointer-events:auto; cursor:pointer; display:inline-block; width:14px; height:14px; margin-right:6px;
                  vertical-align:-2px; opacity:.5; color:var(--muted); } #legend .eye:hover { opacity:1; color:var(--text); }
   #legend .eye svg { display:block; }
@@ -1550,9 +1552,29 @@ function isDoji(b) {
   const body = Math.abs(b.close - b.open);
   return b.high - Math.max(b.open, b.close) > body && Math.min(b.open, b.close) - b.low > body;
 }
+/* Heikin Ashi bars worked out from the raw candles whatever the chart type is, so "doji on Heikin Ashi" also works
+   while the chart shows normal candles (and the other way round: "normal" always uses the real candles). */
+let HAX = [], HAXkey = '';
+function trueHa(i) {
+  if (ctype === 'ha') return ha[i];
+  const n = raw.length, key = n + ':' + (n ? raw[0][0] : 0);
+  if (key !== HAXkey) {
+    HAX = [];
+    for (let k = 0; k < n; k++) {
+      const [t, o, h, l, c] = raw[k], hc = (o + h + l + c) / 4, ho = k > 0 ? (HAX[k - 1].open + HAX[k - 1].close) / 2 : (o + c) / 2;
+      HAX[k] = { open: ho, high: Math.max(h, ho, hc), low: Math.min(l, ho, hc), close: hc };
+    }
+    HAXkey = key;
+  }
+  if (i === n - 1 && i > 0) {                       // the forming candle changes with every tick
+    const [t, o, h, l, c] = raw[i], hc = (o + h + l + c) / 4, ho = (HAX[i - 1].open + HAX[i - 1].close) / 2;
+    HAX[i] = { open: ho, high: Math.max(h, ho, hc), low: Math.min(l, ho, hc), close: hc };
+  }
+  return HAX[i];
+}
 function dojiAt(ind, i) {
   if (ind.doji === 'off') return false;
-  const b = ind.doji === 'candle' ? { open: raw[i][1], high: raw[i][2], low: raw[i][3], close: raw[i][4] } : ha[i];
+  const b = ind.doji === 'candle' ? { open: raw[i][1], high: raw[i][2], low: raw[i][3], close: raw[i][4] } : trueHa(i);
   return !!b && isDoji(b);
 }
 function histColor(ind, h, i) {
@@ -2553,7 +2575,9 @@ function legend(idx) {
     const dj = i.doji !== 'off' && raw[idx] && dojiAt(i, idx);
     html += `<div>${eye(i)}<span style="color:var(--text)">${label(i)}</span> <span style="color:${histColor(i, h, idx)}">${f(h[idx])}</span> ` +
       `<span style="color:${i.cMacd}">${f(m[idx])}</span> <span style="color:${i.cSig}">${f(sg[idx])}</span>` +
-      (dj ? ` <b style="color:${i.cDoji}">doji</b>` : '') + '</div>';
+      (dj ? ` <b style="color:${i.cDoji}">doji</b>` : '') +
+      ` <b class="eye dj${i.doji === 'off' ? ' off' : ''}" data-act="doji" data-i="${inds.indexOf(i)}" title="Doji dots on the MACD: click to switch between Heikin Ashi candles, normal candles and off">` +
+      `doji dots: ${i.doji === 'candle' ? 'normal' : i.doji === 'off' ? 'off' : 'HA'}</b></div>`;
   });
   inds.filter(i => i.type === 'pdhl' && i.visible !== false && i.piv).forEach(i => {
     const rt = raw[idx] ? raw[idx][5] : null, pv = i.piv.find(p => rt >= p.start && rt < p.end) || i.piv[i.piv.length - 1];
@@ -2673,6 +2697,11 @@ $('legend').addEventListener('mousedown', e => {
   e.preventDefault(); e.stopPropagation();
   const n = Number(el.dataset.i), act = el.dataset.act || 'eye';
   if (act === 'gear') openPop(n, e);
+  else if (act === 'doji') {
+    const ind = inds[n]; if (!ind) return;
+    ind.doji = ind.doji === 'ha' ? 'candle' : ind.doji === 'candle' ? 'off' : 'ha';
+    ind.dojiN = -1; saveInds(); renderPanel(); legend(null); bump();
+  }
   else if (act === 'del') { if (inds[n] && confirm(`Remove ${label(inds[n])} from the chart?`)) removeInd(inds[n]); }
   else toggleInd(n);
 });
