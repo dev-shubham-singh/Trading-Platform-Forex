@@ -2100,13 +2100,14 @@ function makeSeries(ind) {
   const count = ind.type === 'bos' ? 0 : ind.type === 'bb' ? 3 : 1;
   for (let i = 0; i < count; i++) {
     ind.series.push(chart.addLineSeries({
-      color: ind.color, lineWidth: ind.width || 1, visible: ind.visible !== false,
+      color: ind.color, lineWidth: ind.width || 1, visible: lineShown(ind),
       lineStyle: ind.type === 'bb' && i === 1 ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
       priceLineVisible: false, lastValueVisible: i !== 1 || ind.type !== 'bb',
       crosshairMarkerVisible: false, title: i === 0 || ind.type !== 'bb' ? label(ind) : '',
     }));
   }
 }
+const lineShown = ind => ind.visible !== false && !(ind.type === 'smma' && ind.line === false);   // SMMA: line can be hidden while its candle colours stay
 function fullData(ind) {
   if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind);
   if (ind.type === 'vprof' || ind.type === 'foot') return;
@@ -2449,7 +2450,8 @@ function renderPanel() {
       const xb = row.querySelector('.x'); if (xb) xb.insertAdjacentHTML('beforebegin', html); else row.insertAdjacentHTML('beforeend', html);
     }
     if (ind.type === 'smma') {
-      const html = `<label title="Colour every candle (body and wick) by where its close is: above this SMMA = green, below = red. With a Timeframe set, the SMMA of that timeframe colours this chart's candles."><input type="checkbox" data-k="paint" ${ind.paint ? 'checked' : ''}> Colour candles</label>` +
+      const html = `<label title="Show the SMMA line itself. Untick to see only the candle colours."><input type="checkbox" data-k="line" ${ind.line !== false ? 'checked' : ''}> Show line</label>` +
+        `<label title="Colour every candle (body and wick) by where its close is: above this SMMA = green, below = red. With a Timeframe set, the SMMA of that timeframe colours this chart's candles."><input type="checkbox" data-k="paint" ${ind.paint ? 'checked' : ''}> Colour candles</label>` +
         `<label title="Close above the SMMA">Above <input type="color" data-k="pcUp" value="${ind.pcUp || '#26a69a'}"></label>` +
         `<label title="Close below the SMMA">Below <input type="color" data-k="pcDn" value="${ind.pcDn || '#ef5350'}"></label>`;
       const xb = row.querySelector('.x'); if (xb) xb.insertAdjacentHTML('beforebegin', html); else row.insertAdjacentHTML('beforeend', html);
@@ -2505,8 +2507,8 @@ function renderPanel() {
           else { makeSeries(ind); if (raw.length) fullData(ind); }
         } else if (ind.type === 'bos') {
           refreshBos();
-        } else if (k === 'visible' || k === 'color' || k === 'width') {
-          ind.series.forEach(s => s.applyOptions({ visible: ind.visible, color: ind.color, lineWidth: ind.width }));
+        } else if (k === 'visible' || k === 'color' || k === 'width' || k === 'line') {
+          ind.series.forEach(s => s.applyOptions({ visible: lineShown(ind), color: ind.color, lineWidth: ind.width }));
           if (ind.type === 'smma') repaintBars(null);
         } else {
           makeSeries(ind); if (raw.length) fullData(ind);

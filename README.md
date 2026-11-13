@@ -96,7 +96,7 @@ and **Top gainers 7d** (the biggest 7-day gains among F&O stocks and the Nifty 5
 it takes a few minutes the first time and is refreshed hourly).
 
 ## SMMA candle colours
-In the SMMA settings (gear) tick **Colour candles**: every candle whose close is above the SMMA turns green (body and wick),
+In the SMMA settings (gear) tick **Colour candles** (and untick **Show line** to see only the colours): every candle whose close is above the SMMA turns green (body and wick),
 every candle below it turns red; the two colours can be changed. The SMMA has its own **Timeframe**, so a 50-period SMMA of
 5m colours the candles of a 15 second chart. Works on Heikin Ashi and normal candle charts (not on line / Kagi or volume candles).
 
