@@ -491,12 +491,34 @@ const series = chart.addCandlestickSeries({
 const lineSeries = chart.addLineSeries({ color: '#2962ff', lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
   crosshairMarkerVisible: true, visible: false });
 const lineData = b => ({ time: b.time, value: b.close });
+/* Candle colours from an SMMA: close above it = green, below it = red (body, wick and border). Works with the SMMA's own
+   timeframe, so a 5m SMMA can colour the candles of a 15 second chart. */
+function painter() {
+  if (ctype === 'kagi' || ctype === 'line' || vcOn()) return null;
+  return inds.find(i => i.type === 'smma' && i.paint && i.visible !== false && i.vals && i.vals[0]) || null;
+}
+function paintBar(b, i, p) {
+  const v = p ? p.vals[0][i] : NaN;
+  if (!p || isNaN(v) || b.close === v) return b;
+  const c = b.close > v ? (p.pcUp || '#26a69a') : (p.pcDn || '#ef5350');
+  return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close, color: c, wickColor: c, borderColor: c };
+}
+let wasPainted = false;
+function repaintBars(first) {              // after the SMMA changed (or was switched on / off / removed)
+  const p = painter();
+  if (!p && !wasPainted) return;
+  if (!p) { wasPainted = false; series.setData(ha); return; }
+  wasPainted = true;
+  if (first == null) { series.setData(ha.map((b, i) => paintBar(b, i, p))); return; }
+  for (let k = first; k < ha.length; k++) series.update(paintBar(ha[k], k, p));
+}
 function showBars(first) {                // push ha[] (from index first; all when null) to the chart
+  const pp = painter();
   if (first == null) {
-    series.setData(ha);
+    series.setData(pp ? ha.map((b, i) => paintBar(b, i, pp)) : ha);
     lineSeries.setData(ctype === 'line' ? ha.map(lineData) : []);
   } else for (let k = first; k < ha.length; k++) {
-    series.update(ha[k]);
+    series.update(pp ? paintBar(ha[k], k, pp) : ha[k]);
     if (ctype === 'line') lineSeries.update(lineData(ha[k]));
   }
 }
@@ -558,7 +580,7 @@ function styleSeries() {
 const DOJI_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h'];
 const SW_TFS = ['5s', '15s', '30s', '1m', '3m', '5m', '15m', '30m', '1h', '4h'];
 const IND_DEFAULTS = {
-  ema: { len: 21, color: '#f7c948' }, smma: { len: 50, color: '#e040fb' },
+  ema: { len: 21, color: '#f7c948' }, smma: { len: 50, color: '#e040fb', paint: false, pcUp: '#26a69a', pcDn: '#ef5350' },
   sma: { len: 20, color: '#26c6da' }, bb: { len: 20, mult: 2, color: '#2962ff' },
   bos: { level: 'wick', show: 'flips', boxes: true, trend: true, sellColor: '#ef5350', buyColor: '#26a69a' },
   pivot: { iv: '15m', ptype: 'traditional', nlev: 3, labels: true, prices: true, history: true, fit: true,
@@ -2096,6 +2118,7 @@ function fullData(ind) {
     for (let k = 0; k < v.length; k++) if (!isNaN(v[k])) d.push({ time: raw[k][0], value: v[k] });
     s.setData(d);
   });
+  if (ind.type === 'smma') repaintBars(null);
 }
 function tailData(ind, first) {
   if (ind.tfLive && mtfLen(ind)) return fullData(ind);            // the forming higher candle moves every older bar of its period
@@ -2108,6 +2131,7 @@ function tailData(ind, first) {
     const v = ind.vals[j];
     for (let k = first; k < v.length; k++) if (!isNaN(v[k])) s.update({ time: raw[k][0], value: v[k] });
   });
+  if (ind.type === 'smma' && ind.paint) repaintBars(first);
 }
 function saveInds() {
   const flat = inds.map(ind => Object.fromEntries(Object.entries(ind).filter(([k, v]) => v === null || typeof v !== 'object')));
@@ -2424,6 +2448,12 @@ function renderPanel() {
         (cur ? `<label title="Off: the value of the last closed higher candle (never repaints). On: also follows the higher candle that is still forming, so it can move until that candle closes."><input type="checkbox" data-k="tfLive" ${ind.tfLive ? 'checked' : ''}> Live</label>` : '');
       const xb = row.querySelector('.x'); if (xb) xb.insertAdjacentHTML('beforebegin', html); else row.insertAdjacentHTML('beforeend', html);
     }
+    if (ind.type === 'smma') {
+      const html = `<label title="Colour every candle (body and wick) by where its close is: above this SMMA = green, below = red. With a Timeframe set, the SMMA of that timeframe colours this chart's candles."><input type="checkbox" data-k="paint" ${ind.paint ? 'checked' : ''}> Colour candles</label>` +
+        `<label title="Close above the SMMA">Above <input type="color" data-k="pcUp" value="${ind.pcUp || '#26a69a'}"></label>` +
+        `<label title="Close below the SMMA">Below <input type="color" data-k="pcDn" value="${ind.pcDn || '#ef5350'}"></label>`;
+      const xb = row.querySelector('.x'); if (xb) xb.insertAdjacentHTML('beforebegin', html); else row.insertAdjacentHTML('beforeend', html);
+    }
     row.querySelectorAll('[data-k]').forEach(el => {
       el.addEventListener(el.type === 'number' || el.type === 'color' ? 'input' : 'change', () => {
         const k = el.dataset.k;
@@ -2477,6 +2507,7 @@ function renderPanel() {
           refreshBos();
         } else if (k === 'visible' || k === 'color' || k === 'width') {
           ind.series.forEach(s => s.applyOptions({ visible: ind.visible, color: ind.color, lineWidth: ind.width }));
+          if (ind.type === 'smma') repaintBars(null);
         } else {
           makeSeries(ind); if (raw.length) fullData(ind);
         }
@@ -2486,7 +2517,7 @@ function renderPanel() {
     });
     row.querySelector('.x').onclick = () => {
       ind.series.forEach(s => chart.removeSeries(s));
-      inds = inds.filter(i => i !== ind); layoutPanes(); refreshBos(); saveInds(); renderPanel(); legend(null);
+      inds = inds.filter(i => i !== ind); layoutPanes(); refreshBos(); saveInds(); renderPanel(); legend(null); repaintBars(null);
     };
     list.appendChild(row);
   });
@@ -2707,7 +2738,7 @@ $('legend').addEventListener('mousedown', e => {
 });
 function removeInd(ind) {
   ind.series.forEach(s => chart.removeSeries(s));
-  inds = inds.filter(i => i !== ind); layoutPanes(); refreshBos(); saveInds(); renderPanel(); legend(null);
+  inds = inds.filter(i => i !== ind); layoutPanes(); refreshBos(); saveInds(); renderPanel(); legend(null); repaintBars(null);
 }
 /* settings of one indicator, opened from its gear in the legend: the same fields as the Indicators panel, applied live */
 let POP = null;
