@@ -313,6 +313,7 @@
     <button data-add="htf" title="Candles of a higher timeframe (Heikin Ashi or normal) drawn as boxes over the candles they cover">Higher timeframe candles</button>
     <button data-add="hdoji" class="mt5only">Doji boxes (5m, 15m, 1h...)</button>
     <button data-add="hswitch">Heikin Ashi switch boxes</button>
+    <button data-add="burke" title="Stacey Burke style setups, marked only when they form at a pivot level: M / W peak formation, three pushes, and first red / first green day bias">Burke setups at pivots (M / W, 3 pushes)</button>
     <button data-add="chop">Sideways / chop filter</button>
     <button data-add="vprof" class="mt5only">Volume profile</button>
     <button data-add="foot" class="mt5only">Footprint (order flow)</button>
@@ -609,6 +610,8 @@ const IND_DEFAULTS = {
            on_1m: false, c_1m: '#b0bec5', on_3m: false, c_3m: '#80deea', on_5m: true, c_5m: '#ffd54f',
            on_15m: true, c_15m: '#ce93d8', on_30m: false, c_30m: '#a5d6a7', on_1h: true, c_1h: '#4fc3f7',
            on_4h: false, c_4h: '#ffb74d' },
+  burke: { iv: '15m', ptype: 'traditional', nlev: 3, zone: 0.35, sw: 3, tol: 0.4, span: 80, mw: true, p3: true, days: true, run: 2, biasOnly: false,
+           cBuy: '#26a69a', cSell: '#ef5350' },
   htf: { mode: 'fixed', iv: '4h', nx: 4, style: 'ha', last: 'all', alpha: '0.12', border: 1, body: true, forming: true, labels: true,
          cUp: '#26a69a', cDn: '#ef5350' },
   hl: { iv: '1h', ext: 24, show: 'sweeps', fit: true, cH: '#ff9800', cL: '#29b6f6', width: 2 },
@@ -1106,6 +1109,7 @@ function refreshBos() {
   refreshPivots();
   const markers = [];
   inds.filter(i => i.type === 'htf').forEach(htfCalc);
+  inds.filter(i => i.type === 'burke').forEach(burkeCalc);
   inds.filter(i => i.type === 'hdoji').forEach(hdojiCalc);
   inds.filter(i => i.type === 'hswitch').forEach(hswitchCalc);
   inds.filter(i => i.type === 'chop').forEach(chopCalc);
@@ -1939,6 +1943,139 @@ function drawChop(pw, ph) {
   });
 }
 const hhmm = sec => { const d = new Date(disp(sec) * 1000); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
+/* ======== Burke setups at pivots ========
+   Stacey Burke style reversal setups, kept only when the peak forms at a pivot level (P, R1, S1...) of the chosen period:
+     M / W   two pushes into a level where the second one fails (double top / double bottom); entry = close through the neckline
+     3P      three pushes into a level (each one further), then a close back through the last pullback
+     FRD/FGD first red day after a run of green days = sell day; first green day after red days = buy day (bias label)
+   Real candles, closed bars only; a signal appears once the last peak is confirmed (sw bars later) and the neckline has broken. */
+function burkeCalc(ind) {
+  ind.sig = []; ind.bdays = []; ind.bWarn = '';
+  const n = raw.length - 1;                                   // the last candle is still forming
+  const iv = parseIv(ind.iv);
+  if (kind !== 'time') { ind.bWarn = 'needs a time-based chart'; return; }
+  if (!iv || iv.kind !== 'time' || iv.n <= tfSec) { ind.bWarn = `pivot period ${ind.iv} must be longer than the chart interval ${tf}`; return; }
+  if (n < 40) return;
+  const piv = pivotCalc(raw, iv.n, ind.ptype || 'traditional', Number(ind.nlev) || 3, anchor);
+  if (!piv.length) { ind.bWarn = `not enough history for ${ind.iv} pivots`; return; }
+  const H = k => raw[k][2], L = k => raw[k][3], C = k => raw[k][4];
+  const tr = new Array(n);
+  for (let i = 0; i < n; i++) tr[i] = i ? Math.max(H(i) - L(i), Math.abs(H(i) - C(i - 1)), Math.abs(L(i) - C(i - 1))) : H(i) - L(i);
+  const atr = smma(tr, 14);
+  const A = k => isNaN(atr[k]) ? tr[k] : atr[k];
+  const zone = Math.max(0.05, Number(ind.zone) || 0.35), tol = Math.max(0.05, Number(ind.tol) || 0.4);
+  const sw = Math.max(1, Math.min(20, ind.sw | 0 || 3)), span = Math.max(10, ind.span | 0 || 80), wait = span;
+  const near = (k, price) => {                                // the pivot level this price is at, if any
+    const t = raw[k][5]; let lo = 0, hi = piv.length - 1, P = null;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (piv[m].end <= t) lo = m + 1; else if (piv[m].start > t) hi = m - 1; else { P = piv[m]; break; } }
+    if (!P) return null;
+    let best = null;
+    for (const [nm, v] of P.lv) { const d = Math.abs(v - price); if (!best || d < best.d) best = { name: nm, v, d }; }
+    return best && best.d <= zone * A(k) ? best : null;
+  };
+  // swing highs / lows (sw bars each side), merged into an alternating zigzag
+  const Z = [];
+  for (let i = sw; i < n - sw; i++) {
+    let hi = true, lo = true;
+    for (let j = 1; j <= sw && (hi || lo); j++) {
+      if (!(H(i) > H(i - j) && H(i) >= H(i + j))) hi = false;
+      if (!(L(i) < L(i - j) && L(i) <= L(i + j))) lo = false;
+    }
+    if (hi === lo) continue;
+    const z = { i, p: hi ? H(i) : L(i), hi }, last = Z[Z.length - 1];
+    if (last && last.hi === hi) { if (hi ? z.p > last.p : z.p < last.p) Z[Z.length - 1] = z; }
+    else Z.push(z);
+  }
+  // day bias
+  const D = [];
+  for (let i = 0; i < n; i++) {
+    const b = periodStart(raw[i][5], 86400, anchor), d = D[D.length - 1];
+    if (!d || b > d.start) D.push({ start: b, o: raw[i][1], c: C(i), i });
+    else d.c = C(i);
+  }
+  const run = Math.max(1, ind.run | 0 || 2), bias = new Map();
+  if (tfSec < 86400) for (let d = run + 1; d < D.length; d++) {
+    const red = D[d - 1].c < D[d - 1].o, grn = D[d - 1].c > D[d - 1].o;
+    let up = true, dn = true;
+    for (let k = 2; k <= run + 1; k++) { if (!(D[d - k].c > D[d - k].o)) up = false; if (!(D[d - k].c < D[d - k].o)) dn = false; }
+    if (red && up) { bias.set(D[d].start, 'sell'); if (ind.days) ind.bdays.push({ i: D[d].i, side: 'sell' }); }
+    if (grn && dn) { bias.set(D[d].start, 'buy'); if (ind.days) ind.bdays.push({ i: D[d].i, side: 'buy' }); }
+  }
+  const out = [];
+  const trigger = (peak, neck, side, extreme) => {            // first close through the neckline after the peak is confirmed
+    for (let k = peak.i + sw; k < Math.min(n, peak.i + sw + wait); k++) {
+      if (side === 'sell' ? H(k) > extreme + tol * A(k) : L(k) < extreme - tol * A(k)) return -1;   // the level gave way
+      if (side === 'sell' ? C(k) < neck : C(k) > neck) return k;
+    }
+    return -1;
+  };
+  for (let j = 2; j < Z.length; j++) {
+    const c = Z[j], b = Z[j - 1], a = Z[j - 2], side = c.hi ? 'sell' : 'buy', sgn = c.hi ? 1 : -1, at = A(c.i);
+    let made = null;
+    if (ind.p3 && j >= 4) {                                   // three pushes: each further than the last, pullbacks stepping the same way
+      const b0 = Z[j - 3], a0 = Z[j - 4];
+      if (sgn * (a.p - a0.p) > 0.1 * at && sgn * (c.p - a.p) > 0.1 * at && sgn * (b.p - b0.p) > 0 && c.i - a0.i <= span * 1.5) {
+        const lv = near(c.i, c.p);
+        if (lv) { const k = trigger(c, b.p, side, c.p); if (k > 0) made = { k, side, kind: '3P', lv: lv.name, pts: [a0, a, c], neck: b.p, ni: b.i, stop: c.p }; }
+      }
+    }
+    if (!made && ind.mw && Math.abs(c.p - a.p) <= tol * at && c.i - a.i <= span && sgn * (Math.min(sgn * a.p, sgn * c.p) * sgn - b.p) >= at) {
+      const ext = c.hi ? Math.max(a.p, c.p) : Math.min(a.p, c.p), lv = near(c.i, ext);
+      if (lv) { const k = trigger(c, b.p, side, ext); if (k > 0) made = { k, side, kind: c.hi ? 'M' : 'W', lv: lv.name, pts: [a, c], neck: b.p, ni: b.i, stop: ext }; }
+    }
+    if (!made) continue;
+    const day = bias.get(periodStart(raw[made.k][5], 86400, anchor));
+    made.bias = day === made.side;
+    if (ind.biasOnly && !made.bias) continue;
+    if (out.some(x => x.side === made.side && Math.abs(x.k - made.k) <= sw * 2)) continue;
+    out.push(made);
+  }
+  ind.sig = out.sort((x, y) => x.k - y.k);
+}
+function drawBurke(pw, ph) {
+  const r = ts.getVisibleLogicalRange(); if (!r) return;
+  const list = inds.filter(i => i.type === 'burke' && i.visible !== false && i.sig);
+  if (!list.length) return;
+  const bottom = ph * paneTop(), Y = p => series.priceToCoordinate(p);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pw, bottom); ctx.clip();
+  ctx.font = 'bold 11px sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+  for (const ind of list) {
+    for (const d of ind.bdays || []) {                        // first red / first green day
+      if (d.i < r.from - 1 || d.i > r.to + 1) continue;
+      const x = l2x(d.i - 0.5), col = d.side === 'sell' ? ind.cSell : ind.cBuy;
+      ctx.strokeStyle = col; ctx.globalAlpha = 0.6; ctx.setLineDash([2, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, bottom); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+      ctx.fillStyle = col; ctx.textAlign = 'left';
+      ctx.fillText(d.side === 'sell' ? 'First red day: sell day' : 'First green day: buy day', x + 5, 34);
+      ctx.textAlign = 'center';
+    }
+    for (const g of ind.sig) {
+      if (g.k < r.from - 1 || g.pts[0].i > r.to + 1) continue;
+      const col = g.side === 'sell' ? ind.cSell : ind.cBuy, up = g.side === 'sell';
+      ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1.5;
+      ctx.beginPath();                                         // the pushes
+      g.pts.forEach((p, q) => { const x = l2x(p.i), y = Y(p.p); if (y == null) return; q ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.stroke();
+      g.pts.forEach((p, q) => {
+        const x = l2x(p.i), y = Y(p.p); if (y == null) return;
+        ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillText(String(q + 1), x, y + (up ? -11 : 11));
+      });
+      const yn = Y(g.neck);                                    // neckline up to the entry candle
+      if (yn != null) { ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(l2x(g.ni), yn); ctx.lineTo(l2x(g.k + 0.5), yn); ctx.stroke(); ctx.setLineDash([]); }
+      const xk = l2x(g.k), yk = Y(up ? raw[g.k][2] : raw[g.k][3]);
+      if (yk == null) continue;
+      const s = up ? -1 : 1, y0 = yk + s * 8;                  // arrow pointing at the entry candle
+      ctx.beginPath(); ctx.moveTo(xk, y0); ctx.lineTo(xk - 6, y0 + s * 10); ctx.lineTo(xk + 6, y0 + s * 10); ctx.closePath(); ctx.fill();
+      const txt = `${g.kind === '3P' ? '3 pushes' : g.kind} ${g.side} @ ${g.lv}${g.bias ? ' ★' : ''}`;
+      const w = ctx.measureText(txt).width + 10, yt = y0 + s * 21;
+      ctx.globalAlpha = 0.9; ctx.fillRect(xk - w / 2, yt - 8, w, 16); ctx.globalAlpha = 1;
+      ctx.fillStyle = '#fff'; ctx.fillText(txt, xk, yt); ctx.fillStyle = col;
+    }
+  }
+  ctx.textAlign = 'left';
+  ctx.restore();
+}
 function drawHtf(pw, ph) {
   const r = ts.getVisibleLogicalRange(); if (!r) return;
   const bottom = ph * paneTop();
@@ -2033,6 +2170,7 @@ function labelBase(ind) {
   if (ind.type === 'foot') return 'Footprint';
   if (ind.type === 'cvd') return ind.show === 'delta' ? 'Volume delta (ticks)' : 'Cumulative volume delta (ticks)';
   if (ind.type === 'htf') return `Higher timeframe ${ind.hName || ind.iv}`;
+  if (ind.type === 'burke') return `Burke setups @ ${ind.iv} pivots`;
   if (ind.type === 'hdoji') return 'Doji boxes';
   if (ind.type === 'hswitch') return 'HA switch boxes';
   if (ind.type === 'chop') return 'Sideways filter';
@@ -2076,7 +2214,7 @@ function makeSeries(ind) {
     layoutPanes(); return;
   }
   if (ind.type === 'chop') return;
-  if (ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'htf') { ind.hlN = 0; return; }       // lanes are created by fillHL as needed
+  if (ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'htf' || ind.type === 'burke') { ind.hlN = 0; return; }       // lanes are created by fillHL as needed
   if (ind.type === 'pivot' || ind.type === 'pdhl') {
     ind.pnames = pivotNames(ind);
     ind.pnames.forEach(n => {
@@ -2112,7 +2250,7 @@ function fullData(ind) {
   if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind);
   if (ind.type === 'vprof' || ind.type === 'foot') return;
   if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, 0); }
-  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf') return;
+  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf' || ind.type === 'burke') return;
   ind.vals = calc(ind);
   ind.series.forEach((s, j) => {
     const v = ind.vals[j], d = [];
@@ -2126,7 +2264,7 @@ function tailData(ind, first) {
   if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind, first);
   if (ind.type === 'vprof' || ind.type === 'foot') return;
   if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, first); }
-  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf') return;
+  if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf' || ind.type === 'burke') return;
   ind.vals = calc(ind);
   ind.series.forEach((s, j) => {
     const v = ind.vals[j];
@@ -2155,7 +2293,7 @@ function addInd(type) {
   const ind = { id: Date.now() + Math.random(), type, src: 'ha', width: type === 'bb' ? 1 : 2,
                 visible: true, ...IND_DEFAULTS[type], series: [], vals: null, res: null };
   inds.push(ind); makeSeries(ind); if (raw.length) fullData(ind);
-  if (type === 'bos' || type === 'stretch' || type === 'pivot' || type === 'pdhl' || type === 'hl' || type === 'hdoji' || type === 'hswitch' || type === 'chop' || type === 'htf') refreshBos();
+  if (type === 'bos' || type === 'stretch' || type === 'pivot' || type === 'pdhl' || type === 'hl' || type === 'hdoji' || type === 'hswitch' || type === 'chop' || type === 'htf' || type === 'burke') refreshBos();
   saveInds(); renderPanel(); legend(null);
 }
 function renderPanel() {
@@ -2267,6 +2405,23 @@ function renderPanel() {
       `<label title="Histogram: above zero rising / falling, below zero falling / rising">Hist ` +
       `<input type="color" data-k="cUp" value="${ind.cUp}"><input type="color" data-k="cUp2" value="${ind.cUp2}">` +
       `<input type="color" data-k="cDn" value="${ind.cDn}"><input type="color" data-k="cDn2" value="${ind.cDn2}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'burke') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Burke setups at pivots</b>` +
+      `<label title="Pivot period whose levels (P, R1, S1...) the setups must form at: 15m, 1h, 4h, 1d. Longer than the chart interval. Press Enter.">Pivots <input type="text" data-k="iv" value="${ind.iv}" style="width:54px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px"></label>` +
+      `<label>Type <select data-k="ptype">${Object.entries(PIVOT_TYPES).map(([v, t]) => opt('ptype', v, t)).join('')}</select></label>` +
+      `<label>Levels <select data-k="nlev">${[1, 2, 3, 4, 5].map(v => `<option ${v == ind.nlev ? 'selected' : ''}>${v}</option>`).join('')}</select></label>` +
+      `<label title="How close to a pivot level the peak must be, as a part of the average candle range (ATR). Smaller = stricter, only right at the level.">Zone <select data-k="zone">` +
+      opt('zone', '0.15', 'Very tight') + opt('zone', '0.25', 'Tight') + opt('zone', '0.35', 'Normal') + opt('zone', '0.6', 'Wide') + opt('zone', '1', 'Very wide') + `</select></label>` +
+      `<label title="Candles on each side that make a swing high / low. Bigger = fewer, larger patterns.">Swing <input type="number" data-k="sw" min="1" max="20" step="1" value="${ind.sw}" style="width:50px"></label>` +
+      `<label title="Longest pattern, in candles, from the first push to the last">Max candles <input type="number" data-k="span" min="10" step="10" value="${ind.span}" style="width:58px"></label>` +
+      `<label title="Double top (M) = sell, double bottom (W) = buy, at a pivot level"><input type="checkbox" data-k="mw" ${ind.mw ? 'checked' : ''}> M / W</label>` +
+      `<label title="Three pushes into a pivot level, then the reversal"><input type="checkbox" data-k="p3" ${ind.p3 ? 'checked' : ''}> 3 pushes</label>` +
+      `<label title="Mark the first red day after green days (sell day) and the first green day after red days (buy day). Signals that agree get a star."><input type="checkbox" data-k="days" ${ind.days ? 'checked' : ''}> First red / green day</label>` +
+      `<label title="How many days in a row before the first opposite day">after <input type="number" data-k="run" min="1" max="6" step="1" value="${ind.run}" style="width:44px"> days</label>` +
+      `<label title="Only show signals that agree with the first red / green day"><input type="checkbox" data-k="biasOnly" ${ind.biasOnly ? 'checked' : ''}> Only with day bias</label>` +
+      `<label>Buy <input type="color" data-k="cBuy" value="${ind.cBuy}"></label><label>Sell <input type="color" data-k="cSell" value="${ind.cSell}"></label>` +
       `<button class="x" title="Remove">Remove</button>`;
     else if (ind.type === 'htf') row.innerHTML =
       `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
@@ -2460,7 +2615,7 @@ function renderPanel() {
       el.addEventListener(el.type === 'number' || el.type === 'color' ? 'input' : 'change', () => {
         const k = el.dataset.k;
         if ((ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop') && k === 'iv' && !el.value.trim()) { ind.iv = ''; ind.on_custom = false; }
-        else if ((ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf') && k === 'iv') {
+        else if ((ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf' || ind.type === 'burke') && k === 'iv') {
           const iv = parseIv(el.value), ok = iv && iv.kind === 'time';
           el.style.borderColor = ok ? '' : 'var(--down)';
           el.title = ok ? '' : 'Use a time length: 1m, 5m, 15m, 1h, 4h, 1d (tick counts are not allowed here)';
@@ -2483,8 +2638,8 @@ function renderPanel() {
           }
           refreshBos();
           if (k === 'trade') { saveInds(); renderPanel(); legend(null); return; }
-        } else if (ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf') {
-          if (k === 'iv' && ind.iv) ind.on_custom = true;
+        } else if (ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf' || ind.type === 'burke') {
+          if (k === 'iv' && ind.iv && ind.type !== 'burke') ind.on_custom = true;
           refreshBos();
           if (ind.type === 'chop' && plan) updatePlan();
           if (ind.type === 'htf' && k === 'mode') { saveInds(); renderPanel(); legend(null); return; }
@@ -2652,6 +2807,12 @@ function legend(idx) {
   inds.filter(i => i.type === 'vol' && i.visible !== false && raw[idx]).forEach(i => {
     html += `<div>${eye(i)}<span style="color:var(--text)">Vol</span> <span style="color:${volColor(i, idx)}">${(raw[idx][6] || 0).toLocaleString()}</span></div>`;
   });
+  inds.filter(i => i.type === 'burke' && i.visible !== false).forEach(i => {
+    const g = i.sig && i.sig.length ? i.sig[i.sig.length - 1] : null;
+    html += `<div>${eye(i)}<span style="color:var(--text)">Burke setups @ ${i.iv} pivots</span> ` + (i.bWarn ? `<span style="color:var(--down)">${i.bWarn}</span>`
+      : g ? `<span style="color:var(--muted)">${i.sig.length} on chart, last:</span> <b style="color:${g.side === 'sell' ? i.cSell : i.cBuy}">${g.kind === '3P' ? '3 pushes' : g.kind} ${g.side} @ ${g.lv}</b> <span style="color:var(--muted)">${tstr(raw[g.k][0])}</span>`
+      : '<span style="color:var(--muted)">no setup at a pivot yet</span>') + '</div>';
+  });
   inds.filter(i => i.type === 'htf' && i.visible !== false && i.hd).forEach(i => {
     const d = raw[idx] && i.hd.find(x => idx >= x.a && idx <= x.b), col = d && (d.up ? i.cUp : i.cDn);
     html += `<div>${eye(i)}<span style="color:var(--text)">Higher TF ${i.hName || ''} ${i.style === 'candle' ? '(normal)' : '(HA)'}</span> ` + (i.hWarn
@@ -2695,7 +2856,7 @@ function legend(idx) {
     });
     html += `<div>${eye(i)}<span style="color:var(--text)">Switch ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
   });
-  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'hswitch', 'chop', 'htf', 'vprof', 'foot', 'cvd'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
+  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'hswitch', 'chop', 'htf', 'burke', 'vprof', 'foot', 'cvd'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
     const v = i.vals.map(a => fmt(a[idx])).join(' / ');
     html += `<div>${eye(i)}<span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${v}</span></div>`;
   });
@@ -3256,6 +3417,7 @@ function render() {
     drawPivots(pw);
     drawPanes(pw, ph);
     drawHtf(pw, ph);
+    drawBurke(pw, ph);
     drawHDoji(pw, ph);
     drawChop(pw, ph);
     drawProfiles(pw, ph);

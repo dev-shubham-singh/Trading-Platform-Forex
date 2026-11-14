@@ -95,6 +95,18 @@ symbol list), **Nifty 50 / 100 / 500** (the NSE constituent lists, downloaded on
 and **Top gainers 7d** (the biggest 7-day gains among F&O stocks and the Nifty 500, worked out from Fyers daily candles;
 it takes a few minutes the first time and is refreshed hourly).
 
+## Burke setups at pivots
+**Indicators > Burke setups at pivots** marks Stacey Burke style reversal setups, but only when the peak forms at a pivot
+level (P, R1, S1, R2, S2...) of the pivot period you choose (default 15m), never in the middle between levels:
+- **M / W**: two pushes into the level where the second fails. M = sell, W = buy.
+- **3 pushes**: three pushes into the level, then the reversal.
+- **First red / first green day**: the first red day after green days is marked as a sell day, the first green day after
+  red days as a buy day. Signals that agree with the day get a star; "Only with day bias" hides the rest.
+
+The arrow is drawn on the candle that closes through the neckline (the pullback between the pushes), after the last push
+is confirmed, so a signal never moves or disappears afterwards. **Zone** sets how close to the level the peak must be,
+**Swing** how big the pushes are. It marks setups; it does not place trades. Uses real candles on any chart type.
+
 ## SMMA candle colours
 In the SMMA settings (gear) tick **Colour candles** (and untick **Show line** to see only the colours): every candle whose close is above the SMMA turns green (body and wick),
 every candle below it turns red; the two colours can be changed. The SMMA has its own **Timeframe**, so a 50-period SMMA of
