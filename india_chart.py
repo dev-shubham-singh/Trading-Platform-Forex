@@ -1227,6 +1227,17 @@ def make_handler():
                         return self.js({"error": "interval must be above zero"}, 400)
                     since = q.get("since")
                     rows, extra = get_bars(sym, kind, p, float(since) if since is not None else None)
+                    hrs = float(q.get("hours", "0") or 0)
+                    if since is None and hrs > 0 and kind == "time" and p < 60 and rows:
+                        cut = rows[-1][0] - hrs * 3600        # second charts: only the newest N hours
+                        lo, hi = 0, len(rows)
+                        while lo < hi:
+                            mid = (lo + hi) // 2
+                            if rows[mid][0] < cut:
+                                lo = mid + 1
+                            else:
+                                hi = mid
+                        rows = rows[lo:]
                     return self.js({"symbol": sym, "kind": kind, "p": p, "bars": rows, "status": status(sym), **extra})
                 self.send_error(404)
             except Exception as e:

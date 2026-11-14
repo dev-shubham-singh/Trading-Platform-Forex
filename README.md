@@ -172,3 +172,7 @@ The servers save lightweight-charts 4.2.0 next to the page on first start (fallb
 
 - **Multi-timeframe indicators.** EMA, SMMA, SMA, Bollinger Bands, MACD and ATR have a *Timeframe* setting (Chart, or 5s ... 1d). The indicator is calculated on candles of that timeframe (Heikin Ashi or normal like the chart) and shown on the chart you are looking at, e.g. a 1m SMMA 50 on the 15s chart. By default every chart candle shows the value of the last *closed* higher candle (no repaint, no look-ahead); tick *Live* to also follow the forming candle. The timeframe must be longer than the chart interval, and it can only use the candles your chart has loaded.
 - **Settings on the chart.** Each legend line has an eye (hide / show), a gear (opens that indicator's settings in a small window, applied live, Esc closes it) and a cross (remove). No need to open the Indicators panel.
+
+## Second-chart history limit
+
+Second-based charts (5s, 15s...) build up tens of thousands of candles, which uses a lot of memory and slows the chart. A small dropdown next to the timeframes (only shown on second charts) keeps just the newest part: **Last 8 hours / Last 12 hours (default) / Last 1 day / All loaded**. Pick *All loaded* to get as much as possible. Your choice is remembered. Needs a restart of the `.bat` once (server change) plus Ctrl+F5.

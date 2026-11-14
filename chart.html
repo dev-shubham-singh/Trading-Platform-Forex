@@ -199,6 +199,7 @@
   </select>
   <label id="vcwrap" title="Volume candles: each candle is as wide as its volume (wider = more volume), like Exness / TradingView volume candles. Works with Heikin Ashi and Candles."><input type="checkbox" id="vcbox"> Volume candles</label>
   <div class="tfs" id="tfs"></div>
+  <select id="secwin" style="display:none" title="Second-based charts (like 5s) can build up tens of thousands of candles, which uses a lot of memory and slows the chart. This keeps only the newest part. Choose 'All loaded' to load as much as possible."><option value="8">Last 8 hours</option><option value="12">Last 12 hours</option><option value="24">Last 1 day</option><option value="0">All loaded</option></select>
   <input id="ivin" title="Custom interval: 20s, 7m, 2h, 1d, or ticks like 100t. Press Enter." placeholder="20s, 7m, 100t">
   <label id="boxwrap" style="display:none;color:var(--muted)"><span id="boxlbl">Brick</span>
     <input id="boxin" type="number" min="0" step="any" title="Price units. Press Enter."></label>
@@ -2978,13 +2979,17 @@ setInterval(() => {
 /* ---------------- data loading ---------------- */
 function query(since) {
   const p = kind === 'time' || kind === 'tick' ? ivN : box;
-  return `/api/bars?symbol=${encodeURIComponent(symbol)}&kind=${kind}&p=${p}` + (since != null ? `&since=${since}` : '');
+  return `/api/bars?symbol=${encodeURIComponent(symbol)}&kind=${kind}&p=${p}` + (since != null ? `&since=${since}` : isSecs() && secHours > 0 ? `&hours=${secHours}` : '');
 }
+let secHours = +store.get('gc_sechours', 12);          // second charts: how many hours of candles to load (0 = as many as possible)
+function isSecs() { return kind === 'time' && tfSec < 60; }
 function syncControls() {
   const iv = parseIv(tf) || { kind: 'time', n: 15 };
   kind = ctype === 'renko' || ctype === 'kagi' ? ctype : iv.kind;
   ivN = iv.n; tfSec = kind === 'time' ? iv.n : 1;
   $('ctype').value = ctype;
+  $('secwin').style.display = kind === 'time' && tfSec < 60 && ctype !== 'renko' && ctype !== 'kagi' ? '' : 'none';
+  $('secwin').value = String(secHours);
   const customs = store.get('gc_custom_iv', []);
   $('tfs').innerHTML = [...PRESETS, ...customs.filter(c => !PRESETS.includes(c))]
     .map(t => `<button data-tf="${t}" class="${t === tf && kind !== 'renko' && kind !== 'kagi' ? 'on' : ''}">${t}</button>`).join('');
@@ -3820,6 +3825,7 @@ $('symq').addEventListener('keydown', e => {
   else if (e.key === 'Escape') closeSymbols();
 });
 document.addEventListener('mousedown', e => { if (!$('sympop').contains(e.target) && e.target !== $('symbtn')) closeSymbols(); });
+$('secwin').onchange = () => { secHours = +$('secwin').value; store.set('gc_sechours', secHours); load(); };
 $('ctype').onchange = () => {
   ctype = $('ctype').value;
   if ((ctype === 'ha' || ctype === 'candle' || ctype === 'line') && !parseIv(tf)) tf = '15s';
