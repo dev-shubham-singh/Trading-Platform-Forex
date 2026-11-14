@@ -199,7 +199,7 @@
   </select>
   <label id="vcwrap" title="Volume candles: each candle is as wide as its volume (wider = more volume), like Exness / TradingView volume candles. Works with Heikin Ashi and Candles."><input type="checkbox" id="vcbox"> Volume candles</label>
   <div class="tfs" id="tfs"></div>
-  <select id="secwin" style="display:none" title="Second-based charts (like 5s) can build up tens of thousands of candles, which uses a lot of memory and slows the chart. This keeps only the newest part. Choose 'All loaded' to load as much as possible."><option value="8">Last 8 hours</option><option value="12">Last 12 hours</option><option value="24">Last 1 day</option><option value="0">All loaded</option></select>
+  <select id="secwin" style="display:none" title="Second-based charts (like 5s) can build up tens of thousands of candles, which uses a lot of memory and slows the chart. This keeps only the newest part. Choose 'All loaded' to load as much as possible."><option value="1">Last 1 hour</option><option value="2">Last 2 hours</option><option value="4">Last 4 hours</option><option value="8">Last 8 hours</option><option value="12">Last 12 hours</option><option value="24">Last 1 day</option><option value="0">All loaded</option></select>
   <input id="ivin" title="Custom interval: 20s, 7m, 2h, 1d, or ticks like 100t. Press Enter." placeholder="20s, 7m, 100t">
   <label id="boxwrap" style="display:none;color:var(--muted)"><span id="boxlbl">Brick</span>
     <input id="boxin" type="number" min="0" step="any" title="Price units. Press Enter."></label>
