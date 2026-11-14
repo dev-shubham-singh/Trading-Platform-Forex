@@ -951,6 +951,27 @@ function computePivots(ind) {
 // the period (lead-in) and one on the bar after it (lead-out). Whether the library colours a segment by its
 // left or its right point, the slanted join between periods is then transparent and only flat lines show.
 const PIVOT_CLEAR = 'rgba(0,0,0,0)';
+/* The lines only have points at the two ends of each period (flat lines need no more), so the price scale is told
+   directly which levels are in view instead of finding them from the points. Same result as before: with
+   "Keep all levels in view" every level of the periods on screen is inside the scale. */
+function pivotScale(ind, name, par) {
+  return () => {
+    if (ind.fit === false || !ind.piv || !ind.piv.length || ind.pivWarn || !raw.length) return null;
+    const lr = ts.getVisibleLogicalRange(); if (!lr) return null;
+    const i0 = Math.max(0, Math.floor(lr.from) - 1), i1 = Math.min(raw.length - 1, Math.ceil(lr.to) + 1);   // the lines' lead-in / lead-out points count too
+    if (i1 < i0) return null;
+    const t0 = raw[i0][5], t1 = raw[i1][5], piv = ind.piv, first = ind.history ? 0 : piv.length - 1;
+    let lo = 0, hi = piv.length - 1;                                    // first period that ends after the left edge
+    while (lo < hi) { const m = (lo + hi) >> 1; if (piv[m].end <= t0) lo = m + 1; else hi = m; }
+    let mn = Infinity, mx = -Infinity;
+    for (let k = Math.max(lo, first); k < piv.length && piv[k].start <= t1; k++) {
+      if (k % 2 !== par) continue;
+      const v = piv[k].map[name];
+      if (v < mn) mn = v; if (v > mx) mx = v;
+    }
+    return mn <= mx ? { priceRange: { minValue: mn, maxValue: mx } } : null;
+  };
+}
 function fillPivots(ind, from) {
   if (!ind.series.length || !raw.length) return;
   const names = ind.pnames, piv = ind.piv || [], n = raw.length;
@@ -983,7 +1004,8 @@ function fillPivots(ind, from) {
         const arr = data[j * 2 + par], v = piv[pk].map[nm], col = pivotColor(ind, nm);
         const lastT = arr.length ? arr[arr.length - 1].time : -Infinity;
         if (a > 0 && raw[a - 1][0] > lastT) arr.push({ time: raw[a - 1][0], value: v, color: PIVOT_CLEAR });
-        for (let i = a; i <= b; i++) arr.push({ time: raw[i][0], value: v, color: col });
+        arr.push({ time: raw[a][0], value: v, color: col });            // a flat line needs only its two ends
+        if (b > a) arr.push({ time: raw[b][0], value: v, color: col });
         if (b + 1 < n) arr.push({ time: raw[b + 1][0], value: v, color: PIVOT_CLEAR });
       });
     }
@@ -2224,7 +2246,7 @@ function makeSeries(ind) {
           lineStyle: ind.style === 'dashed' ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
           priceLineVisible: false, lastValueVisible: ind.prices !== false, crosshairMarkerVisible: false,
           title: ind.labels !== false ? n : '',
-          ...(ind.fit === false ? { autoscaleInfoProvider: () => null } : {}),
+          autoscaleInfoProvider: pivotScale(ind, n, par),
         }));
     });
     return;
