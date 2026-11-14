@@ -3019,6 +3019,11 @@ async function load() {
     const j = await (await fetch(query())).json();
     if (id !== reqId) return;
     if (j.error) { $('msg').textContent = j.error; return; }
+    if (isSecs() && secHours > 0 && j.bars.length) {           // also trim here, so it works even if the server window is an older version
+      const cut = j.bars[j.bars.length - 1][0] - secHours * 3600; let lo = 0, hi = j.bars.length;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (j.bars[m][0] < cut) lo = m + 1; else hi = m; }
+      if (lo > 0) j.bars = j.bars.slice(lo);
+    }
     if (RP.on) { RP.full = j.bars; raw = RP.full.slice(0, replayCount(RP.full, RP.t)); }
     else raw = j.bars;
     ha = []; tickCnt = j.cnt || 0; buildFrom(0);
