@@ -130,6 +130,8 @@ and optionally the chart type and the timeframe, under a name. Click a saved tem
 click, e.g. "1D pivots" (1d + pivots) and "1H trend" (1h + EMAs). **Update** replaces a template with what is on the chart now.
 Saved in the browser, separately for the gold and the Indian chart.
 
+Both charts open in **Google Chrome** when you start them (if Chrome is not installed, your normal default browser is used).
+
 ## Troubleshooting
 | Problem | Fix |
 |---|---|

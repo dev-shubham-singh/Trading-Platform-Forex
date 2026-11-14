@@ -21,6 +21,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
 import secrets
 import sys
@@ -1234,6 +1235,39 @@ def make_handler():
     return Handler
 
 
+def open_in_chrome(url):
+    """Open the chart in Google Chrome (falls back to the normal default browser if Chrome cannot be found)."""
+    import shutil, subprocess
+    paths = []
+    if sys.platform.startswith("win"):
+        for env in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+            base = os.environ.get(env)
+            if base:
+                paths.append(os.path.join(base, "Google", "Chrome", "Application", "chrome.exe"))
+        try:
+            import winreg
+            for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    with winreg.OpenKey(root, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe") as k:
+                        paths.insert(0, winreg.QueryValue(k, None))
+                except OSError:
+                    pass
+        except Exception:
+            pass
+    elif sys.platform == "darwin":
+        paths.append("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    else:
+        paths += [shutil.which(n) or "" for n in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")]
+    for p in paths:
+        if p and os.path.exists(p):
+            try:
+                subprocess.Popen([p, url])
+                return
+            except Exception:
+                pass
+    webbrowser.open(url)
+
+
 def main():
     global AUTH, FEED, REC
     cfg = load_config()
@@ -1252,7 +1286,7 @@ def main():
         print("Opening the Fyers login page in your browser...")
     print(f"\nChart running at {url}  (keep this window open while the market is open, Ctrl+C to stop)")
     ensure_library()
-    webbrowser.open(url)
+    open_in_chrome(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
