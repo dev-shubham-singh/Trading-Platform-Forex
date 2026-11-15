@@ -188,3 +188,7 @@ Second-based charts (5s, 15s...) build up tens of thousands of candles, which us
 ## Flip SL (automatic stop and target after the fill)
 
 The orange **Flip SL: ON / off** button (next to Sell) turns it on; the arrow beside it opens the settings. When any order fills (market, limit, stop or drawing order) the stop loss jumps to the extreme of the **last candle of the opposite colour**: for a SELL the high of the last green candle, for a BUY the low of the last red candle. Colours come from an SMMA (the one that paints your candles, or one you pick). The take profit is then reset to 1R / 1.2R / 1.5R / 2R / 3R / custom of the new stop distance (or kept / removed). Options: use Heikin Ashi or real candle highs and lows, a buffer in points, a max-loss limit (default 20: the stop is left alone if the new risk is bigger), and "never wider than my original stop". Positions that were already open are never touched. On the gold chart the account is checked every 0.4 s after you send an order so the change happens within about a second; on the practice account / replay it is instant.
+
+## Getting the project on a new computer
+
+`git clone` and run `start_gold_chart.bat` / `start_india_chart.bat`. `lightweight-charts.js` (TradingView Lightweight Charts v4.2.0, Apache-2.0) is included so the charts work offline. Your own `fyers_config.json` / `fyers_token.json` are never stored in the repo: copy `fyers_config.example.json` and fill it in.
