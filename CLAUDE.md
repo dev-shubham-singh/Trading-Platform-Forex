@@ -16,7 +16,7 @@ The user's PC folder is `C:\Users\shubh\Documents\gold_viewer` (the same files a
 ## Features already built (do not rebuild)
 Indicators with eye / gear / remove icons and multi-timeframe option; higher-timeframe candles (`htf`); MACD, Volume, Doji boxes,
 Volume profile, Footprint, CVD; bar replay with practice trading; Trades toolbar (positions, history, growth, commission);
-Buy/Sell with risk sizing and SL/TP lines. On the India chart Buy/Sell is a saved **paper account** (`PA`). Templates, per-timeframe indicators, SMMA candle colours, Burke setups at pivots (`burke`). Limit orders (plan panel + `/api/order` type limit, `/api/cancel`, practice `A().pend`), Risk/Reward drawing (`type:'rr'`, `rrCalc`, `drawRR`, `#rrp` panel), second-chart history limit (`#secwin`). Favorite symbols (star,
+Buy/Sell with risk sizing and SL/TP lines. On the India chart Buy/Sell is a saved **paper account** (`PA`). Templates, per-timeframe indicators, SMMA candle colours, Burke setups at pivots (`burke`). Limit orders (plan panel + `/api/order` type limit, `/api/cancel`, practice `A().pend`), Risk/Reward drawing (`type:'rr'`, `rrCalc`, `drawRR`, `#rrp` panel), second-chart history limit (`#secwin`), Pending button (limit / stop), Flip SL (`FSL`, `fslScan`, moves SL to the last opposite SMMA-colour candle after a fill). Favorite symbols (star,
 Favorites tab). India symbol tabs for F&O / Nifty 50 / 100 / 500 / 7-day gainers.
 Not built yet (user may ask): Wyckoff indicator (plan was discussed, needs their go-ahead), automatic strategy backtest with their rules.
 

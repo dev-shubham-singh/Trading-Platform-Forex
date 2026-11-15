@@ -184,3 +184,7 @@ Second-based charts (5s, 15s...) build up tens of thousands of candles, which us
 - Pips: 1 pip = 10 points (gold 0.10). Points are shown next to it.
 
 - **Pending button** (blue, next to Buy / Sell): pick Buy or Sell and an entry price. The chart chooses the type itself: a buy below the price is a BUY LIMIT, above it a BUY STOP (breakout); a sell above the price is a SELL LIMIT, below it a SELL STOP. Buy / Sell stay market orders. The Risk / Reward drawing's *Place pending order* button does the same.
+
+## Flip SL (automatic stop and target after the fill)
+
+The orange **Flip SL: ON / off** button (next to Sell) turns it on; the arrow beside it opens the settings. When any order fills (market, limit, stop or drawing order) the stop loss jumps to the extreme of the **last candle of the opposite colour**: for a SELL the high of the last green candle, for a BUY the low of the last red candle. Colours come from an SMMA (the one that paints your candles, or one you pick). The take profit is then reset to 1R / 1.2R / 1.5R / 2R / 3R / custom of the new stop distance (or kept / removed). Options: use Heikin Ashi or real candle highs and lows, a buffer in points, a max-loss limit (default 20: the stop is left alone if the new risk is bigger), and "never wider than my original stop". Positions that were already open are never touched. On the gold chart the account is checked every 0.4 s after you send an order so the change happens within about a second; on the practice account / replay it is instant.

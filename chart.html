@@ -227,6 +227,9 @@
   <button class="tool tbuy mt5only" id="buybtn" title="Plan a buy: shows your stop loss and lot size from your risk. Nothing is sent until you press Confirm.">Buy</button>
   <button class="tool tpend mt5only" id="pendbtn" title="Pending order: choose Buy or Sell and an entry price; the order waits for the price to reach it. It picks LIMIT (entry on the cheap side of the price) or STOP (breakout side) for you.">&#9201; Pending</button>
   <button class="tool tsell mt5only" id="sellbtn" title="Plan a sell: shows your stop loss and lot size from your risk. Nothing is sent until you press Confirm.">Sell</button></span>
+  <span style="display:inline-flex;white-space:nowrap">
+  <button class="tool" id="fslbtn" title="Flip SL: the moment ANY order fills (market, limit or stop), the stop loss jumps to the last opposite-colour candle (colours from your SMMA) and the take profit is reset to your R multiple. Click to turn on / off.">&#9889; Flip SL: <b id="fslst">off</b></button>
+  <button class="tool" id="fslcfg" title="Flip SL settings" style="padding:4px 6px">&#9662;</button></span>
   <div class="sep"></div>
   <button class="tool" id="winbtn" title="Open another chart window (e.g. 5m) to put on your other screen">&#10697; New window</button>
   <button class="tool" id="syncbtn" title="Sync drawings, crosshair, symbol and theme between your chart windows">&#8644; Sync</button>
@@ -312,6 +315,19 @@
     <div id="msg">Loading candles from MT5...</div>
     <div id="hint"></div>
   </div>
+</div>
+<div id="fslpop" class="pop" style="width:min(340px, calc(100vw - 24px)); padding:10px 12px; font-size:12px">
+  <div class="th" style="margin:0 0 6px">Flip SL: stop and target after the order fills</div>
+  <div style="color:var(--muted);line-height:1.5;margin-bottom:6px">When an order fills, the stop loss moves to the extreme of the <b>last candle of the opposite colour</b>: for a SELL the high of the last green candle, for a BUY the low of the last red candle. Colours come from the SMMA below. Then the take profit is set from the new stop distance.</div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Colours from</label><select id="fsl_src" style="flex:1"></select></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Take profit</label>
+    <select id="fsl_rr"><option value="keep">Keep mine</option><option value="0">None</option><option value="1">1 R</option><option value="1.2">1.2 R</option><option value="1.5">1.5 R</option><option value="2">2 R</option><option value="3">3 R</option><option value="custom">Custom R</option></select>
+    <input id="fsl_rrc" type="number" step="0.1" min="0.1" style="width:60px"></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Level from</label><select id="fsl_hl" style="flex:1"><option value="shown">Candles as shown (Heikin Ashi)</option><option value="real">Real candles</option></select></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Buffer</label><input id="fsl_buf" type="number" step="any" min="0" style="width:70px"> <span style="color:var(--muted)">points beyond the extreme</span></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Max loss</label><input id="fsl_max" type="number" step="any" min="0" style="width:70px"> <span style="color:var(--muted)">skip if the new stop would lose more (0 = no limit)</span></div>
+  <label style="display:flex;gap:6px;align-items:center;color:var(--muted);margin:4px 0;cursor:pointer"><input type="checkbox" id="fsl_tight"> Never wider than my original stop</label>
+  <div id="fsl_info" style="margin-top:6px;padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.6"></div>
 </div>
 <div id="tplpop" class="pop">
   <div class="th">Templates - indicators, chart type and timeframe</div><div id="tpllist"></div>
@@ -3995,13 +4011,124 @@ const RISK = Object.assign({ mode: 'pct', pct: 5, usd: 1, lotMode: 'auto', lot: 
                            store.get('gc_risk', {}));
 let ACC = null, plan = null, planCur = null, accBusy = false, accAt = 0;
 function saveRisk() { store.set('gc_risk', RISK); }
+/* ---------------- Flip SL: after an order fills, move the stop to the last opposite-colour candle and reset the take profit ---------------- */
+let FSL = Object.assign({ on: false, src: 'auto', rr: '2', rrc: 2, hl: 'shown', buf: 0, max: 20, tight: false }, store.get('gc_flipsl', {}));
+const fslSeen = new Set(), fslBusy = new Set();
+let fslBase = false;
+function fslSave() { store.set('gc_flipsl', FSL); }
+function fslSmma() {                                   // the SMMA whose colours decide: the one you picked, else the one painting the candles
+  const list = inds.filter(i => i.type === 'smma' && i.vals && i.vals[0]);
+  if (FSL.src !== 'auto') { const f = list.find(i => String(i.id) === String(FSL.src)); if (f) return f; }
+  return painter() || list.find(i => i.paint) || list[0] || null;
+}
+function fslColour(ind, i) {                           // 'up' (green) / 'down' (red) for candle i, same rule as the candle colours
+  const b = ha[i], v = ind.vals[0][i];
+  if (!b) return null;
+  if (isNaN(v) || b.close === v) return b.close >= b.open ? 'up' : 'down';
+  return b.close > v ? 'up' : 'down';
+}
+function fslLevel(buy) {                               // SELL: high of the last green candle. BUY: low of the last red candle
+  const ind = fslSmma(); if (!ind || !ha.length) return null;
+  const want = buy ? 'down' : 'up';
+  for (let i = ha.length - 1; i >= 0 && i >= ha.length - 3000; i--) {
+    if (fslColour(ind, i) !== want) continue;
+    const hi = FSL.hl === 'real' && raw[i] ? raw[i][2] : ha[i].high, lo = FSL.hl === 'real' && raw[i] ? raw[i][3] : ha[i].low;
+    return { price: buy ? lo : hi, idx: i, time: ha[i].time };
+  }
+  return null;
+}
+function fslRR() { return FSL.rr === 'custom' ? Number(FSL.rrc) || 0 : FSL.rr === 'keep' ? null : Number(FSL.rr); }
+function fslCompute(p) {                               // -> { sl, tp, note } or { skip: 'why' }
+  const S = ACC && ACC.sym; if (!S || !status || status.bid == null) return { skip: 'waiting for the price' };
+  const buy = p.side === 'buy', lv = fslLevel(buy);
+  if (!lv) return { skip: 'no SMMA on the chart to read colours from: add one (Indicators > SMMA)' };
+  const k = Math.pow(10, S.digits), buf = (Number(FSL.buf) || 0) * S.point;
+  let sl = buy ? lv.price - buf : lv.price + buf; sl = (buy ? Math.floor(sl * k + 1e-6) : Math.ceil(sl * k - 1e-6)) / k;     // rounded away from price
+  const px = buy ? status.bid : status.ask, st = S.stops || 0;
+  if (buy ? !(sl < px - st) : !(sl > px + st)) return { skip: `the ${buy ? 'red' : 'green'} candle's ${buy ? 'low' : 'high'} (${fmt(sl)}) is on the wrong side of the price` };
+  const dist = Math.abs(p.open - sl);
+  if (FSL.tight && p.sl && (buy ? sl < p.sl : sl > p.sl)) return { skip: `the new stop (${fmt(sl)}) would be wider than your ${fmt(p.sl)}` };
+  const c = commLot(), vpp = S.vpp || 0, loss = p.volume * dist * vpp + p.volume * c;
+  if (Number(FSL.max) > 0 && vpp > 0 && loss > Number(FSL.max) + 1e-9) return { skip: `the new stop would lose ${money(loss)}, over your ${money(FSL.max)} limit` };
+  const rr = fslRR(); let tp = p.tp || 0, tpNote = 'TP kept';
+  if (rr === 0) { tp = 0; tpNote = 'TP removed'; }
+  else if (rr > 0) {
+    tp = p.open + (buy ? 1 : -1) * dist * rr; tp = Math.round(tp * k) / k; tpNote = `TP ${rr}R = ${fmt(tp)}`;
+    if (buy ? !(tp > px + st) : !(tp < px - st)) { tp = p.tp || 0; tpNote = 'price is already past the new TP, TP kept'; }
+  }
+  return { sl, tp, loss, dist, tpNote, lv };
+}
+async function fslApply(p) {
+  if (fslBusy.has(p.ticket)) return; fslBusy.add(p.ticket);
+  try {
+    for (let tries = 0; tries < 2; tries++) {
+      const r = fslCompute(p);
+      if (r.skip) { tbNote(`Flip SL left ${p.side.toUpperCase()} #${p.ticket} alone: ${r.skip}`, 'pl-dn'); return; }
+      const msg = `Flip SL: ${p.side.toUpperCase()} stop ${p.sl ? fmt(p.sl) + ' \u2192 ' : ''}${fmt(r.sl)} (${tstr(r.lv.time)} ${p.side === 'buy' ? 'red low' : 'green high'}), risk ${money(r.loss)}, ${r.tpNote}`;
+      if (practice()) {
+        const q = A().pos.find(x => x.ticket === p.ticket); if (!q) return;
+        q.sl = r.sl; q.tp = r.tp; if (!RP.on) paperSave();
+        tbNote(msg, 'pl-up'); renderBar(true); bump(); return;
+      }
+      const res = await postJSON('/api/modify', { ticket: p.ticket, sl: r.sl, tp: r.tp });
+      if (res.ok) { p.sl = r.sl; p.tp = r.tp; tbNote(msg, 'pl-up'); renderBar(true); bump(); accTick(); return; }
+      if (tries === 1) tbNote(`Flip SL could not move #${p.ticket}: ${res.error || 'MT5 did not accept it'}`, 'pl-dn');
+      else await new Promise(r2 => setTimeout(r2, 250));
+    }
+  } finally { fslBusy.delete(p.ticket); }
+}
+function fslScan() {                                   // called whenever the positions list refreshes
+  if (!ACC || !ACC.positions) return;
+  if (!fslBase) { ACC.positions.forEach(p => fslSeen.add(p.ticket)); fslBase = true; return; }   // positions that already existed are not touched
+  for (const p of ACC.positions) {
+    if (fslSeen.has(p.ticket)) continue;
+    fslSeen.add(p.ticket);
+    if (FSL.on) fslApply(p);
+  }
+}
+function fslUI() {
+  $('fslst').textContent = FSL.on ? 'ON' : 'off'; $('fslbtn').style.background = FSL.on ? '#ff9800' : ''; $('fslbtn').style.color = FSL.on ? '#000' : '';
+  const sm = inds.filter(i => i.type === 'smma' && i.vals && i.vals[0]);
+  const opts = '<option value="auto">Automatic (the SMMA that colours the candles)</option>' + sm.map(i => `<option value="${i.id}">SMMA ${i.len || ''}${i.paint ? ' (colours the candles)' : ''}</option>`).join('');
+  if ($('fsl_src').innerHTML !== opts) $('fsl_src').innerHTML = opts;
+  $('fsl_src').value = FSL.src; if ($('fsl_src').value !== String(FSL.src)) $('fsl_src').value = 'auto';
+  $('fsl_rr').value = FSL.rr; $('fsl_rrc').style.display = FSL.rr === 'custom' ? '' : 'none'; $('fsl_rrc').value = FSL.rrc;
+  $('fsl_hl').value = FSL.hl; $('fsl_buf').value = FSL.buf; $('fsl_max').value = FSL.max; $('fsl_tight').checked = !!FSL.tight;
+  const ind = fslSmma(), sellL = fslLevel(false), buyL = fslLevel(true);
+  $('fsl_info').innerHTML = !ind ? '<span style="color:#ef5350">No SMMA on the chart. Add one in Indicators.</span>'
+    : `Reading SMMA ${ind.len || ''} &middot; right now: SELL stop would go to <b>${sellL ? fmt(sellL.price) : '-'}</b>, BUY stop to <b>${buyL ? fmt(buyL.price) : '-'}</b>` +
+      `<div style="color:var(--muted)">Works for market, limit, stop and drawing orders, on the live and practice accounts. It never touches positions that were already open.</div>`;
+}
+function fslToggle(on) {
+  FSL.on = on; fslSave();
+  if (on && ACC && ACC.positions) ACC.positions.forEach(p => fslSeen.add(p.ticket));        // only new fills from now on
+  fslUI(); bump();
+}
+$('fslbtn').onclick = () => fslToggle(!FSL.on);
+$('fslcfg').onclick = e => {
+  e.stopPropagation(); const p = $('fslpop');
+  if (p.style.display === 'block') { p.style.display = 'none'; return; }
+  const r = $('fslbtn').getBoundingClientRect(); p.style.left = Math.max(8, Math.min(r.left, innerWidth - 360)) + 'px'; p.style.top = (r.bottom + 6) + 'px';
+  fslUI(); p.style.display = 'block';
+};
+document.addEventListener('mousedown', e => { if (!$('fslpop').contains(e.target) && !$('fslcfg').contains(e.target)) $('fslpop').style.display = 'none'; });
+$('fsl_src').onchange = () => { FSL.src = $('fsl_src').value; fslSave(); fslUI(); };
+$('fsl_rr').onchange = () => { FSL.rr = $('fsl_rr').value; fslSave(); fslUI(); };
+$('fsl_rrc').oninput = () => { FSL.rrc = Number($('fsl_rrc').value); fslSave(); };
+$('fsl_hl').onchange = () => { FSL.hl = $('fsl_hl').value; fslSave(); fslUI(); };
+$('fsl_buf').oninput = () => { FSL.buf = Number($('fsl_buf').value) || 0; fslSave(); };
+$('fsl_max').oninput = () => { FSL.max = Number($('fsl_max').value) || 0; fslSave(); };
+$('fsl_tight').onchange = () => { FSL.tight = $('fsl_tight').checked; fslSave(); };
+setInterval(() => { if ($('fslpop').style.display === 'block') fslUI(); }, 1000);
+let fslFast = 0;                                       // after any order: check the account quickly so the stop moves at once
+setInterval(() => { if (FSL.on && SRC === 'MT5' && !RP.on && !paperOn() && (Date.now() < fslFast || (ACC && ACC.orders && ACC.orders.length))) accTick(); }, 400);
 async function accTick() {
   if (paperOn() && symbol) { paperTick(); if (plan) updatePlan(); renderBar(); bump(); return; }
   if (SRC !== 'MT5' || accBusy || !symbol || RP.on) return;          // replay: ACC is the practice account
   accBusy = true;
   try {
     const sym = symbol, j = await (await fetch(`/api/account?symbol=${encodeURIComponent(sym)}`)).json();
-    if (sym === symbol) { ACC = j; accAt = Date.now(); }
+    if (sym === symbol) { ACC = j; accAt = Date.now(); fslScan(); }
   } catch (e) { /* server busy; next tick retries */ }
   finally { accBusy = false; }
   if (plan) updatePlan();
@@ -4143,6 +4270,7 @@ function updatePlan() {
     const pc = ACC.balance > 0 ? ` (${(r.loss / ACC.balance * 100).toFixed(1)}% of balance)` : '';
     h += r.limit ? `<div>${r.kind === 'stop' ? 'Stop' : 'Limit'} entry <b style="color:#2962ff">${fmt(r.entry)}</b> <span class="m">${r.kind === 'stop' ? 'fires when the price reaches it' : 'waits for the price'} &middot; drag the blue line</span></div>`
       : `<div>Entry &asymp; <b>${fmt(r.entry)}</b> <span class="m">${buy ? 'ask' : 'bid'}, market price</span></div>`;
+    if (FSL.on) { const fl = fslLevel(buy); h += `<div style="color:#ff9800">&#9889; Flip SL is ON: once filled, the stop moves to the ${buy ? 'low of the last red' : 'high of the last green'} candle` + (fl ? ` (now ${fmt(fl.price)})` : '') + (fslRR() ? ` and TP to ${fslRR()}R` : '') + '.</div>'; }
     h += `<div>Stop loss <b style="color:#ef5350">${fmt(r.sl)}</b> <span class="m">${fmt(r.dist)} away &middot; ` +
          (RISK.lotMode === 'fixed' ? 'moves with price' : plan.slManual != null ? 'you placed it' : 'drag the red line to move it') + '</span></div>';
     h += r.slc >= 0
@@ -4177,6 +4305,7 @@ async function submitOrder(o) {
     return { ok: true, msg: `Practice ${buy ? 'buy' : 'sell'} ${p.volume} at ${fmt(p.open)}, SL ${fmt(o.sl)}` + (o.tp ? `, TP ${fmt(o.tp)}` : '') + ` (risk ${money(o.loss)}).` };
   }
   if (!RISK.live) return { ok: false, msg: 'Tick "Live orders on" first.' };
+  fslFast = Date.now() + 20000;
   let res;
   try {
     res = await (await fetch('/api/order', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Chart-Token': ACC.token },
@@ -4394,6 +4523,7 @@ window.addEventListener('resize', () => { if (plan) keepPanelOnScreen(); });
 $('buybtn').onclick = () => openPlan('buy');
 $('sellbtn').onclick = () => openPlan('sell');
 $('pendbtn').onclick = () => openPlan('buy', true);
+fslUI();
 $('tp_x').onclick = $('tp_cancel').onclick = closePlan;
 $('tp_go').onclick = sendOrder;
 $('tp_rm').onchange = () => { RISK.mode = $('tp_rm').value; $('tp_rv').value = RISK.mode === 'pct' ? RISK.pct : RISK.usd; saveRisk(); updatePlan(); bump(); };
@@ -4980,6 +5110,7 @@ function rpView() {                       // the trades panel / position lines s
           orders: (a.pend || []).filter(q => q.symbol === symbol) };
   HIST = a.deals;
   if (tbTab === 'hist') renderHist();
+  fslScan();
 }
 function drawReplayPick(pw, ph) {          // while choosing the start: a line at the candle, the future greyed out
   if (!RP.picking || RP.hx == null) return;
