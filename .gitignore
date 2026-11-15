@@ -17,4 +17,3 @@ __pycache__/
 *.pyc
 *.log
 broker_tz.json
-lightweight-charts.js
