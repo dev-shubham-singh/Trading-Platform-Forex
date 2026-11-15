@@ -88,6 +88,7 @@
   #vcwrap input, #keepwrap input { margin:0; cursor:pointer; }
   .tool.tbuy { color:#fff; background:#26a69a; font-weight:600; padding:4px 12px; }
   .tool.tsell { color:#fff; background:#ef5350; font-weight:600; padding:4px 12px; }
+  .tool.tpend { color:#fff; background:#2962ff; font-weight:600; padding:4px 10px; } .tool.tpend:hover { background:#1e4fd0; } .tool.tpend.on { box-shadow:0 0 0 2px var(--text) inset; }
   .tool.tbuy:hover { background:#1f8f84; } .tool.tsell:hover { background:#d84542; }
   .tool.tbuy.on, .tool.tsell.on { box-shadow:0 0 0 2px var(--text) inset; }
   #tradep { position:absolute; top:64px; left:12px; width:310px; z-index:6; background:var(--panel); color:var(--text);
@@ -224,6 +225,7 @@
   <div class="sep mt5only"></div>
  <span class="mt5only" style="display:inline-flex;gap:4px;white-space:nowrap">
   <button class="tool tbuy mt5only" id="buybtn" title="Plan a buy: shows your stop loss and lot size from your risk. Nothing is sent until you press Confirm.">Buy</button>
+  <button class="tool tpend mt5only" id="pendbtn" title="Pending order: choose Buy or Sell and an entry price; the order waits for the price to reach it. It picks LIMIT (entry on the cheap side of the price) or STOP (breakout side) for you.">&#9201; Pending</button>
   <button class="tool tsell mt5only" id="sellbtn" title="Plan a sell: shows your stop loss and lot size from your risk. Nothing is sent until you press Confirm.">Sell</button></span>
   <div class="sep"></div>
   <button class="tool" id="winbtn" title="Open another chart window (e.g. 5m) to put on your other screen">&#10697; New window</button>
@@ -282,8 +284,8 @@
     </div>
     <div id="tradep" style="display:none">
       <div class="tph" id="tp_head" title="Drag to move this panel"><b id="tp_title">BUY</b><span id="tp_acc"></span><button id="tp_x" title="Cancel (Esc)">&times;</button></div>
-      <div class="tpr"><label>Order type</label><select id="tp_ot"><option value="market">Market (now)</option><option value="limit">Limit (pending)</option></select>
-        <input id="tp_lp" type="number" step="any" min="0" title="Limit price: type it or drag the blue line on the chart" style="width:84px"></div>
+      <div class="tpr" id="tp_pendrow"><label>Pending</label><select id="tp_side"><option value="buy">Buy</option><option value="sell">Sell</option></select>
+        <input id="tp_lp" type="number" step="any" min="0" title="Entry price: type it or drag the blue line on the chart" style="width:90px"><span id="tp_kind" style="color:var(--muted);font-size:11px"></span></div>
       <div class="tpr"><label>Risk / trade</label><input id="tp_rv" type="number" step="any" min="0">
         <select id="tp_rm"><option value="pct">% of balance</option><option value="usd">fixed amount</option></select></div>
       <div class="tpr"><label>Lot size</label><select id="tp_lm"><option value="auto">Auto from risk + SL</option><option value="fixed">Fixed lot</option></select>
@@ -3334,7 +3336,7 @@ chartEl.addEventListener('pointerdown', e => {
     const ys = series.priceToCoordinate(planCur.sl);
     if (ys != null && Math.abs(y - ys) < 7) { e.stopPropagation(); e.preventDefault(); lockChart(true); drag = { kind: 'plansl' }; return; }
   }
-  if (plan && planCur && plan.type === 'limit') {      // grab the planned limit price line
+  if (plan && planCur && plan.type === 'pending') {      // grab the planned entry price line
     const ye = series.priceToCoordinate(planCur.entry);
     if (ye != null && Math.abs(y - ye) < 7) { e.stopPropagation(); e.preventDefault(); lockChart(true); drag = { kind: 'planlimit' }; return; }
   }
@@ -4034,10 +4036,16 @@ function slCandle(buy, sl) {       // the most recent candle whose real low (buy
     if (buy ? raw[i][3] <= sl : raw[i][2] >= sl) return i;
   return -1;
 }
+function pendKind(buy, price, stops) {   // below the price a buy waits as a LIMIT, above it as a STOP (a sell is the reverse)
+  const ref = buy ? status.ask : status.bid;
+  if (buy) return price < ref - stops ? 'limit' : price > ref + stops ? 'stop' : null;
+  return price > ref + stops ? 'limit' : price < ref - stops ? 'stop' : null;
+}
 function computePlan() {
   if (!plan || !ACC || ACC.error || !ACC.sym || !status || status.bid == null) return null;
-  const S = ACC.sym, buy = plan.side === 'buy', lim = plan.type === 'limit' && plan.limit > 0, entry = lim ? plan.limit : buy ? status.ask : status.bid, risk = riskAmount(), vpp = S.vpp;
+  const S = ACC.sym, buy = plan.side === 'buy', lim = plan.type === 'pending' && plan.limit > 0, entry = lim ? plan.limit : buy ? status.ask : status.bid, risk = riskAmount(), vpp = S.vpp;
   const r = { buy, entry, risk, warn: [], ok: true, limit: lim };
+  if (lim) r.kind = pendKind(buy, entry, S.stops);
   if (!(vpp > 0)) { r.warn.push('MT5 did not give the value of a price move for this symbol.'); r.ok = false; return r; }
   if (!(risk > 0)) { r.warn.push('Set your risk per trade.'); r.ok = false; return r; }
   const c = commLot();                    // round-trip commission per 1.00 lot: part of what you lose at the SL
@@ -4066,11 +4074,9 @@ function computePlan() {
   }
   r.dist = Math.abs(entry - r.sl); r.comm = r.lot * c;
   r.priceLoss = r.lot * r.dist * vpp; r.loss = r.priceLoss + r.comm;
-  if (lim) {
-    if (buy ? !(entry < status.ask - S.stops) : !(entry > status.bid + S.stops)) {
-      r.warn.push(`A ${buy ? 'buy' : 'sell'} limit must be ${buy ? 'below' : 'above'} the current price (${fmt(buy ? status.ask : status.bid)})` + (S.stops ? ` by at least ${fmt(S.stops)}.` : '.'));
-      r.ok = false; r.wrongSide = true;
-    }
+  if (lim && !r.kind) {
+    r.warn.push(`The entry is too close to the current price (${fmt(buy ? status.ask : status.bid)})` + (S.stops ? `: keep at least ${fmt(S.stops)} away.` : '. Move it away, or use Buy / Sell for a market order.'));
+    r.ok = false; r.wrongSide = true;
   }
   if (r.ok && (lim ? (buy ? !(r.sl < entry - S.stops) : !(r.sl > entry + S.stops)) : (buy ? !(r.sl < status.bid - S.stops) : !(r.sl > status.ask + S.stops)))) {
     r.warn.push(`The SL must be ${buy ? 'below' : 'above'} the price` + (S.stops ? ` by at least ${fmt(S.stops)} (broker minimum).` : '.'));
@@ -4096,28 +4102,28 @@ function computePlan() {
   if (ACC.accTrade === false) { r.warn.push('This MT5 account is not allowed to trade (investor / read-only login?).'); r.ok = false; }
   return r;
 }
-function openPlan(side) {
-  if (plan && plan.side === side && !plan.sending) return closePlan();
+function openPlan(side, pend) {
+  if (plan && !plan.sending && (pend ? plan.type === 'pending' : plan.type !== 'pending' && plan.side === side)) return closePlan();
   if (RP.on) replayPause();
-  plan = { side, type: 'market', limit: null, slManual: null, sending: false, done: false, id: Date.now().toString(36) + Math.random().toString(36).slice(2) };
-  $('buybtn').classList.toggle('on', side === 'buy'); $('sellbtn').classList.toggle('on', side === 'sell');
+  plan = { side, type: pend ? 'pending' : 'market', limit: null, slManual: null, sending: false, done: false, id: Date.now().toString(36) + Math.random().toString(36).slice(2) };
+  $('buybtn').classList.toggle('on', !pend && side === 'buy'); $('sellbtn').classList.toggle('on', !pend && side === 'sell'); $('pendbtn').classList.toggle('on', !!pend);
   $('tp_title').textContent = (side === 'buy' ? 'BUY ' : 'SELL ') + symbol;
   $('tp_title').style.color = side === 'buy' ? '#26a69a' : '#ef5350';
   $('tp_rm').value = RISK.mode; $('tp_rv').value = RISK.mode === 'pct' ? RISK.pct : RISK.usd;
   $('tp_lm').value = RISK.lotMode; $('tp_lot').value = RISK.lot; $('tp_slb').value = RISK.slBars; $('tp_rr').value = RISK.rr;
-  $('tp_ot').value = 'market'; $('tp_live').checked = !!RISK.live; $('tp_msg').textContent = '';
+  if (pend) { $('tp_side').value = side; pendDefault(); } $('tp_live').checked = !!RISK.live; $('tp_msg').textContent = '';
   showComm();
   $('tradep').style.display = 'block';
   layoutPlanForm(); accTick(); updatePlan(); keepPanelOnScreen(); bump();
 }
 function closePlan() {
   plan = null; planCur = null;
-  $('tradep').style.display = 'none'; $('buybtn').classList.remove('on'); $('sellbtn').classList.remove('on');
+  $('tradep').style.display = 'none'; $('buybtn').classList.remove('on'); $('sellbtn').classList.remove('on'); $('pendbtn').classList.remove('on');
   if (drag && drag.kind === 'plansl') { drag = null; lockChart(false); }
   bump();
 }
 function layoutPlanForm() {
-  $('tp_lp').style.display = plan && plan.type === 'limit' ? '' : 'none';
+  $('tp_pendrow').style.display = plan && plan.type === 'pending' ? 'flex' : 'none';
   $('tp_lot').style.display = RISK.lotMode === 'fixed' ? '' : 'none';
   $('tp_slrow').style.display = RISK.lotMode === 'auto' ? '' : 'none';
 }
@@ -4125,12 +4131,17 @@ function updatePlan() {
   if (!plan) return;
   showComm();
   const old = planCur, r = planCur = computePlan(), buy = plan.side === 'buy';
+  if (plan.type === 'pending') {
+    const kd = r && r.kind ? r.kind.toUpperCase() : 'PENDING';
+    $('tp_title').textContent = `${buy ? 'BUY' : 'SELL'} ${kd} ${symbol}`;
+    $('tp_kind').textContent = r && r.kind ? (r.kind === 'limit' ? `waits for a ${buy ? 'dip' : 'rally'}` : `triggers on a ${buy ? 'rise' : 'fall'}`) : '';
+  }
   if (!old || !r || old.sl !== r.sl || old.entry !== r.entry || old.lot !== r.lot || old.tp !== r.tp || old.slc !== r.slc) bump();
   $('tp_acc').textContent = ACC && !ACC.error ? `Balance ${money(ACC.balance)}` : ACC && ACC.error ? ACC.error : 'reading account...';
   let h = '';
   if (r) {
     const pc = ACC.balance > 0 ? ` (${(r.loss / ACC.balance * 100).toFixed(1)}% of balance)` : '';
-    h += r.limit ? `<div>Limit entry <b style="color:#2962ff">${fmt(r.entry)}</b> <span class="m">waits for the price &middot; drag the blue line</span></div>`
+    h += r.limit ? `<div>${r.kind === 'stop' ? 'Stop' : 'Limit'} entry <b style="color:#2962ff">${fmt(r.entry)}</b> <span class="m">${r.kind === 'stop' ? 'fires when the price reaches it' : 'waits for the price'} &middot; drag the blue line</span></div>`
       : `<div>Entry &asymp; <b>${fmt(r.entry)}</b> <span class="m">${buy ? 'ask' : 'bid'}, market price</span></div>`;
     h += `<div>Stop loss <b style="color:#ef5350">${fmt(r.sl)}</b> <span class="m">${fmt(r.dist)} away &middot; ` +
          (RISK.lotMode === 'fixed' ? 'moves with price' : plan.slManual != null ? 'you placed it' : 'drag the red line to move it') + '</span></div>';
@@ -4143,23 +4154,23 @@ function updatePlan() {
                    (r.comm > 0 ? ' <span class="m">after commission</span>' : '') + ` <span class="m">(${(r.gain / r.loss).toFixed(2)} R)</span></div>`;
     h += `<div class="m">Your risk: ${money(r.risk)}${RISK.mode === 'pct' ? ` (${RISK.pct}% of balance)` : ''}</div>`;
     r.warn.forEach(w => h += `<div class="w">${w}</div>`);
-    if (r.wrongSide) h += `<div style="margin-top:4px"><button class="tomkt" style="background:#2962ff;color:#fff;border:0;border-radius:4px;padding:4px 8px;cursor:pointer">${buy ? 'Buy' : 'Sell'} at market instead</button> <button class="tonear" style="background:none;color:var(--text);border:1px solid var(--line);border-radius:4px;padding:4px 8px;cursor:pointer">Put the limit just ${buy ? 'below' : 'above'} the price</button></div>`;
+    if (r.wrongSide) h += `<div style="margin-top:4px"><button class="tomkt" style="background:#2962ff;color:#fff;border:0;border-radius:4px;padding:4px 8px;cursor:pointer">${buy ? 'Buy' : 'Sell'} at market instead</button></div>`;
   } else h = '<div class="m">Waiting for the account and price...</div>';
   if ($('tp_info').innerHTML !== h) $('tp_info').innerHTML = h;
   const go = $('tp_go');
   go.style.background = buy ? '#26a69a' : '#ef5350';
   go.textContent = plan.done ? (practice() ? 'Practice trade placed' : 'Order placed') : plan.sending ? 'Sending...' :
-    `Confirm ${buy ? 'BUY' : 'SELL'}${plan.type === 'limit' ? ' LIMIT' : ''}${r && r.lot ? ' ' + r.lot + ' lot' : ''}${practice() ? ' (practice)' : ''}`;
+    `Confirm ${buy ? 'BUY' : 'SELL'}${plan.type === 'pending' ? ' ' + (r && r.kind ? r.kind.toUpperCase() : 'PENDING') : ''}${r && r.lot ? ' ' + r.lot + ' lot' : ''}${practice() ? ' (practice)' : ''}`;
   go.disabled = !r || !r.ok || plan.sending || plan.done || (!RISK.live && !practice());   // done: never send the same plan twice
   go.title = !RISK.live ? 'Tick "Live orders on" first' : '';
 }
 /* One place that sends an order (market or limit): a practice trade on replay / Fyers, a real order on MT5. */
 async function submitOrder(o) {
-  const buy = o.side === 'buy', lim = o.type === 'limit';
+  const buy = o.side === 'buy', lim = o.type !== 'market', kw = o.type;
   if (practice()) {
     if (lim) {
       const q = rpPlace(o);
-      return { ok: true, msg: `Practice ${buy ? 'buy' : 'sell'} limit ${q.volume} at ${fmt(q.price)}, SL ${fmt(o.sl)}` + (o.tp ? `, TP ${fmt(o.tp)}` : '') +
+      return { ok: true, msg: `Practice ${buy ? 'buy' : 'sell'} ${kw} ${q.volume} at ${fmt(q.price)}, SL ${fmt(o.sl)}` + (o.tp ? `, TP ${fmt(o.tp)}` : '') +
         ` (risk ${money(o.loss)}). ${RP.on ? 'Not sent to MT5.' : 'Paper order: nothing is sent to Fyers.'}` };
     }
     const p = rpOpen(o.side, o.lot, o.sl, o.tp || 0); renderBar(true);
@@ -4169,12 +4180,12 @@ async function submitOrder(o) {
   let res;
   try {
     res = await (await fetch('/api/order', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Chart-Token': ACC.token },
-      body: JSON.stringify({ symbol, side: o.side, type: lim ? 'limit' : 'market', price: lim ? o.price : undefined, volume: o.lot, sl: o.sl, tp: o.tp || 0,
+      body: JSON.stringify({ symbol, side: o.side, type: o.type, price: lim ? o.price : undefined, volume: o.lot, sl: o.sl, tp: o.tp || 0,
                              risk: o.loss, commission: o.commLot, id: o.id || (Date.now().toString(36) + Math.random().toString(36).slice(2)) }) })).json();
   } catch (e) { res = { error: 'Lost connection to the chart server. Check MT5 to see if the order went through.' }; }
   if (!res.ok) return { ok: false, msg: res.error || 'The order was not placed.' };
   accTick(); histTick();
-  return { ok: true, msg: lim ? `${buy ? 'Buy' : 'Sell'} limit ${res.volume} ${symbol} at ${fmt(res.price)} placed (ticket ${res.ticket}), SL ${fmt(o.sl)}` + (o.tp ? `, TP ${fmt(o.tp)}` : '') + `, risk ${money(res.risk)}`
+  return { ok: true, msg: lim ? `${buy ? 'Buy' : 'Sell'} ${kw} ${res.volume} ${symbol} at ${fmt(res.price)} placed (ticket ${res.ticket}), SL ${fmt(o.sl)}` + (o.tp ? `, TP ${fmt(o.tp)}` : '') + `, risk ${money(res.risk)}`
     : `${buy ? 'Bought' : 'Sold'} ${res.volume} ${symbol} at ${fmt(res.price)}, SL ${fmt(o.sl)}` + (o.tp ? `, TP ${fmt(o.tp)}` : '') + ` (ticket ${res.ticket}, risk ${money(res.risk)})` };
 }
 async function cancelPending(ticket) {
@@ -4193,7 +4204,7 @@ function drawPending(pw) {
   for (const o of ACC.orders) {
     const y = series.priceToCoordinate(o.price); if (y == null) continue;
     const loss = o.sl ? o.volume * Math.abs(o.price - o.sl) * vpp + o.volume * c : 0;
-    const txt = `${o.side.toUpperCase()} LIMIT ${o.volume}` + (loss ? `  risk ${money(loss)}` : '');
+    const txt = `${o.side.toUpperCase()} ${(o.kind || 'limit').toUpperCase()} ${o.volume}` + (loss ? `  risk ${money(loss)}` : '');
     hLine(y, pw, '#2962ff', 1.5, [6, 3]); priceTag(y, pw, txt, '#2962ff', true);
     ctx.font = '11px sans-serif';
     const tw = ctx.measureText(txt).width + 10, bx = pw - tw - 4 - 22;
@@ -4288,20 +4299,21 @@ function rrPanel() {
   if (q) q.warn.forEach(w => h += `<div class="w">${w}</div>`);
   if ($('rrp_info').innerHTML !== h) $('rrp_info').innerHTML = h;
   const px = status && status.bid != null ? (d.long ? status.ask : status.bid) : null;
-  const limOK = q && q.ok && q.lot && px != null && (d.long ? d.p1.p < px : d.p1.p > px);
-  $('rrp_lim').disabled = rrBusy || !limOK; $('rrp_lim').textContent = limOK || !q || px == null ? `Place ${d.long ? 'BUY' : 'SELL'} LIMIT` : `Entry must be ${d.long ? 'below' : 'above'} the price`;
+  const kd = px != null && ACC && ACC.sym ? pendKind(!!d.long, d.p1.p, ACC.sym.stops) : null, limOK = q && q.ok && q.lot && kd;
+  $('rrp_lim').disabled = rrBusy || !limOK; $('rrp_lim').textContent = kd || !q || px == null ? `Place ${d.long ? 'BUY' : 'SELL'} ${kd ? kd.toUpperCase() : 'pending'}` : 'Entry is too close to the price';
   $('rrp_mkt').disabled = rrBusy || !q || !q.ok || px == null; $('rrp_mkt').textContent = `${d.long ? 'Buy' : 'Sell'} at market`;
 }
 async function rrSend(type) {
   const d = selected(); if (!d || d.type !== 'rr' || rrBusy) return;
   const px = d.long ? status.ask : status.bid, k = Math.pow(10, digits), rd = v => Math.round(v * k) / k;
-  const q = rrCalc(d, type === 'limit' ? rd(d.p1.p) : px); if (!q || !q.ok || !q.lot) return;
+  const kd = type === 'market' ? 'market' : pendKind(!!d.long, rd(d.p1.p), ACC && ACC.sym ? ACC.sym.stops : 0); if (!kd) return; type = kd;
+  const q = rrCalc(d, type !== 'market' ? rd(d.p1.p) : px); if (!q || !q.ok || !q.lot) return;
   rrBusy = true; rrPanel(); $('rrp_msg').style.color = 'var(--muted)'; $('rrp_msg').textContent = 'Sending...';
   const res = await submitOrder({ side: d.long ? 'buy' : 'sell', type, price: rd(d.p1.p), lot: q.lot, sl: rd(d.sl), tp: rd(d.tp), loss: q.loss, commLot: q.c });
   rrBusy = false;
   $('rrp_msg').style.color = res.ok ? (practice() ? '#ff9800' : '#26a69a') : '#ef5350'; $('rrp_msg').textContent = res.msg; rrPanel(); bump();
 }
-$('rrp_lim').onclick = () => rrSend('limit');
+$('rrp_lim').onclick = () => rrSend('pending');
 $('rrp_mkt').onclick = () => rrSend('market');
 $('rrp_rv').oninput = () => { const d = selected(), v = Number($('rrp_rv').value); if (d && d.type === 'rr' && v >= 0) { d.risk = v; saveDrawings(); } };
 $('rrp_rm').onchange = () => { const d = selected(); if (d && d.type === 'rr') { d.rmode = $('rrp_rm').value; d.risk = d.rmode === 'pct' ? 1 : (SRC === 'MT5' ? 10 : 1000); $('rrp_rv').value = d.risk; saveDrawings(); } };
@@ -4314,10 +4326,10 @@ async function sendOrder() {
   const r = computePlan();
   if (!plan || !r || !r.ok || plan.sending || plan.done || (!RISK.live && !practice())) return;
   const side = plan.side, buy = side === 'buy';
-  if (plan.type === 'limit') {                     // pending order at your price
+  if (plan.type === 'pending') {                   // pending order at your price
     plan.sending = true; updatePlan();
     $('tp_msg').style.color = 'var(--muted)'; $('tp_msg').textContent = 'Sending the limit order...';
-    const res = await submitOrder({ side, type: 'limit', price: r.entry, lot: r.lot, sl: r.sl, tp: r.tp || 0, loss: r.loss, commLot: r.commLot, id: plan.id });
+    const res = await submitOrder({ side, type: r.kind, price: r.entry, lot: r.lot, sl: r.sl, tp: r.tp || 0, loss: r.loss, commLot: r.commLot, id: plan.id });
     if (!plan) return;
     plan.sending = false; if (res.ok) plan.done = true;
     $('tp_msg').style.color = res.ok ? (practice() ? '#ff9800' : '#26a69a') : '#ef5350'; $('tp_msg').textContent = res.msg;
@@ -4381,27 +4393,26 @@ window.addEventListener('resize', () => { if (plan) keepPanelOnScreen(); });
 })();
 $('buybtn').onclick = () => openPlan('buy');
 $('sellbtn').onclick = () => openPlan('sell');
+$('pendbtn').onclick = () => openPlan('buy', true);
 $('tp_x').onclick = $('tp_cancel').onclick = closePlan;
 $('tp_go').onclick = sendOrder;
 $('tp_rm').onchange = () => { RISK.mode = $('tp_rm').value; $('tp_rv').value = RISK.mode === 'pct' ? RISK.pct : RISK.usd; saveRisk(); updatePlan(); bump(); };
 $('tp_rv').oninput = () => { const v = Number($('tp_rv').value); if (v >= 0) { RISK[RISK.mode === 'pct' ? 'pct' : 'usd'] = v; saveRisk(); updatePlan(); bump(); } };
-$('tp_ot').onchange = () => {
-  if (!plan) return;
-  plan.type = $('tp_ot').value;
-  if (plan.type === 'limit' && status && status.bid != null) {     // start a little way from the price, like a real limit
-    const off = Math.max(avgRange(50) * 3, ACC && ACC.sym ? ACC.sym.point * 20 : 0), k = Math.pow(10, digits);
-    plan.limit = Math.round((plan.side === 'buy' ? status.ask - off : status.bid + off) * k) / k; plan.slManual = null;
-    $('tp_lp').value = plan.limit;
-  }
+function pendDefault() {                       // start the entry a little way from the price (a limit); drag or type it anywhere
+  if (!plan || !status || status.bid == null) return;
+  const off = Math.max(avgRange(50) * 3, ACC && ACC.sym ? ACC.sym.point * 20 : Math.pow(10, -digits) * 20), k = Math.pow(10, digits);
+  plan.limit = Math.round((plan.side === 'buy' ? status.ask - off : status.bid + off) * k) / k; plan.slManual = null;
+  $('tp_lp').value = plan.limit;
+}
+$('tp_side').onchange = () => {
+  if (!plan || plan.type !== 'pending') return;
+  plan.side = $('tp_side').value; pendDefault();
+  $('tp_title').style.color = plan.side === 'buy' ? '#26a69a' : '#ef5350';
   layoutPlanForm(); updatePlan(); bump();
 };
 $('tp_info').addEventListener('click', e => {
   if (!plan) return;
-  if (e.target.classList.contains('tomkt')) { plan.type = 'market'; $('tp_ot').value = 'market'; layoutPlanForm(); updatePlan(); bump(); }
-  if (e.target.classList.contains('tonear') && status && status.bid != null) {
-    const k = Math.pow(10, digits), st = ACC && ACC.sym ? Math.max(ACC.sym.stops, ACC.sym.point) : Math.pow(10, -digits);
-    plan.limit = Math.round((plan.side === 'buy' ? status.ask - st * 2 : status.bid + st * 2) * k) / k; plan.slManual = null; $('tp_lp').value = plan.limit; updatePlan(); bump();
-  }
+  if (e.target.classList.contains('tomkt')) { plan.type = 'market'; $('tp_title').textContent = (plan.side === 'buy' ? 'BUY ' : 'SELL ') + symbol; $('pendbtn').classList.remove('on'); $(plan.side === 'buy' ? 'buybtn' : 'sellbtn').classList.add('on'); layoutPlanForm(); updatePlan(); bump(); }
 });
 $('tp_lp').oninput = () => { const v = Number($('tp_lp').value); if (plan && v > 0) { plan.limit = v; plan.slManual = null; updatePlan(); bump(); } };
 $('tp_lm').onchange = () => { RISK.lotMode = $('tp_lm').value; saveRisk(); layoutPlanForm(); updatePlan(); bump(); };
@@ -4477,7 +4488,7 @@ function drawPlan(pw) {
     }
   }
   hLine(ye, pw, '#2962ff', 1, [5, 4]);
-  priceTag(ye, pw, `${r.buy ? 'BUY' : 'SELL'}${r.limit ? ' LIMIT' : ''} ${r.lot} @ ${fmt(r.entry)}` + (r.limit ? '  \u2195 drag' : ''), '#2962ff', true);
+  priceTag(ye, pw, `${r.buy ? 'BUY' : 'SELL'}${r.limit ? ' ' + (r.kind || 'pending').toUpperCase() : ''} ${r.lot} @ ${fmt(r.entry)}` + (r.limit ? '  \u2195 drag' : ''), '#2962ff', true);
   hLine(ys, pw, '#ef5350', 2);
   priceTag(ys, pw, `SL ${fmt(r.sl)}  -${money(r.loss)}` + (RISK.lotMode === 'auto' ? '  ↕ drag' : ''), '#ef5350', true);
 }
@@ -4899,7 +4910,7 @@ function rpOpen(side, lot, sl, tp, at) {
 }
 function rpPlace(o) {                   // a practice limit order waits until the price reaches it
   const a = A(); a.pend = a.pend || [];
-  const q = { ticket: a.next++, symbol, side: o.side, volume: o.lot, price: o.price, sl: o.sl, tp: o.tp || 0, kind: 'limit', time: nowT() };
+  const q = { ticket: a.next++, symbol, side: o.side, volume: o.lot, price: o.price, sl: o.sl, tp: o.tp || 0, kind: o.type === 'stop' ? 'stop' : 'limit', time: nowT() };
   a.pend.push(q); if (!RP.on) paperSave(); rpView(); bump();
   return q;
 }
@@ -4909,10 +4920,11 @@ function rpFillLimits(bid, ask) {        // live paper account: fill a limit whe
   for (const q of (a.pend || []).slice()) {
     if (q.symbol !== symbol) continue;
     const buy = q.side === 'buy';
-    if (buy ? ask <= q.price : bid >= q.price) {
+    const stop = q.kind === 'stop', hit = stop ? (buy ? ask >= q.price : bid <= q.price) : (buy ? ask <= q.price : bid >= q.price);
+    if (hit) {
       a.pend = a.pend.filter(x => x !== q);
-      rpOpen(q.side, q.volume, q.sl, q.tp, buy ? Math.min(q.price, ask) : Math.max(q.price, bid)); n++;
-      tbNote(`Paper ${q.side} limit filled at ${fmt(q.price)}`, '');
+      rpOpen(q.side, q.volume, q.sl, q.tp, stop ? (buy ? Math.max(q.price, ask) : Math.min(q.price, bid)) : (buy ? Math.min(q.price, ask) : Math.max(q.price, bid))); n++;
+      tbNote(`Paper ${q.side} ${q.kind || 'limit'} filled at ${fmt(q.price)}`, '');
     }
   }
   return n;
@@ -4930,10 +4942,11 @@ function rpCheckBar(row) {                // real candle [id, o, h, l, c, t]: SL
   const sp = RP.spread;
   for (const q of (RP.pend || []).slice()) {                           // limit orders reached by this candle
     const buy = q.side === 'buy';
-    if (buy ? row[3] <= q.price : row[2] + sp >= q.price) {
+    const stop = q.kind === 'stop', o1 = row[1] + (buy ? 0 : sp);
+    if (stop ? (buy ? row[2] >= q.price : row[3] + sp <= q.price) : (buy ? row[3] <= q.price : row[2] + sp >= q.price)) {
       RP.pend = RP.pend.filter(x => x !== q);
-      rpOpen(q.side, q.volume, q.sl, q.tp, buy ? Math.min(q.price, row[1]) : Math.max(q.price, row[1] + sp));
-      tbNote(`Practice ${q.side} limit filled at ${fmt(q.price)}`, '');
+      rpOpen(q.side, q.volume, q.sl, q.tp, stop ? (buy ? Math.max(q.price, o1) : Math.min(q.price, o1)) : (buy ? Math.min(q.price, o1) : Math.max(q.price, o1)));
+      tbNote(`Practice ${q.side} ${q.kind || 'limit'} filled at ${fmt(q.price)}`, '');
     }
   }
   for (const p of RP.pos.slice()) {
