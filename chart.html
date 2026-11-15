@@ -4069,7 +4069,7 @@ function computePlan() {
   if (lim) {
     if (buy ? !(entry < status.ask - S.stops) : !(entry > status.bid + S.stops)) {
       r.warn.push(`A ${buy ? 'buy' : 'sell'} limit must be ${buy ? 'below' : 'above'} the current price (${fmt(buy ? status.ask : status.bid)})` + (S.stops ? ` by at least ${fmt(S.stops)}.` : '.'));
-      r.ok = false;
+      r.ok = false; r.wrongSide = true;
     }
   }
   if (r.ok && (lim ? (buy ? !(r.sl < entry - S.stops) : !(r.sl > entry + S.stops)) : (buy ? !(r.sl < status.bid - S.stops) : !(r.sl > status.ask + S.stops)))) {
@@ -4143,6 +4143,7 @@ function updatePlan() {
                    (r.comm > 0 ? ' <span class="m">after commission</span>' : '') + ` <span class="m">(${(r.gain / r.loss).toFixed(2)} R)</span></div>`;
     h += `<div class="m">Your risk: ${money(r.risk)}${RISK.mode === 'pct' ? ` (${RISK.pct}% of balance)` : ''}</div>`;
     r.warn.forEach(w => h += `<div class="w">${w}</div>`);
+    if (r.wrongSide) h += `<div style="margin-top:4px"><button class="tomkt" style="background:#2962ff;color:#fff;border:0;border-radius:4px;padding:4px 8px;cursor:pointer">${buy ? 'Buy' : 'Sell'} at market instead</button> <button class="tonear" style="background:none;color:var(--text);border:1px solid var(--line);border-radius:4px;padding:4px 8px;cursor:pointer">Put the limit just ${buy ? 'below' : 'above'} the price</button></div>`;
   } else h = '<div class="m">Waiting for the account and price...</div>';
   if ($('tp_info').innerHTML !== h) $('tp_info').innerHTML = h;
   const go = $('tp_go');
@@ -4388,12 +4389,20 @@ $('tp_ot').onchange = () => {
   if (!plan) return;
   plan.type = $('tp_ot').value;
   if (plan.type === 'limit' && status && status.bid != null) {     // start a little way from the price, like a real limit
-    const off = Math.max(avgRange(50), ACC && ACC.sym ? ACC.sym.point * 10 : 0), k = Math.pow(10, digits);
+    const off = Math.max(avgRange(50) * 3, ACC && ACC.sym ? ACC.sym.point * 20 : 0), k = Math.pow(10, digits);
     plan.limit = Math.round((plan.side === 'buy' ? status.ask - off : status.bid + off) * k) / k; plan.slManual = null;
     $('tp_lp').value = plan.limit;
   }
   layoutPlanForm(); updatePlan(); bump();
 };
+$('tp_info').addEventListener('click', e => {
+  if (!plan) return;
+  if (e.target.classList.contains('tomkt')) { plan.type = 'market'; $('tp_ot').value = 'market'; layoutPlanForm(); updatePlan(); bump(); }
+  if (e.target.classList.contains('tonear') && status && status.bid != null) {
+    const k = Math.pow(10, digits), st = ACC && ACC.sym ? Math.max(ACC.sym.stops, ACC.sym.point) : Math.pow(10, -digits);
+    plan.limit = Math.round((plan.side === 'buy' ? status.ask - st * 2 : status.bid + st * 2) * k) / k; plan.slManual = null; $('tp_lp').value = plan.limit; updatePlan(); bump();
+  }
+});
 $('tp_lp').oninput = () => { const v = Number($('tp_lp').value); if (plan && v > 0) { plan.limit = v; plan.slManual = null; updatePlan(); bump(); } };
 $('tp_lm').onchange = () => { RISK.lotMode = $('tp_lm').value; saveRisk(); layoutPlanForm(); updatePlan(); bump(); };
 $('tp_lot').oninput = () => { const v = Number($('tp_lot').value); if (v > 0) { RISK.lot = v; saveRisk(); updatePlan(); bump(); } };
