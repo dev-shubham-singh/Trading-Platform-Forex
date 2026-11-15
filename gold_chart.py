@@ -830,7 +830,7 @@ def modify_position(ticket, sl, tp):
     return {"error": bad} if bad else {"ok": True, "ticket": p.ticket, "sl": sl, "tp": tp}
 
 
-def close_positions(tickets=None, symbol=None):
+def close_positions(tickets=None, symbol=None, volume=None):
     """Close positions at market (all of them, one symbol's, or the given tickets). Returns per-position results."""
     if not ALLOW_TRADING:
         return {"error": "Trading is turned off in gold_chart.py (ALLOW_TRADING = False)."}
@@ -846,8 +846,14 @@ def close_positions(tickets=None, symbol=None):
             pos = [p for p in pos if p.symbol == symbol]
         for p in pos:
             info = mt5.symbol_info(p.symbol)
-            res, err = market_deal(p.symbol, info, p.type != mt5.POSITION_TYPE_BUY, p.volume, position=p.ticket,
-                                   comment="chart close")
+            vol = p.volume
+            if volume and tickets is not None and len(pos) == 1:          # partial close: only this many lots
+                step = info.volume_step or 0.01
+                vol = min(p.volume, round_step(float(volume), step))
+                if vol < info.volume_min - 1e-9 or p.volume - vol < info.volume_min - 1e-9 and vol < p.volume:
+                    return {"error": f"cannot split {p.volume} lot: closing {vol} would leave less than the minimum {info.volume_min}"}
+            res, err = market_deal(p.symbol, info, p.type != mt5.POSITION_TYPE_BUY, vol, position=p.ticket,
+                                   comment="chart partial" if vol < p.volume else "chart close")
             bad = err or deal_result(res)
             pl = None
             if not bad:
@@ -855,7 +861,7 @@ def close_positions(tickets=None, symbol=None):
                 outd = [d for d in deals if d.entry != 0]
                 if outd:
                     pl = sum(d.profit + d.commission + d.swap + getattr(d, "fee", 0) for d in outd)
-            log_order(f"{datetime.now():%Y-%m-%d %H:%M:%S} CLOSE {p.ticket} {p.volume} {p.symbol} -> "
+            log_order(f"{datetime.now():%Y-%m-%d %H:%M:%S} CLOSE {p.ticket} {vol} of {p.volume} {p.symbol} -> "
                       + (bad or f"done price={res.price} profit={pl if pl is not None else p.profit:.2f}"))
             out.append({"ticket": p.ticket, "symbol": p.symbol, "error": bad,
                         "price": None if bad else res.price, "profit": pl if pl is not None else p.profit})
@@ -1133,7 +1139,7 @@ def make_handler(default_sym):
                     return self.js(modify_position(body.get("ticket"), body.get("sl"), body.get("tp")))
                 if url.path == "/api/close":
                     t = body.get("tickets")
-                    return self.js(close_positions([int(x) for x in t] if t is not None else None, body.get("symbol") or None))
+                    return self.js(close_positions([int(x) for x in t] if t is not None else None, body.get("symbol") or None, body.get("volume")))
                 self.send_error(404)
             except Exception as e:
                 self.js({"error": str(e)}, 500)

@@ -230,6 +230,9 @@
   <span style="display:inline-flex;white-space:nowrap">
   <button class="tool" id="fslbtn" title="Flip SL: the moment ANY order fills (market, limit or stop), the stop loss jumps to the last opposite-colour candle (colours from your SMMA) and the take profit is reset to your R multiple. Click to turn on / off.">&#9889; Flip SL: <b id="fslst">off</b></button>
   <button class="tool" id="fslcfg" title="Flip SL settings" style="padding:4px 6px">&#9662;</button></span>
+  <span style="display:inline-flex;white-space:nowrap">
+  <button class="tool" id="pmbtn" title="Partial profit + secure: closes part of the trade at a small profit, then moves the stop above your entry once the trade is far enough in profit. Click to turn on / off.">&#9986; Partial + Secure: <b id="pmst">off</b></button>
+  <button class="tool" id="pmcfg" title="Partial profit settings and the maths" style="padding:4px 6px">&#9662;</button></span>
   <div class="sep"></div>
   <button class="tool" id="winbtn" title="Open another chart window (e.g. 5m) to put on your other screen">&#10697; New window</button>
   <button class="tool" id="syncbtn" title="Sync drawings, crosshair, symbol and theme between your chart windows">&#8644; Sync</button>
@@ -315,6 +318,16 @@
     <div id="msg">Loading candles from MT5...</div>
     <div id="hint"></div>
   </div>
+</div>
+<div id="pmpop" class="pop" style="width:min(380px, calc(100vw - 24px)); padding:10px 12px; font-size:12px">
+  <div class="th" style="margin:0 0 6px">Partial profit + secure the trade</div>
+  <div style="color:var(--muted);line-height:1.5;margin-bottom:6px">1R = the money you risk on the trade (entry to stop). When it fills, this watches the price: at the first level it closes part of the lots, at the second it moves your stop above the entry. Works on live MT5, practice and replay.</div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:150px">Close this % of the lots</label><input id="pm_pct" type="number" min="1" max="99" step="1" style="width:60px"> <span style="color:var(--muted)">%</span></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:150px">...when profit reaches</label><input id="pm_at" type="number" min="0.1" step="0.1" style="width:60px"> <span style="color:var(--muted)">R</span></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:150px">Move the stop when profit reaches</label><input id="pm_be" type="number" min="0.1" step="0.1" style="width:60px"> <span style="color:var(--muted)">R</span></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:150px">...to this profit (above entry)</label><input id="pm_to" type="number" min="0" step="0.05" style="width:60px"> <span style="color:var(--muted)">R</span></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:150px">Final target (for the maths)</label><input id="pm_t" type="number" min="0.2" step="0.05" style="width:60px"> <span style="color:var(--muted)">R (your take profit)</span></div>
+  <div id="pm_math" style="margin-top:6px;padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.7"></div>
 </div>
 <div id="fslpop" class="pop" style="width:min(340px, calc(100vw - 24px)); padding:10px 12px; font-size:12px">
   <div class="th" style="margin:0 0 6px">Flip SL: stop and target after the order fills</div>
@@ -4013,7 +4026,7 @@ let ACC = null, plan = null, planCur = null, accBusy = false, accAt = 0;
 function saveRisk() { store.set('gc_risk', RISK); }
 /* ---------------- Flip SL: after an order fills, move the stop to the last opposite-colour candle and reset the take profit ---------------- */
 let FSL = Object.assign({ on: false, src: 'auto', rr: '2', rrc: 2, hl: 'shown', buf: 0, max: 20, tight: false }, store.get('gc_flipsl', {}));
-const fslSeen = new Set(), fslBusy = new Set();
+const fslSeen = new Set(), fslBusy = new Set(), fslFinished = new Set();
 let fslBase = false;
 function fslSave() { store.set('gc_flipsl', FSL); }
 function fslSmma() {                                   // the SMMA whose colours decide: the one you picked, else the one painting the candles
@@ -4075,7 +4088,7 @@ async function fslApply(p) {
       if (tries === 1) tbNote(`Flip SL could not move #${p.ticket}: ${res.error || 'MT5 did not accept it'}`, 'pl-dn');
       else await new Promise(r2 => setTimeout(r2, 250));
     }
-  } finally { fslBusy.delete(p.ticket); }
+  } finally { fslBusy.delete(p.ticket); fslFinished.add(p.ticket); }
 }
 function fslScan() {                                   // called whenever the positions list refreshes
   if (!ACC || !ACC.positions) return;
@@ -4083,7 +4096,7 @@ function fslScan() {                                   // called whenever the po
   for (const p of ACC.positions) {
     if (fslSeen.has(p.ticket)) continue;
     fslSeen.add(p.ticket);
-    if (FSL.on) fslApply(p);
+    if (FSL.on) fslApply(p); else fslFinished.add(p.ticket);
   }
 }
 function fslUI() {
@@ -4120,8 +4133,99 @@ $('fsl_buf').oninput = () => { FSL.buf = Number($('fsl_buf').value) || 0; fslSav
 $('fsl_max').oninput = () => { FSL.max = Number($('fsl_max').value) || 0; fslSave(); };
 $('fsl_tight').onchange = () => { FSL.tight = $('fsl_tight').checked; fslSave(); };
 setInterval(() => { if ($('fslpop').style.display === 'block') fslUI(); }, 1000);
+/* ---------------- Partial profit + secure: close a share of the lots at X R, move the stop above entry at Y R ---------------- */
+let PM = Object.assign({ on: false, pct: 25, at: 0.5, be: 0.7, to: 0.1, t: 1.75 }, store.get('gc_partial', {}));
+const pmSeen = new Set(), pmState = {}; let pmBase = false;
+function pmSave() { store.set('gc_partial', PM); }
+function pmMath() {                                    // the maths, in R and in money, for the current settings
+  const f = Number(PM.pct) / 100, a = Number(PM.at), T = Number(PM.t), b = Number(PM.be), to = Number(PM.to);
+  const risk = riskAmount(), m = r => risk > 0 ? ` <span style="color:var(--muted)">(${r >= 0 ? '+' : '-'}${money(Math.abs(r) * risk)})</span>` : '', R = r => (r >= 0 ? '+' : '') + (+r.toFixed(4)) + 'R';
+  const part = f * a, rest = (1 - f) * T, win = part + rest, afterBE = part + (1 - f) * to, early = part - (1 - f);
+  const c = ACC && ACC.sym ? commLot() : 0, perR = risk > 0 && c > 0 ? 'Commission ' + money(c) + ' per lot' : '';
+  let h = `<b>The maths</b> (1R = ${risk > 0 ? money(risk) : 'your risk'}, ${PM.pct}% closed at ${a}R)<br>` +
+    `Partial: ${f.toFixed(2)} &times; ${a}R = <b>${R(part)}</b>${m(part)}<br>` +
+    `Rest: ${(1 - f).toFixed(2)} &times; ${T}R = <b>${R(rest)}</b>${m(rest)}<br>` +
+    `<b style="color:#26a69a">If the target is hit: ${R(win)}</b>${m(win)} &rarr; your ${T}R trade becomes <b>${(+win.toFixed(4))}R</b> (you give up ${(+(T - win).toFixed(4))}R for safety)<br>` +
+    `<b style="color:#26a69a">Price passes ${b}R, then falls back: ${R(afterBE)}</b>${m(afterBE)} locked (${f.toFixed(2)}&times;${a} + ${(1 - f).toFixed(2)}&times;${to})<br>` +
+    `<b style="color:#ef5350">Hits ${a}R, falls back before ${b}R: ${R(early)}</b>${m(early)} (the rest stops out at -1R)`;
+  if (b <= a) h += `<br><span style="color:#ff9800">Tip: the stop level (${b}R) is normally above the partial level (${a}R).</span>`;
+  if (perR && risk > 0 && to * risk < c) h += `<br><span style="color:#ff9800">${to}R is ${money(to * risk)} for the remaining lots, less than commission. Use a bigger R to cover it.</span>`;
+  return h;
+}
+function pmUI() {
+  $('pmst').textContent = PM.on ? 'ON' : 'off'; $('pmbtn').style.background = PM.on ? '#26a69a' : ''; $('pmbtn').style.color = PM.on ? '#fff' : '';
+  const set = (id, v) => { const el = $(id); if (document.activeElement !== el) el.value = v; };
+  set('pm_pct', PM.pct); set('pm_at', PM.at); set('pm_be', PM.be); set('pm_to', PM.to); set('pm_t', PM.t);
+  const h = pmMath(); if ($('pm_math').innerHTML !== h) $('pm_math').innerHTML = h;
+}
+function pmToggle(on) { PM.on = on; pmSave(); if (on && ACC && ACC.positions) ACC.positions.forEach(p => pmSeen.add(p.ticket)); pmUI(); bump(); }
+$('pmbtn').onclick = () => pmToggle(!PM.on);
+$('pmcfg').onclick = e => {
+  e.stopPropagation(); const p = $('pmpop');
+  if (p.style.display === 'block') { p.style.display = 'none'; return; }
+  const r = $('pmbtn').getBoundingClientRect(); p.style.left = Math.max(8, Math.min(r.left, innerWidth - 400)) + 'px'; p.style.top = (r.bottom + 6) + 'px';
+  pmUI(); p.style.display = 'block';
+};
+document.addEventListener('mousedown', e => { if (!$('pmpop').contains(e.target) && !$('pmcfg').contains(e.target)) $('pmpop').style.display = 'none'; });
+[['pm_pct', 'pct'], ['pm_at', 'at'], ['pm_be', 'be'], ['pm_to', 'to'], ['pm_t', 't']].forEach(([id, k]) => $(id).oninput = () => {
+  const v = Number($(id).value); if (v >= 0) { PM[k] = k === 'pct' ? Math.min(99, Math.max(1, v)) : v; pmSave(); const h = pmMath(); $('pm_math').innerHTML = h; }
+});
+setInterval(() => { if ($('pmpop').style.display === 'block') { const h = pmMath(); if ($('pm_math').innerHTML !== h) $('pm_math').innerHTML = h; } }, 1000);
+function rpPartial(p, vol, price) {                    // practice: close part of a position
+  const a = A(), buy = p.side === 'buy', pl = (price - p.open) * (buy ? 1 : -1) * vol * rpVpp();
+  a.bal += pl;
+  a.deals.push({ ticket: 10000 + a.deals.length, time: nowT(), type: buy ? 1 : 0, entry: 1, symbol: p.symbol, volume: vol,
+                 price, profit: pl, commission: 0, swap: 0, fee: 0, position: p.ticket, comment: 'partial' });
+  p.volume = +(p.volume - vol).toFixed(8); p.profit = (p.cur - p.open) * (buy ? 1 : -1) * p.volume * rpVpp();
+  if (!RP.on) paperSave(); rpView();
+  return pl;
+}
+async function pmAct(p, st, what) {
+  const S = ACC.sym, buy = p.side === 'buy', px = buy ? status.bid : status.ask, k = Math.pow(10, S.digits);
+  if (what === 'partial') {
+    const want = st.vol0 * Number(PM.pct) / 100, cv = +(Math.floor(want / S.vstep + 1e-9) * S.vstep).toFixed(8);
+    if (cv < S.vmin - 1e-9 || p.volume - cv < S.vmin - 1e-9) { st.partial = 'skip'; tbNote(`Partial skipped on #${p.ticket}: ${st.vol0} lot is too small to close ${PM.pct}% (min lot ${S.vmin})`, 'pl-dn'); return; }
+    if (practice()) {
+      const pl = rpPartial(p, cv, px); st.partial = 'done';
+      tbNote(`Partial: closed ${cv} lot of #${p.ticket} at ${fmt(px)} for ${pl >= 0 ? '+' : ''}${money(pl)} (${PM.pct}% at ${PM.at}R)`, 'pl-up'); renderBar(true); bump(); return;
+    }
+    const res = await postJSON('/api/close', { tickets: [p.ticket], volume: cv });
+    if (res.ok) { st.partial = 'done'; const r0 = res.results && res.results[0]; tbNote(`Partial: closed ${cv} lot of #${p.ticket}` + (r0 ? ` at ${fmt(r0.price)} for ${r0.profit >= 0 ? '+' : ''}${money(r0.profit)}` : '') + ` (${PM.pct}% at ${PM.at}R)`, 'pl-up'); accTick(); histTick(); }
+    else { st.tries = (st.tries || 0) + 1; if (st.tries >= 3) { st.partial = 'skip'; tbNote(`Partial failed on #${p.ticket}: ${res.error || 'MT5 did not accept it'}`, 'pl-dn'); } }
+    return;
+  }
+  // secure: stop to entry + to R (rounded in your favour)
+  let sl = p.open + (buy ? 1 : -1) * Number(PM.to) * st.r; sl = (buy ? Math.ceil(sl * k - 1e-6) : Math.floor(sl * k + 1e-6)) / k;
+  if (p.sl && (buy ? sl <= p.sl : sl >= p.sl)) { st.secure = 'done'; return; }                  // the stop is already at least that good
+  if (buy ? !(sl < px - (S.stops || 0)) : !(sl > px + (S.stops || 0))) return;                  // price too close: try again on the next tick
+  const msg = `Secure: #${p.ticket} stop ${p.sl ? fmt(p.sl) + ' \u2192 ' : ''}${fmt(sl)} (${PM.to}R above entry) after ${PM.be}R`;
+  if (practice()) { const q = A().pos.find(x => x.ticket === p.ticket); if (q) { q.sl = sl; if (!RP.on) paperSave(); } st.secure = 'done'; tbNote(msg, 'pl-up'); renderBar(true); bump(); return; }
+  const res = await postJSON('/api/modify', { ticket: p.ticket, sl, tp: p.tp || 0 });
+  if (res.ok) { p.sl = sl; st.secure = 'done'; tbNote(msg, 'pl-up'); accTick(); renderBar(true); bump(); }
+  else { st.tries2 = (st.tries2 || 0) + 1; if (st.tries2 >= 3) { st.secure = 'skip'; tbNote(`Secure failed on #${p.ticket}: ${res.error || 'MT5 did not accept it'}`, 'pl-dn'); } }
+}
+function pmTick() {
+  if (!ACC || !ACC.positions || !ACC.sym || !status || status.bid == null) return;
+  const live = new Set(ACC.positions.map(p => p.ticket));
+  for (const t of Object.keys(pmState)) if (!live.has(+t)) delete pmState[t];
+  if (!pmBase) { ACC.positions.forEach(p => pmSeen.add(p.ticket)); pmBase = true; return; }
+  for (const p of ACC.positions) {
+    if (!pmSeen.has(p.ticket)) { pmSeen.add(p.ticket); if (PM.on) pmState[p.ticket] = { born: Date.now(), vol0: p.volume }; }
+    const st = pmState[p.ticket]; if (!st || st.busy || !PM.on) continue;
+    if (st.r == null) {                                // 1R = entry to stop AFTER Flip SL has moved it (if Flip SL is on)
+      if (FSL.on && !fslFinished.has(p.ticket) && Date.now() - st.born < 5000) continue;
+      if (!p.sl) { st.r = 0; tbNote(`Partial + Secure skipped on #${p.ticket}: it has no stop loss, so 1R is unknown`, 'pl-dn'); continue; }
+      st.r = Math.abs(p.open - p.sl);
+    }
+    if (!(st.r > 0)) continue;
+    const buy = p.side === 'buy', prog = ((buy ? status.bid : status.ask) - p.open) * (buy ? 1 : -1) / st.r;
+    if (!st.partial && prog >= Number(PM.at)) { st.busy = true; pmAct(p, st, 'partial').finally(() => st.busy = false); continue; }
+    if (!st.secure && prog >= Number(PM.be)) { st.busy = true; pmAct(p, st, 'secure').finally(() => st.busy = false); }
+  }
+}
+setInterval(() => { if (PM.on) pmTick(); }, 250);
 let fslFast = 0;                                       // after any order: check the account quickly so the stop moves at once
-setInterval(() => { if (FSL.on && SRC === 'MT5' && !RP.on && !paperOn() && (Date.now() < fslFast || (ACC && ACC.orders && ACC.orders.length))) accTick(); }, 400);
+setInterval(() => { if ((FSL.on || PM.on) && SRC === 'MT5' && !RP.on && !paperOn() && (Date.now() < fslFast || (ACC && ACC.orders && ACC.orders.length))) accTick(); }, 400);
 async function accTick() {
   if (paperOn() && symbol) { paperTick(); if (plan) updatePlan(); renderBar(); bump(); return; }
   if (SRC !== 'MT5' || accBusy || !symbol || RP.on) return;          // replay: ACC is the practice account
@@ -4523,7 +4627,7 @@ window.addEventListener('resize', () => { if (plan) keepPanelOnScreen(); });
 $('buybtn').onclick = () => openPlan('buy');
 $('sellbtn').onclick = () => openPlan('sell');
 $('pendbtn').onclick = () => openPlan('buy', true);
-fslUI();
+fslUI(); pmUI();
 $('tp_x').onclick = $('tp_cancel').onclick = closePlan;
 $('tp_go').onclick = sendOrder;
 $('tp_rm').onchange = () => { RISK.mode = $('tp_rm').value; $('tp_rv').value = RISK.mode === 'pct' ? RISK.pct : RISK.usd; saveRisk(); updatePlan(); bump(); };
