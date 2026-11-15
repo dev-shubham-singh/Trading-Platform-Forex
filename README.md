@@ -176,3 +176,9 @@ The servers save lightweight-charts 4.2.0 next to the page on first start (fallb
 ## Second-chart history limit
 
 Second-based charts (5s, 15s...) build up tens of thousands of candles, which uses a lot of memory and slows the chart. A small dropdown next to the timeframes (only shown on second charts) keeps just the newest part: **Last 8 hours / Last 12 hours (default) / Last 1 day / All loaded**. Pick *All loaded* to get as much as possible. Your choice is remembered. Needs a restart of the `.bat` once (server change) plus Ctrl+F5.
+
+## Limit orders and the Risk / Reward drawing
+
+- **Limit orders**: in the Buy / Sell panel pick *Order type: Limit*, then type the limit price or drag the blue line. Lot size comes from your risk (amount or %) and the distance to the stop, with commission included, exactly like a market order. A buy limit must be below the price, a sell limit above. On the gold chart it places a real pending order in MT5 (needs *Live orders on*); on the Fyers chart and in bar replay it is a practice order that fills when price reaches it. Pending orders show as blue dashed lines with a cancel (x) button.
+- **Risk / Reward drawing**: two icons under the box tool (long, short). Click where you want to enter; drag the green line (target), red line (stop), the right edge (width) or the whole box. It shows pips and points, the lot size for your risk, the money lost at the stop and gained at the target (commission included), the % move and R:R, and recalculates while you drag. Default risk is 10 (1000 on the Indian chart); change it, or switch to % of balance, in the panel that opens when it is selected. The same panel has *Place limit order* and *At market*.
+- Pips: 1 pip = 10 points (gold 0.10). Points are shown next to it.

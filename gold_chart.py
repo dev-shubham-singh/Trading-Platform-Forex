@@ -555,6 +555,7 @@ def account(sym):
         vpp = value_per_price(sym, info, tk.bid) if info and tk else 0.0
         comm = detect_commission(sym)
         pcomm = {p.ticket: position_commission(p) for p in allpos}
+        pend = mt5.orders_get(symbol=sym) or ()
     if not acc or not info:
         return {"error": "MT5 account or symbol not available"}
     algo = bool(getattr(term, "trade_allowed", True)) if term else True
@@ -571,6 +572,10 @@ def account(sym):
         "commDetected": comm,
         "positions": [p for p in allp if p["symbol"] == sym],
         "all": allp,
+        "orders": [{"ticket": o.ticket, "side": "buy" if o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP) else "sell",
+                    "kind": "limit" if o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT) else "stop",
+                    "volume": o.volume_current, "price": o.price_open, "sl": o.sl, "tp": o.tp, "symbol": o.symbol}
+                   for o in pend],
     }
 
 
@@ -700,6 +705,88 @@ def place_order(req):
         SENT_IDS[oid] = res.order
     log_order(line + f"done ticket={res.order} price={res.price}")
     return {"ok": True, "ticket": res.order, "price": res.price, "volume": res.volume, "risk": risk[0]}
+
+
+def place_limit(req):
+    """Pending BUY LIMIT / SELL LIMIT with a stop loss (and optional take profit). Same checks and risk guard as the market order,
+    worked out at the limit price."""
+    if not ALLOW_TRADING:
+        return {"error": "Trading is turned off in gold_chart.py (ALLOW_TRADING = False)."}
+    sym, side = str(req.get("symbol", "")), req.get("side")
+    vol, sl, tp = float(req.get("volume", 0)), float(req.get("sl", 0)), float(req.get("tp", 0) or 0)
+    price = float(req.get("price", 0))
+    max_risk, oid = float(req.get("risk", 0)), str(req.get("id", ""))[:64]
+    comm_lot = max(0.0, float(req.get("commission", 0) or 0))
+    if side not in ("buy", "sell"):
+        return {"error": "side must be buy or sell"}
+    if not sl > 0 or not price > 0:
+        return {"error": "a limit price and a stop loss are required"}
+    if not max_risk > 0:
+        return {"error": "risk amount missing"}
+    if oid and oid in SENT_IDS:
+        return {"error": "this order was already placed (ticket %s); make a new one" % SENT_IDS[oid]}
+    buy = side == "buy"
+    with MT5_LOCK:
+        info = mt5.symbol_info(sym)
+        tk = mt5.symbol_info_tick(sym)
+        if not info or not tk:
+            return {"error": f"symbol {sym} not available"}
+        step = info.volume_step or 0.01
+        vol = round_step(vol, step)
+        if vol < info.volume_min - 1e-9 or vol > info.volume_max + 1e-9:
+            return {"error": f"lot {vol} is outside {info.volume_min} - {info.volume_max}"}
+        stops = getattr(info, "trade_stops_level", 0) * info.point
+        price, sl = round(price, info.digits), round(sl, info.digits)
+        tp = round(tp, info.digits) if tp else 0.0
+        if buy and not price < tk.ask - stops:
+            return {"error": f"a buy limit must be below the current price ({tk.ask}) by at least {stops:g}"}
+        if not buy and not price > tk.bid + stops:
+            return {"error": f"a sell limit must be above the current price ({tk.bid}) by at least {stops:g}"}
+        if buy and not sl < price - stops or not buy and not sl > price + stops:
+            return {"error": f"stop loss {sl} must be {'below' if buy else 'above'} the limit price {price}"}
+        if tp and (buy and not tp > price + stops or not buy and not tp < price - stops):
+            return {"error": f"take profit {tp} must be {'above' if buy else 'below'} the limit price {price}"}
+        otype = mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL
+        loss = mt5.order_calc_profit(otype, sym, vol, price, sl)
+        loss = abs(loss) if loss is not None else vol * value_per_price(sym, info, price) * abs(price - sl)
+        loss += comm_lot * vol
+        cur = mt5.account_info().currency
+        if loss > max_risk * RISK_TOLERANCE + 1e-9:
+            return {"error": f"the loss at your stop would be {loss:.2f} {cur}, over the {max_risk:.2f} you confirmed. Confirm again."}
+        req2 = {"action": mt5.TRADE_ACTION_PENDING, "symbol": sym, "volume": vol,
+                "type": mt5.ORDER_TYPE_BUY_LIMIT if buy else mt5.ORDER_TYPE_SELL_LIMIT, "price": price, "sl": sl, "tp": tp,
+                "magic": ORDER_MAGIC, "comment": "chart limit", "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_RETURN}
+        res = mt5.order_send(req2)
+    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {side.upper()} LIMIT {vol} {sym} @ {price} sl={sl} tp={tp} risk={loss:.2f} -> "
+    if res is None:
+        err = f"MT5 did not accept the order: {mt5.last_error()}"
+        log_order(line + err)
+        return {"error": err}
+    bad = deal_result(res)
+    if bad:
+        log_order(line + bad)
+        return {"error": bad}
+    if oid:
+        SENT_IDS[oid] = res.order
+    log_order(line + f"placed ticket={res.order}")
+    return {"ok": True, "ticket": res.order, "price": price, "volume": vol, "risk": loss, "limit": True}
+
+
+def cancel_order(ticket):
+    """Delete a pending order."""
+    if not ALLOW_TRADING:
+        return {"error": "Trading is turned off in gold_chart.py (ALLOW_TRADING = False)."}
+    with MT5_LOCK:
+        o = mt5.orders_get(ticket=int(ticket)) or ()
+        if not o:
+            return {"error": "that order is not pending any more"}
+        res = mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": int(ticket)})
+    if res is None:
+        return {"error": f"MT5 did not accept it: {mt5.last_error()}"}
+    bad = deal_result(res)
+    log_order(f"{datetime.now():%Y-%m-%d %H:%M:%S} CANCEL order {ticket} -> {bad or 'done'}")
+    return {"error": bad} if bad else {"ok": True}
 
 
 def modify_position(ticket, sl, tp):
@@ -1031,7 +1118,9 @@ def make_handler(default_sym):
                 body = json.loads(self.rfile.read(n) or b"{}")
                 if url.path == "/api/order":
                     ensure_symbol(str(body.get("symbol", "")))
-                    return self.js(place_order(body))
+                    return self.js(place_limit(body) if body.get("type") == "limit" else place_order(body))
+                if url.path == "/api/cancel":
+                    return self.js(cancel_order(body.get("ticket")))
                 if url.path == "/api/modify":
                     return self.js(modify_position(body.get("ticket"), body.get("sl"), body.get("tp")))
                 if url.path == "/api/close":
