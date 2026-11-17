@@ -455,7 +455,7 @@ const chart = LightweightCharts.createChart($('chart'), {
   crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
   rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.08, bottom: 0.08 } },
   timeScale: { borderColor: '#2a2e39', timeVisible: true, secondsVisible: true, rightOffset: 10,
-               barSpacing: 8, minBarSpacing: 0.3,
+               barSpacing: 8, minBarSpacing: 0.02,
                tickMarkFormatter: (t, type) => axisLabel(t, type) },
   localization: { timeFormatter: t => fullTime(realOf(t)) },
 });
