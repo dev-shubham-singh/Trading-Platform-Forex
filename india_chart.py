@@ -47,6 +47,7 @@ except ImportError:
 
 # ---------------- settings ----------------
 PORT = 8766
+SEC_DAYS = 30              # days of Fyers second candles to load (Prime plan keeps the last 30 days)
 TICK_DAYS = 5              # days of recorded ticks loaded for second / tick / Renko / Kagi charts
 MAX_SUBS = 100             # Fyers Standard plan: 100 live symbols (Prime: 5000)
 WATCH_MAX = 60             # most symbols kept on the recording watchlist
@@ -729,7 +730,7 @@ def history_days(res, rsec):
     if res == "D":
         return 3 * 366
     if rsec < 60:
-        return 5
+        return SEC_DAYS
     return {60: 90, 120: 100, 180: 100, 300: 100}.get(rsec, 300 if rsec <= 1800 else 360)
 
 
