@@ -446,8 +446,9 @@ const store = {
 const URLQ = new URLSearchParams(location.search);
 const WIN = (URLQ.get('w') || '').replace(/\D/g, ''), WK = WIN ? '_w' + WIN : '';
 // Redraw only when something changed (saves CPU / battery): anything that can move the overlay calls bump().
-let needDraw = true;
-function bump() { needDraw = true; }
+let needDraw = true, needBase = true;
+function bump() { needDraw = true; needBase = true; }            // something changed: redraw everything
+function bumpLite() { needDraw = true; }                          // only the mouse moved: redraw drawings, orders and lines (indicator layer is reused)
 
 /* ---------------- chart ---------------- */
 const chart = LightweightCharts.createChart($('chart'), {
@@ -3179,7 +3180,9 @@ $('latest').onclick = () => ts.scrollToRealTime();
 const PALETTE = ['#2962ff', '#26a69a', '#ef5350', '#ff9800', '#e040fb', '#ffeb3b', '#ffffff'];
 let tool = 'cursor', drawings = [], sel = null, pending = null, drag = null;
 let curColor = '#2962ff', curWidth = 2;
-const chartEl = $('chart'), cv = $('overlay'), ctx = cv.getContext('2d');
+const chartEl = $('chart'), cv = $('overlay');
+let ctx = cv.getContext('2d');                       // swapped for the cached layer while indicators are drawn
+const mainCtx = ctx, bcv = document.createElement('canvas'), bctx = bcv.getContext('2d');   // bcv: cached layer with every indicator overlay
 const ucv = $('under'), uctx = ucv.getContext('2d');
 
 function saveDrawings() { store.set('gc_draw_' + symbol, drawings); send({ type: 'draw', symbol, drawings }); bump(); }
@@ -3514,40 +3517,54 @@ function render() {
   const sig = [W, H, dpr, vr && vr.from, vr && vr.to, raw.length, lc, series.priceToCoordinate(lc),
                series.priceToCoordinate(lc * 1.001 + 1)].join('|');
   if (!needDraw && sig === lastSig) return;                 // nothing moved: skip this frame
-  needDraw = false; lastSig = sig;
+  const redrawBase = needBase || sig !== lastSig;
+  needDraw = false; needBase = false; lastSig = sig;
   if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
     cv.style.width = W + 'px'; cv.style.height = H + 'px';
   }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, W, H);
-  if (vcOn()) {
-    if (ucv.width !== cv.width || ucv.height !== cv.height) {
-      ucv.width = cv.width; ucv.height = cv.height; ucv.style.width = W + 'px'; ucv.style.height = H + 'px';
+  if (bcv.width !== cv.width || bcv.height !== cv.height) { bcv.width = cv.width; bcv.height = cv.height; }
+  const pw = paneW(), ph = paneH();
+  if (redrawBase) {
+    if (vcOn()) {
+      if (ucv.width !== cv.width || ucv.height !== cv.height) {
+        ucv.width = cv.width; ucv.height = cv.height; ucv.style.width = W + 'px'; ucv.style.height = H + 'px';
+      }
+      uctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      uctx.fillStyle = TH().bg; uctx.fillRect(0, 0, W, H);
+      if (raw.length) {
+        uctx.save(); uctx.beginPath(); uctx.rect(0, 0, paneW(), paneH()); uctx.clip();
+        drawVolCandles(uctx);
+        uctx.restore();
+      }
     }
-    uctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    uctx.fillStyle = TH().bg; uctx.fillRect(0, 0, W, H);
+    ctx = bctx;                                           // layer 1: indicators (the heavy part), redrawn only when the chart moved or changed
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
     if (raw.length) {
-      uctx.save(); uctx.beginPath(); uctx.rect(0, 0, paneW(), paneH()); uctx.clip();
-      drawVolCandles(uctx);
-      uctx.restore();
+      ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pw, ph); ctx.clip();
+      drawKagi();
+      drawBandFills();
+      drawBos();
+      drawStretch();
+      drawPivots(pw);
+      drawPanes(pw, ph);
+      drawHtf(pw, ph);
+      drawBurke(pw, ph);
+      drawHDoji(pw, ph);
+      drawChop(pw, ph);
+      drawProfiles(pw, ph);
+      drawFootprint(pw, ph);
+      ctx.restore();
     }
+    ctx = mainCtx;
   }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);                     // layer 2: copy the cached indicators, then draw what moves with the mouse
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(bcv, 0, 0);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (raw.length) {
-    const pw = paneW(), ph = paneH();
     ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pw, ph); ctx.clip();
-    drawKagi();
-    drawBandFills();
-    drawBos();
-    drawStretch();
-    drawPivots(pw);
-    drawPanes(pw, ph);
-    drawHtf(pw, ph);
-    drawBurke(pw, ph);
-    drawHDoji(pw, ph);
-    drawChop(pw, ph);
-    drawProfiles(pw, ph);
-    drawFootprint(pw, ph);
     drawPositions(pw);
     drawPending(pw);
     drawPlan(pw);
@@ -3559,8 +3576,9 @@ function render() {
     ctx.restore();
   }
 }
-['mousemove', 'mousedown', 'mouseup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'resize', 'touchmove', 'pointerup']
+['mousedown', 'mouseup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'resize', 'pointerup']
   .forEach(ev => window.addEventListener(ev, bump, { passive: true, capture: true }));
+['mousemove', 'touchmove'].forEach(ev => window.addEventListener(ev, bumpLite, { passive: true, capture: true }));
 function drawBandFills() {
   const r = ts.getVisibleLogicalRange(); if (!r) return;
   const from = Math.max(0, Math.floor(r.from)), to = Math.min(raw.length - 1, Math.ceil(r.to));
