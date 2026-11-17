@@ -1274,11 +1274,11 @@ function sma(x, n) {
    the value of the last CLOSED higher candle, so nothing repaints and nothing looks into the future. Live mode also
    follows the higher candle that is still forming. The timeframe must be longer than the chart interval. */
 const MTF_TYPES = ['ema', 'smma', 'sma', 'bb', 'macd', 'atr'];
-const MTF_PRESETS = ['5s', '10s', '15s', '30s', '1m', '2m', '3m', '5m', '10m', '15m', '30m', '1h', '2h', '4h', '1d'];
+const MTF_PRESETS = ['1s', '5s', '10s', '15s', '30s', '1m', '2m', '3m', '5m', '10m', '15m', '30m', '1h', '2h', '4h', '1d'];
 function mtfLen(ind) {
-  if (!MTF_TYPES.includes(ind.type) || !ind.tf || kind !== 'time') return null;
-  const iv = parseIv(ind.tf);
-  return iv && iv.kind === 'time' && iv.n > tfSec ? iv.n : null;
+  if (!MTF_TYPES.includes(ind.type) || !ind.tf || (kind !== 'time' && kind !== 'tick')) return null;
+  const iv = parseIv(ind.tf);            // on a tick chart (100t...) any time frame works: ticks are grouped by their real time
+  return iv && iv.kind === 'time' && (kind === 'tick' || iv.n > tfSec) ? iv.n : null;
 }
 function mtf(ind, fn) {
   const T = mtfLen(ind), n = raw.length;
@@ -2244,7 +2244,7 @@ function drawHDoji(pw, ph) {
 }
 function label(ind) {
   const b = labelBase(ind);
-  if (!ind.tf || !MTF_TYPES.includes(ind.type) || kind !== 'time') return b;
+  if (!ind.tf || !MTF_TYPES.includes(ind.type) || (kind !== 'time' && kind !== 'tick')) return b;
   return b + (mtfLen(ind) ? ` · ${ind.tf}${ind.tfLive ? ' live' : ''}` : ` · ${ind.tf} ignored (not longer than the chart)`);
 }
 function labelBase(ind) {
