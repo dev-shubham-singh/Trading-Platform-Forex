@@ -4368,7 +4368,7 @@ function openPlan(side, pend) {
   $('tp_title').style.color = side === 'buy' ? '#26a69a' : '#ef5350';
   $('tp_rm').value = RISK.mode; $('tp_rv').value = RISK.mode === 'pct' ? RISK.pct : RISK.usd;
   $('tp_lm').value = RISK.lotMode; $('tp_lot').value = RISK.lot; $('tp_slb').value = RISK.slBars; $('tp_rr').value = RISK.rr;
-  if (pend) { $('tp_side').value = side; pendDefault(); } $('tp_live').checked = !!RISK.live; $('tp_msg').textContent = '';
+  if (pend) { $('tp_side').value = side; pendDefault(); } $('tp_live').checked = !!RISK.live; $('tp_live').parentElement.style.display = practice() ? 'none' : ''; $('tp_msg').textContent = '';
   showComm();
   $('tradep').style.display = 'block';
   layoutPlanForm(); accTick(); updatePlan(); keepPanelOnScreen(); bump();
