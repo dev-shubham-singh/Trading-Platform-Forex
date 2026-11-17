@@ -349,6 +349,12 @@
     <label><input type="checkbox" id="tpl_tf" checked> Save the timeframe (e.g. 1d) too</label>
     <label><input type="checkbox" id="tpl_ct" checked> Save the chart type (Heikin Ashi / candles...) too</label>
     <button class="tool" id="tplgo" style="margin-top:8px;width:100%">Save current chart as template</button></div>
+  <div id="tplxfer" style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px">
+    <div style="display:flex;gap:6px"><button class="tool" id="tplexp" style="flex:1" title="Copy all your templates so you can paste them into the other chart (gold or India)">Copy all templates</button>
+    <button class="tool" id="tplimp" style="flex:1" title="Add the templates you copied from the other chart">Paste templates</button></div>
+    <textarea id="tplbox" rows="3" style="display:none;width:100%;margin-top:6px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;font:11px monospace" placeholder="Paste the copied templates here, then press Import"></textarea>
+    <button class="tool" id="tplimpgo" style="display:none;width:100%;margin-top:6px">Import these templates</button>
+    <div id="tplxmsg" style="color:var(--muted);margin-top:5px"></div></div>
 </div>
 <div id="sympop" class="pop"><input id="symq" placeholder="Search symbols" autocomplete="off">
   <div class="symtabs" id="symtabs"><button id="symtab_all" class="on">All symbols</button><button id="symtab_fav">&#9733; Favorites</button></div><div id="symlist"></div></div>
@@ -4038,6 +4044,37 @@ $('tplgo').onclick = () => {
   tplFromChart(name, $('tpl_tf').checked, $('tpl_ct').checked); renderTpl();
 };
 $('tplname').addEventListener('keydown', e => { if (e.key === 'Enter') $('tplgo').click(); });
+/* move templates between the gold and India charts (each runs on its own address, so they cannot see each other's saved data) */
+const tplMsg = t => { $('tplxmsg').textContent = t; };
+$('tplexp').onclick = async () => {
+  if (!TPL.length) { tplMsg('No templates to copy yet.'); return; }
+  const txt = JSON.stringify({ gcTemplates: 1, templates: TPL });
+  try { await navigator.clipboard.writeText(txt); tplMsg(`Copied ${TPL.length} template${TPL.length === 1 ? '' : 's'}. Now open the other chart, Templates > Paste templates.`); }
+  catch (e) { $('tplbox').style.display = 'block'; $('tplbox').value = txt; $('tplbox').select(); tplMsg('Select all of the text above and copy it (Ctrl+C), then paste it in the other chart.'); }
+};
+async function tplImport(txt) {
+  let d; try { d = JSON.parse(txt); } catch (e) { d = null; }
+  const list = d && d.gcTemplates && Array.isArray(d.templates) ? d.templates.filter(t => t && typeof t.name === 'string' && Array.isArray(t.inds)) : null;
+  if (!list || !list.length) { tplMsg('That is not a copied template list. Use Copy all templates on the other chart first.'); return; }
+  let added = 0, replaced = 0, skipped = 0;
+  for (const t of list) {
+    const i = TPL.findIndex(x => x.name === t.name);
+    if (i < 0) { TPL.push(t); added++; }
+    else if (confirm(`A template called "${t.name}" is already here. Replace it with the copied one?`)) { TPL[i] = t; replaced++; }
+    else skipped++;
+  }
+  tplSave(); renderTpl();
+  $('tplbox').style.display = $('tplimpgo').style.display = 'none'; $('tplbox').value = '';
+  tplMsg(`Imported: ${added} new, ${replaced} replaced${skipped ? `, ${skipped} kept as they were` : ''}.`);
+}
+$('tplimp').onclick = async () => {
+  let txt = '';
+  try { txt = await navigator.clipboard.readText(); } catch (e) {}
+  if (txt && txt.includes('gcTemplates')) { tplImport(txt); return; }
+  $('tplbox').style.display = $('tplimpgo').style.display = 'block'; $('tplbox').focus();
+  tplMsg(txt ? 'The clipboard does not hold copied templates. Paste them below.' : 'Paste the copied templates below.');
+};
+$('tplimpgo').onclick = () => tplImport($('tplbox').value);
 document.addEventListener('mousedown', e => { if (!$('tplpop').contains(e.target) && e.target !== $('tplbtn')) closeTpl(); });
 
 /* ---------------- trade panel: risk-based lot size / stop loss, Buy / Sell (MT5 only) ---------------- */

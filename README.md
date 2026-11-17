@@ -21,6 +21,7 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
 - Zoom/pan, invert scale, drawing tools (trend line, horizontal line, box) with colours
 - Time zone menu (bottom right, like TradingView): India time by default, plus UTC, broker time and major world cities; live clock
 - Dark / light mode
+- **Templates transfer**: Templates menu > Copy all templates, then on the other chart (gold or India) Paste templates; same-name templates ask before replacing
 - **New window + Sync**: open a second chart window (e.g. 5m) for another screen; drawings, crosshair, symbol and theme stay in sync (toggle)
 - Indicators: EMA, SMMA, SMA, Bollinger Bands, pivot points (any period, R3/S3, history),
   candle high/low liquidity sweeps, previous day high/low/close, VWAP with deviation bands, ATR (own pane)
