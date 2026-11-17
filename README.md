@@ -196,3 +196,7 @@ The orange **Flip SL: ON / off** button (next to Sell) turns it on; the arrow be
 ## Partial profit + Secure (one button)
 
 The green **Partial + Secure: ON / off** button (next to Flip SL; the arrow opens the settings and shows the maths in R and money). When a trade fills, it watches the price. 1R = the money you risk = entry to stop (after Flip SL has moved the stop, if that is on). At **X R** (default 0.5) it closes **P %** of the lots (default 25 %); at **Y R** (default 0.7) it moves the stop to **Z R above entry** (default 0.1) so the rest of the trade pays at least the commission. All four numbers and the final target (default 1.75 R, used for the maths) can be changed. Example with 25 % at 0.5R, stop to +0.1R at 0.7R, target 1.75R: target hit = 0.25x0.5 + 0.75x1.75 = 1.4375R; falls back after 0.7R = 0.25x0.5 + 0.75x0.1 = +0.2R; falls back after 0.5R but before 0.7R = 0.25x0.5 - 0.75x1 = -0.625R. Works on the live MT5 account (needs the server restart: partial close), practice and replay.
+
+## Hide candles
+
+The **Hide candles / Show candles** button (next to Dark / Light) hides the candles so only indicators, drawings, orders and levels show. The price scale stays the same and your choice is remembered.

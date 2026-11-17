@@ -236,6 +236,7 @@
   <div class="sep"></div>
   <button class="tool" id="winbtn" title="Open another chart window (e.g. 5m) to put on your other screen">&#10697; New window</button>
   <button class="tool" id="syncbtn" title="Sync drawings, crosshair, symbol and theme between your chart windows">&#8644; Sync</button>
+  <button class="tool" id="hidebtn" title="Hide the candles so only your indicators, drawings and orders show. Click again to show them.">&#128065; Hide candles</button>
   <button class="tool" id="themebtn" title="Switch between dark and light mode">&#9788; Light</button>
   <div class="quote">
     <span id="bias" style="display:none;padding:3px 10px;border-radius:4px;font-weight:600"></span>
@@ -432,7 +433,8 @@ function typeLabel() {
   const t = { ha: 'Heikin Ashi', candle: 'Candles', line: 'Line', renko: 'Renko', kagi: 'Kagi' }[ctype];
   return vcOn() ? t + ' (volume)' : t;
 }
-function vcOn() { return volCandles && (ctype === 'ha' || ctype === 'candle'); }
+let hideC = false; try { hideC = localStorage.getItem('gc_hidecandles') === '1'; } catch (e) {}   // hide the candles (indicators, drawings and orders stay)
+function vcOn() { return volCandles && !hideC && (ctype === 'ha' || ctype === 'candle'); }
 function modeLabel() { return ctype === 'renko' || ctype === 'kagi' ? ivLabel() : `${tf} · ${typeLabel()}`; }
 let status = null, statusAt = 0, lastOk = 0, polling = false, lastClosedCount = 0;
 
@@ -553,7 +555,7 @@ const lineData = b => ({ time: b.time, value: b.close });
 /* Candle colours from an SMMA: close above it = green, below it = red (body, wick and border). Works with the SMMA's own
    timeframe, so a 5m SMMA can colour the candles of a 15 second chart. */
 function painter() {
-  if (ctype === 'kagi' || ctype === 'line' || vcOn()) return null;
+  if (ctype === 'kagi' || ctype === 'line' || vcOn() || hideC) return null;
   return inds.find(i => i.type === 'smma' && i.paint && i.visible !== false && i.vals && i.vals[0]) || null;
 }
 function paintBar(b, i, p) {
@@ -625,8 +627,9 @@ function buildKagi() {
   }
 }
 function styleSeries() {
-  const clear = 'rgba(0,0,0,0)', k = ctype === 'kagi' || ctype === 'line' || vcOn();
-  lineSeries.applyOptions({ visible: ctype === 'line' });
+  const clear = 'rgba(0,0,0,0)', k = ctype === 'kagi' || ctype === 'line' || vcOn() || hideC;
+  lineSeries.applyOptions({ visible: ctype === 'line' && !hideC });
+  const hb = $('hidebtn'); if (hb) { hb.innerHTML = hideC ? '&#128065; Show candles' : '&#128065; Hide candles'; hb.style.background = hideC ? '#546e7a' : ''; hb.style.color = hideC ? '#fff' : ''; }
   $('vcwrap').style.display = ctype === 'ha' || ctype === 'candle' ? '' : 'none';
   $('vcbox').checked = volCandles;
   $('under').style.display = vcOn() ? 'block' : 'none';
@@ -3216,6 +3219,10 @@ $('winbtn').onclick = () => {
   const n = WIN ? Number(WIN) + 1 : 2;
   window.open(`${location.pathname}?w=${n}`, 'gc_win_' + n, 'popup=yes,width=1280,height=800');
 };
+$('hidebtn').onclick = () => {
+  hideC = !hideC; try { localStorage.setItem('gc_hidecandles', hideC ? '1' : '0'); } catch (e) {}
+  styleSeries(); repaintBars(null); bump();
+};
 $('themebtn').onclick = () => {
   theme = theme === 'dark' ? 'light' : 'dark'; store.set('gc_theme', theme); applyTheme();
   send({ type: 'theme', theme });
@@ -3719,6 +3726,7 @@ function drawVolCandles(c) {
   }
 }
 function drawKagi() {
+  if (hideC) return;
   if (ctype !== 'kagi' || !kagiSegs.length) return;
   const r = ts.getVisibleLogicalRange(); if (!r) return;
   const from = Math.max(0, Math.floor(r.from) - 1), to = Math.min(raw.length - 1, Math.ceil(r.to) + 1);
