@@ -1281,7 +1281,75 @@ function mtfLen(ind) {
   const iv = parseIv(ind.tf);            // on a tick chart (100t...) any time frame works: ticks are grouped by their real time
   return iv && iv.kind === 'time' && (kind === 'tick' || iv.n > tfSec) ? iv.n : null;
 }
+/* A timeframe SHORTER than the chart (e.g. a 1s SMMA on a 15s chart): the shorter candles are loaded in the background, the
+   indicator is calculated on them, and each chart candle shows the value at its close (the last short candle inside it). */
+const LTF = {};                                   // '1s' -> { n, rows, loading }
+function ltfLen(ind) {
+  if (!MTF_TYPES.includes(ind.type) || !ind.tf || kind !== 'time') return null;
+  const iv = parseIv(ind.tf);
+  return iv && iv.kind === 'time' && iv.n < tfSec ? iv.n : null;
+}
+function ltfQuery(n, since) {
+  return `/api/bars?symbol=${encodeURIComponent(symbol)}&kind=time&p=${n}` + (since != null ? `&since=${since}` : secHours > 0 ? `&hours=${secHours}` : '');
+}
+async function ltfEnsure(ind) {
+  const n = ltfLen(ind), key = ind.tf;
+  if (!n || LTF[key]) return;
+  const L = LTF[key] = { n, rows: [], loading: true };
+  try {
+    const j = await (await fetch(ltfQuery(n))).json();
+    if (LTF[key] !== L) return;
+    if (j.bars) L.rows = j.bars;
+  } catch (e) { if (LTF[key] === L) delete LTF[key]; return; }
+  L.loading = false;
+  inds.filter(i => ltfLen(i) && i.tf === key).forEach(fullData);
+  legend(null); bump();
+}
+let ltfBusy = false;
+async function ltfPoll() {                        // keep the short candles live
+  if (ltfBusy || RP.on) return;
+  const keys = Object.keys(LTF).filter(k => LTF[k] && !LTF[k].loading && LTF[k].rows.length);
+  if (!keys.length) return;
+  ltfBusy = true;
+  try {
+    for (const key of keys) {
+      const L = LTF[key], id = reqId, since = L.rows[L.rows.length - 1][0];
+      const j = await (await fetch(ltfQuery(L.n, since))).json();
+      if (LTF[key] !== L || id !== reqId || !j.bars) continue;
+      let changed = false;
+      for (const c of j.bars) {
+        const lastT = L.rows[L.rows.length - 1][0];
+        if (c[0] === lastT) { L.rows[L.rows.length - 1] = c; changed = true; } else if (c[0] > lastT) { L.rows.push(c); changed = true; }
+      }
+      if (changed && raw.length) { inds.filter(i => ltfLen(i) && i.tf === key).forEach(i => tailData(i, Math.max(0, raw.length - 2))); legend(null); bump(); }
+    }
+  } catch (e) { /* next poll retries */ } finally { ltfBusy = false; }
+}
+setInterval(ltfPoll, 1000);
+function ltfCalc(ind, fn) {
+  const L = LTF[ind.tf]; if (!L) ltfEnsure(ind);
+  const N = raw.length, blank = () => fn(ind).map(a => a.map(() => NaN));
+  if (!L || !L.rows.length || !N) return blank();
+  const rows = L.rows, M = rows.length, sRaw = raw, sHa = ha; let vals;
+  try {
+    raw = rows; ha = [];
+    if (ctype === 'ha') haFrom(0);
+    else for (let k = 0; k < M; k++) ha[k] = { time: rows[k][0], open: rows[k][1], high: rows[k][2], low: rows[k][3], close: rows[k][4] };
+    vals = fn(ind);
+  } finally { raw = sRaw; ha = sHa; }
+  const lim = RP.on ? RP.t : Infinity;
+  return vals.map(a => {
+    const o = new Array(N); let j = 0;
+    for (let i = 0; i < N; i++) {
+      const end = Math.min(raw[i][5] + tfSec, lim);
+      while (j + 1 < M && rows[j + 1][5] < end) j++;
+      o[i] = rows[j][5] < end ? a[j] : NaN;
+    }
+    return o;
+  });
+}
 function mtf(ind, fn) {
+  if (ltfLen(ind)) return ltfCalc(ind, fn);
   const T = mtfLen(ind), n = raw.length;
   if (!T || !n) return fn(ind);
   const rows = [], idx = new Array(n); let last = null;
@@ -2246,7 +2314,8 @@ function drawHDoji(pw, ph) {
 function label(ind) {
   const b = labelBase(ind);
   if (!ind.tf || !MTF_TYPES.includes(ind.type) || (kind !== 'time' && kind !== 'tick')) return b;
-  return b + (mtfLen(ind) ? ` · ${ind.tf}${ind.tfLive ? ' live' : ''}` : ` · ${ind.tf} ignored (not longer than the chart)`);
+  if (ltfLen(ind)) { const L = LTF[ind.tf]; return b + ` · ${ind.tf} (shorter than the chart)` + (!L || L.loading ? ' loading...' : !L.rows.length ? ' no data' : ''); }
+  return b + (mtfLen(ind) ? ` · ${ind.tf}${ind.tfLive ? ' live' : ''}` : ` · ${ind.tf} ignored (same as the chart)`);
 }
 function labelBase(ind) {
   if (ind.type === 'bos') return 'HA BOS';
@@ -2690,7 +2759,7 @@ function renderPanel() {
       `<button class="x" title="Remove">Remove</button>`;
     if (MTF_TYPES.includes(ind.type)) {
       const cur = ind.tf || '', opts = !cur || MTF_PRESETS.includes(cur) ? MTF_PRESETS : [...MTF_PRESETS, cur];
-      const html = `<label title="Calculate this indicator on the candles of another timeframe and show it on this chart. Chart = this chart's own candles. It must be longer than the chart interval.">Timeframe <select data-k="tf"><option value="">Chart</option>` +
+      const html = `<label title="Calculate this indicator on the candles of another timeframe and show it on this chart. Chart = this chart's own candles. A longer timeframe follows its higher candles; a shorter one (e.g. 1s on a 15s chart) is calculated on those shorter candles and shows its value at each candle's close.">Timeframe <select data-k="tf"><option value="">Chart</option>` +
         opts.map(v => `<option value="${v}" ${v === cur ? 'selected' : ''}>${v}</option>`).join('') + `</select></label>` +
         (cur ? `<label title="Off: the value of the last closed higher candle (never repaints). On: also follows the higher candle that is still forming, so it can move until that candle closes."><input type="checkbox" data-k="tfLive" ${ind.tfLive ? 'checked' : ''}> Live</label>` : '');
       const xb = row.querySelector('.x'); if (xb) xb.insertAdjacentHTML('beforebegin', html); else row.insertAdjacentHTML('beforeend', html);
@@ -3086,7 +3155,7 @@ async function load() {
   syncControls();
   if (RP.on) replayPause();                        // replay: don't step while the new candles load
   const id = ++reqId;
-  raw = []; ha = []; flowReset();
+  raw = []; ha = []; flowReset(); for (const k in LTF) delete LTF[k];
   $('msg').style.display = 'flex';
   $('msg').textContent = kind === 'time' && tfSec >= 60 && tfSec % 60 === 0 ? `Loading ${symbol} bars from ${SRC}...`
     : `Loading ${symbol} ticks... (the first time for a symbol can take a few seconds)`;
