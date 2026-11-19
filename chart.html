@@ -216,6 +216,7 @@
     <input id="boxin" type="number" min="0" step="any" title="Price units. Press Enter."></label>
   <div class="sep"></div>
   <button class="tool" id="indbtn">&#402;x Indicators</button>
+  <button class="tool" id="clrbtn" title="Clear chart: delete ALL indicators in one click (your templates are not touched, pick one to bring its indicators back)">Clear</button>
   <label id="keepwrap" title="ON: the indicators you have stay when you change the timeframe. OFF: every timeframe has its own indicators - a new timeframe starts clean, and going back to one brings its own indicators back. Drawings stay either way."><input type="checkbox" id="keepbox"> Keep indicators on every timeframe</label>
   <button class="tool" id="tplbtn" title="Templates: save this chart's indicators, chart type and timeframe, and switch between them in one click">&#9783; Templates &#9662;</button>
   <button class="tool" id="invbtn" title="Invert price scale (Alt+I)">Invert</button>
@@ -2993,6 +2994,13 @@ function removeInd(ind) {
   ind.series.forEach(s => chart.removeSeries(s));
   inds = inds.filter(i => i !== ind); layoutPanes(); refreshBos(); saveInds(); renderPanel(); legend(null); repaintBars(null);
 }
+function clearInds() {
+  if (POP) closePop();
+  inds.forEach(i => i.series.forEach(x => { try { chart.removeSeries(x); } catch (e) {} }));
+  inds = []; tplCur = ''; store.set('gc_tplcur' + WK, tplCur);
+  layoutPanes(); refreshBos(); saveInds(); renderPanel(); legend(null); repaintBars(null); bump();
+}
+$('clrbtn').onclick = clearInds;
 /* settings of one indicator, opened from its gear in the legend: the same fields as the Indicators panel, applied live */
 let POP = null;
 function openPop(n, ev) {

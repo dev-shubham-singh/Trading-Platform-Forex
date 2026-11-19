@@ -23,6 +23,7 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
 - Dark / light mode
 - **Templates transfer**: Templates menu > Copy all templates, then on the other chart (gold or India) Paste templates; same-name templates ask before replacing
 - EMA / SMMA (and SMA, BB, MACD, ATR) **Timeframe** list now starts at 1s; on a tick chart (e.g. 100t) any time frame works, on a time chart it must be longer than the chart interval
+- **Clear** button (next to Indicators): deletes every indicator in one click; pick a template to bring them back
 - **New window + Sync**: open a second chart window (e.g. 5m) for another screen; drawings, crosshair, symbol and theme stay in sync (toggle)
 - Indicators: EMA, SMMA, SMA, Bollinger Bands, pivot points (any period, R3/S3, history),
   candle high/low liquidity sweeps, previous day high/low/close, VWAP with deviation bands, ATR (own pane)
