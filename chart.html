@@ -216,6 +216,7 @@
     <input id="boxin" type="number" min="0" step="any" title="Price units. Press Enter."></label>
   <div class="sep"></div>
   <button class="tool" id="indbtn">&#402;x Indicators</button>
+  <button class="tool" id="scanbtn" title="Scanner: check every symbol of a watchlist for price below / above an SMMA and save the matches as a new list">&#128269; Scan</button>
   <button class="tool" id="clrbtn" title="Clear chart: delete ALL indicators in one click (your templates are not touched, pick one to bring its indicators back)">Clear</button>
   <label id="keepwrap" title="ON: the indicators you have stay when you change the timeframe. OFF: every timeframe has its own indicators - a new timeframe starts clean, and going back to one brings its own indicators back. Drawings stay either way."><input type="checkbox" id="keepbox"> Keep indicators on every timeframe</label>
   <button class="tool" id="tplbtn" title="Templates: save this chart's indicators, chart type and timeframe, and switch between them in one click">&#9783; Templates &#9662;</button>
@@ -344,6 +345,20 @@
   <label style="display:flex;gap:6px;align-items:center;color:var(--muted);margin:4px 0;cursor:pointer"><input type="checkbox" id="fsl_tight"> Never wider than my original stop</label>
   <div id="fsl_info" style="margin-top:6px;padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.6"></div>
 </div>
+<div id="scanpop" class="pop" style="width:min(380px, calc(100vw - 24px)); padding:10px 12px; font-size:12px">
+  <div class="th" style="margin:0 0 6px">Scanner: price vs SMMA</div>
+  <div style="color:var(--muted);line-height:1.5;margin-bottom:6px">Checks every symbol of the list you pick and saves the matches as a new list (Symbols &gt; Scans), named with the time and timeframe.</div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Check</label><select id="sc_src" style="flex:1"></select></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Timeframe</label><input id="sc_tf" list="sc_tfl" style="width:80px" title="Any time frame: 1s, 5s, 15s, 1m, 15m, 1h, 1d ..."><datalist id="sc_tfl"></datalist>
+    <label style="color:var(--muted)">SMMA</label><input id="sc_len" type="number" min="1" step="1" style="width:60px"></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Price is</label><select id="sc_side" style="flex:1"><option value="below">Below the SMMA (sell side)</option><option value="above">Above the SMMA (buy side)</option><option value="both">Either side (both)</option></select></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">For at least</label><input id="sc_n" type="number" min="1" step="1" style="width:60px"> <span style="color:var(--muted)">candles in a row</span></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Candles</label><select id="sc_ha" style="flex:1"><option value="ha">Heikin Ashi</option><option value="real">Normal candles</option></select></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Counts when</label><select id="sc_whole" style="flex:1"><option value="close">The candle closes beyond the SMMA</option><option value="whole">The whole candle is beyond it</option></select></div>
+  <label style="display:flex;gap:6px;align-items:center;color:var(--muted);margin:4px 0;cursor:pointer"><input type="checkbox" id="sc_form"> Include the candle that is still forming</label>
+  <div style="display:flex;gap:6px;margin-top:8px"><button class="tool" id="sc_run" style="flex:1">Run scan</button><button class="tool" id="sc_stop" style="display:none">Stop</button><button class="tool" id="sc_open" style="display:none">Open results</button></div>
+  <div id="sc_msg" style="margin-top:6px;padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.6;color:var(--muted)"></div>
+</div>
 <div id="tplpop" class="pop">
   <div class="th">Templates - indicators, chart type and timeframe</div><div id="tpllist"></div>
   <div id="tplsave"><input type="text" id="tplname" maxlength="40" placeholder="Name, e.g. 1D pivots" autocomplete="off">
@@ -358,7 +373,7 @@
     <div id="tplxmsg" style="color:var(--muted);margin-top:5px"></div></div>
 </div>
 <div id="sympop" class="pop"><input id="symq" placeholder="Search symbols" autocomplete="off">
-  <div class="symtabs" id="symtabs"><button id="symtab_all" class="on">All symbols</button><button id="symtab_fav">&#9733; Favorites</button></div><div id="symlist"></div></div>
+  <div class="symtabs" id="symtabs"><button id="symtab_all" class="on">All symbols</button><button id="symtab_fav">&#9733; Favorites</button><button id="symtab_scan" title="Lists saved by the scanner">&#128269; Scans</button></div><div id="symlist"></div></div>
 <div id="indpop"><div class="ph"><span id="pop_title"></span><button class="x" id="pop_close">Close</button></div><div id="pop_body"></div></div>
 <div id="panel">
   <div class="ph">Indicators <button class="x" id="pclose">Close</button></div>
@@ -3924,6 +3939,7 @@ requestAnimationFrame(render);
 /* ---------------- start ---------------- */
 /* ---------------- symbol, chart type and interval controls ---------------- */
 let favs = store.get('gc_favs', []), favTab = store.get('gc_favtab', false);
+let scanTab = store.get('gc_scantab', false), SCANS = store.get('gc_scans', []);
 let LISTS = [], listTab = store.get('gc_listtab', ''), LDATA = {}, listTimer = 0;   // server lists (Indian chart): F&O, Nifty 50 / 100 / 500, top gainers
 const isFav = n => favs.some(f => f.name === n);
 function toggleFav(n, d) {
@@ -3935,14 +3951,15 @@ function favUI() {
   $('favbtn').innerHTML = on ? '&#9733;' : '&#9734;'; $('favbtn').classList.toggle('on', on);
   $('favbtn').title = on ? 'Remove from favorites' : 'Add this symbol to your favorites';
   $('symtab_fav').innerHTML = '&#9733; Favorites' + (favs.length ? ` (${favs.length})` : '');
-  $('symtab_all').classList.toggle('on', !favTab && !listTab); $('symtab_fav').classList.toggle('on', favTab && !listTab);
-  document.querySelectorAll('#symtabs button[data-l]').forEach(b => b.classList.toggle('on', b.dataset.l === listTab));
+  $('symtab_all').classList.toggle('on', !favTab && !listTab && !scanTab); $('symtab_fav').classList.toggle('on', favTab && !listTab && !scanTab); $('symtab_scan').classList.toggle('on', scanTab);
+  $('symtab_scan').innerHTML = '&#128269; Scans' + (SCANS.length ? ` (${SCANS.length})` : '');
+  document.querySelectorAll('#symtabs button[data-l]').forEach(b => b.classList.toggle('on', b.dataset.l === listTab && !scanTab));
 }
 function buildTabs() {
   $('symtabs').querySelectorAll('button[data-l]').forEach(b => b.remove());
   LISTS.forEach(l => {
     const b = document.createElement('button'); b.dataset.l = l.id; b.textContent = l.label; b.title = l.title || l.label;
-    b.onclick = () => { listTab = l.id; favTab = false; store.set('gc_listtab', listTab); symSel = 0; favUI(); loadList(l.id); renderSymbols(); $('symq').focus(); };
+    b.onclick = () => { scanTab = false; store.set('gc_scantab', false); listTab = l.id; favTab = false; store.set('gc_listtab', listTab); symSel = 0; favUI(); loadList(l.id); renderSymbols(); $('symq').focus(); };
     $('symtabs').appendChild(b);
   });
   if (listTab && !LISTS.some(l => l.id === listTab)) listTab = '';
@@ -3976,6 +3993,7 @@ async function setSymbol(name, fromSync) {
   await load();
 }
 function renderSymbols() {
+  if (scanTab) return renderScans();
   const q = $('symq').value.trim().toLowerCase();
   const LD = listTab ? (LDATA[listTab] || { status: 'loading', symbols: [] }) : null;
   const hits = LD ? LD.symbols.filter(s => !q || s.name.toLowerCase().includes(q) || (s.desc || '').toLowerCase().includes(q))
@@ -4033,8 +4051,123 @@ async function openSymbols() {
 }
 function closeSymbols() { $('sympop').style.display = 'none'; }
 $('favbtn').onclick = () => toggleFav(symbol, symMeta && symMeta.desc);
-$('symtab_all').onclick = () => { favTab = false; listTab = ''; store.set('gc_listtab', ''); store.set('gc_favtab', false); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
-$('symtab_fav').onclick = () => { favTab = true; listTab = ''; store.set('gc_listtab', ''); store.set('gc_favtab', true); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
+$('symtab_all').onclick = () => { scanTab = false; store.set('gc_scantab', false); favTab = false; listTab = ''; store.set('gc_listtab', ''); store.set('gc_favtab', false); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
+$('symtab_fav').onclick = () => { scanTab = false; store.set('gc_scantab', false); favTab = true; listTab = ''; store.set('gc_listtab', ''); store.set('gc_favtab', true); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
+/* ---------------- scanner: which symbols have price below / above an SMMA for N candles ---------------- */
+$('symtab_scan').onclick = () => { scanTab = true; store.set('gc_scantab', true); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
+function renderScans() {
+  const q = $('symq').value.trim().toLowerCase(), hits = [];
+  let html = '';
+  SCANS.forEach(sc => {
+    const items = sc.items.filter(x => !q || x.name.toLowerCase().includes(q) || (x.desc || '').toLowerCase().includes(q));
+    html += `<div class="symhead" style="text-transform:none;display:flex;gap:6px;align-items:center"><b style="color:var(--text)">${sc.title}</b><span style="flex:1">${sc.detail} - ${sc.items.length} found</span><i class="scdel" data-id="${sc.id}" title="Delete this scan" style="cursor:pointer;font-style:normal">&#10005;</i></div>`;
+    items.forEach(x => {
+      hits.push(x);
+      html += `<div class="symrow" data-n="${x.name}"><b>${x.name}</b><span>${x.desc || ''}</span>${x.note ? `<em style="margin-left:auto;font-style:normal;font-size:12px;color:${x.side === 'below' ? '#ef5350' : '#26a69a'}">${x.note}</em>` : ''}</div>`;
+    });
+    if (!items.length) html += '<div class="symhead" style="text-transform:none">No symbols matched.</div>';
+  });
+  $('symlist').innerHTML = html || '<div class="symhead" style="text-transform:none">No scans yet. Press the Scan button in the toolbar and run one.</div>';
+  $('symlist').querySelectorAll('.symrow').forEach(r => r.onclick = () => { closeSymbols(); setSymbol(r.dataset.n); });
+  $('symlist').querySelectorAll('.scdel').forEach(b => b.onclick = e => {
+    e.stopPropagation(); SCANS = SCANS.filter(x => x.id !== b.dataset.id); store.set('gc_scans', SCANS); favUI(); renderScans();
+  });
+  return hits;
+}
+const SCAN = Object.assign({ src: 'fav', tf: '', len: 50, side: 'below', n: 3, ha: 'ha', whole: 'close', form: false }, store.get('gc_scancfg', {}));
+let scanAbort = false, scanRunning = false;
+function scanSave() { store.set('gc_scancfg', SCAN); }
+async function scanSources() {
+  const out = [{ id: 'fav', label: `Favorites (${favs.length})`, get: async () => favs.slice() }];
+  if (!symbols.length) { try { symbols = (await (await fetch('/api/symbols')).json()).symbols || []; } catch (e) {} }
+  const mw = symbols.filter(x => x.mw);
+  if (mw.length) out.push({ id: 'mw', label: `${watchLabel} (${mw.length})`, get: async () => mw.map(x => ({ name: x.name, desc: x.desc })) });
+  LISTS.forEach(l => out.push({ id: 'l:' + l.id, label: l.label, get: async () => {
+    for (let t = 0; t < 60; t++) {                                  // a server list can still be loading
+      const d = await (await fetch('/api/list?id=' + encodeURIComponent(l.id))).json();
+      if (d.status !== 'loading') return d.symbols || [];
+      $('sc_msg').textContent = `Loading the ${l.label} list...`; await new Promise(r => setTimeout(r, 2000));
+    }
+    return [];
+  } }));
+  return out;
+}
+function scanHA(rows) {                                             // Heikin Ashi, same maths as the chart
+  const o = [], h = [], l = [], c = [];
+  for (let k = 0; k < rows.length; k++) {
+    const [, ro, rh, rl, rc] = rows[k], hc = (ro + rh + rl + rc) / 4, ho = k ? (o[k - 1] + c[k - 1]) / 2 : (ro + rc) / 2;
+    o.push(ho); c.push(hc); h.push(Math.max(rh, ho, hc)); l.push(Math.min(rl, ho, hc));
+  }
+  return { h, l, c };
+}
+function scanCheck(rows, cfg) {                                     // -> { below: run, above: run } (candles in a row, counted back from the last one used)
+  const cd = cfg.ha === 'ha' ? scanHA(rows) : { h: rows.map(r => r[2]), l: rows.map(r => r[3]), c: rows.map(r => r[4]) };
+  const sm = smma(cd.c, cfg.len), last = rows.length - 1 - (cfg.form ? 0 : 1);
+  const run = side => {
+    let k = last, n = 0;
+    while (k >= 0 && !isNaN(sm[k])) {
+      const v = side === 'below' ? (cfg.whole === 'whole' ? cd.h[k] : cd.c[k]) < sm[k] : (cfg.whole === 'whole' ? cd.l[k] : cd.c[k]) > sm[k];
+      if (!v) break; n++; k--;
+    }
+    return n;
+  };
+  return { below: run('below'), above: run('above'), have: last >= 0 && !isNaN(sm[last]) };
+}
+async function scanRunNow() {
+  if (scanRunning) return;
+  const iv = parseIv($('sc_tf').value.trim());
+  if (!iv || iv.kind !== 'time') { $('sc_msg').textContent = 'Type a time frame like 1s, 15s, 5m, 1h or 1d.'; return; }
+  SCAN.tf = $('sc_tf').value.trim(); SCAN.len = Math.max(1, Math.floor(+$('sc_len').value) || 50); SCAN.n = Math.max(1, Math.floor(+$('sc_n').value) || 1);
+  SCAN.src = $('sc_src').value; SCAN.side = $('sc_side').value; SCAN.ha = $('sc_ha').value; SCAN.whole = $('sc_whole').value; SCAN.form = $('sc_form').checked; scanSave();
+  const src = (await scanSources()).find(x => x.id === SCAN.src); if (!src) { $('sc_msg').textContent = 'Pick a list to check.'; return; }
+  scanRunning = true; scanAbort = false; $('sc_run').disabled = true; $('sc_stop').style.display = ''; $('sc_open').style.display = 'none';
+  const t0 = new Date();
+  try {
+    $('sc_msg').textContent = 'Reading the list...';
+    const list = await src.get(), found = []; let nodata = 0, errs = 0, i = 0;
+    const need = SCAN.len * 6 + SCAN.n + 10;                         // enough candles for the SMMA to settle
+    for (const sym of list) {
+      if (scanAbort) break;
+      i++; $('sc_msg').textContent = `Checking ${i} of ${list.length}: ${sym.name}   -   ${found.length} found`;
+      try {
+        const hrs = iv.n < 60 ? Math.max(1, Math.ceil(need * iv.n / 3600 * 1.3)) : 0;
+        const j = await fetchJ(`/api/bars?symbol=${encodeURIComponent(sym.name)}&kind=time&p=${iv.n}` + (hrs ? `&hours=${hrs}` : ''), 90000);
+        if (j.error || !j.bars || j.bars.length < SCAN.len + SCAN.n + 1) { nodata++; continue; }
+        const r = scanCheck(j.bars, SCAN);
+        if (!r.have) { nodata++; continue; }
+        const sides = SCAN.side === 'both' ? ['below', 'above'] : [SCAN.side];
+        for (const sd of sides) if (r[sd] >= SCAN.n) found.push({ name: sym.name, desc: sym.desc || '', side: sd, note: `${sd === 'below' ? '▼ below' : '▲ above'} ${r[sd]}` });
+      } catch (e) { errs++; }
+    }
+    const p2 = n => String(n).padStart(2, '0');
+    const title = `${t0.getFullYear()}-${p2(t0.getMonth() + 1)}-${p2(t0.getDate())} ${p2(t0.getHours())}:${p2(t0.getMinutes())} · ${SCAN.tf}`;
+    const detail = `SMMA ${SCAN.len} ${SCAN.side === 'both' ? 'below/above' : SCAN.side} ≥${SCAN.n} candles${SCAN.ha === 'ha' ? ' (HA)' : ''}`;
+    if (!scanAbort || found.length) {
+      SCANS.unshift({ id: String(t0.getTime()), title, detail, items: found }); SCANS = SCANS.slice(0, 30); store.set('gc_scans', SCANS); favUI();
+    }
+    $('sc_msg').textContent = `${scanAbort ? 'Stopped' : 'Done'}: ${found.length} of ${list.length} symbols matched` + (nodata ? `, ${nodata} had too little data for this timeframe` : '') + (errs ? `, ${errs} failed` : '') + `. Saved as "${title}".`;
+    $('sc_open').style.display = '';
+  } catch (e) { $('sc_msg').textContent = 'The scan stopped: ' + (e && e.message || e); }
+  finally { scanRunning = false; $('sc_run').disabled = false; $('sc_stop').style.display = 'none'; }
+}
+$('scanbtn').onclick = async e => {
+  e.stopPropagation(); const p = $('scanpop');
+  if (p.style.display === 'block') { p.style.display = 'none'; return; }
+  const r = $('scanbtn').getBoundingClientRect(); p.style.left = Math.max(8, Math.min(r.left, innerWidth - 400)) + 'px'; p.style.top = (r.bottom + 6) + 'px';
+  const srcs = await scanSources();
+  $('sc_src').innerHTML = srcs.map(x => `<option value="${x.id}">${x.label}</option>`).join('');
+  if (!srcs.some(x => x.id === SCAN.src)) SCAN.src = srcs[0].id;
+  $('sc_src').value = SCAN.src; $('sc_tf').value = SCAN.tf || (parseIv(tf) && parseIv(tf).kind === 'time' ? tf : '15s');
+  $('sc_tfl').innerHTML = ['1s', ...PRESETS].map(t => `<option value="${t}">`).join('');
+  const sm = inds.find(i => i.type === 'smma');
+  $('sc_len').value = SCAN.len || (sm ? sm.len : 50); $('sc_n').value = SCAN.n; $('sc_side').value = SCAN.side; $('sc_ha').value = SCAN.ha; $('sc_whole').value = SCAN.whole; $('sc_form').checked = !!SCAN.form;
+  if (!scanRunning) { $('sc_msg').textContent = 'Second timeframes (1s, 5s...) are slower: each symbol has to build its candles from ticks.'; $('sc_open').style.display = 'none'; }
+  p.style.display = 'block';
+};
+$('sc_run').onclick = scanRunNow;
+$('sc_stop').onclick = () => { scanAbort = true; };
+$('sc_open').onclick = () => { $('scanpop').style.display = 'none'; scanTab = true; store.set('gc_scantab', true); favUI(); openSymbols(); };
+document.addEventListener('mousedown', e => { if (!$('scanpop').contains(e.target) && !$('scanbtn').contains(e.target)) $('scanpop').style.display = 'none'; });
 $('symbtn').onclick = e => { e.stopPropagation(); $('sympop').style.display === 'block' ? closeSymbols() : openSymbols(); };
 $('symq').addEventListener('input', () => { symSel = 0; renderSymbols(); });
 $('symq').addEventListener('keydown', e => {
