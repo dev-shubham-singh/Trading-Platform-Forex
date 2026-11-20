@@ -443,7 +443,7 @@ function typeLabel() {
 let hideC = false; try { hideC = localStorage.getItem('gc_hidecandles') === '1'; } catch (e) {}   // hide the candles (indicators, drawings and orders stay)
 function vcOn() { return volCandles && !hideC && (ctype === 'ha' || ctype === 'candle'); }
 function modeLabel() { return ctype === 'renko' || ctype === 'kagi' ? ivLabel() : `${tf} · ${typeLabel()}`; }
-let status = null, statusAt = 0, lastOk = 0, polling = false, lastClosedCount = 0;
+let status = null, statusAt = 0, lastOk = 0, polling = false, pollAt = 0, lastClosedCount = 0;
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -1297,7 +1297,7 @@ async function ltfEnsure(ind) {
   if (!n || LTF[key]) return;
   const L = LTF[key] = { n, rows: [], loading: true };
   try {
-    const j = await (await fetch(ltfQuery(n))).json();
+    const j = await fetchJ(ltfQuery(n), 60000);
     if (LTF[key] !== L) return;
     if (j.bars) L.rows = j.bars;
   } catch (e) { if (LTF[key] === L) delete LTF[key]; return; }
@@ -1314,7 +1314,7 @@ async function ltfPoll() {                        // keep the short candles live
   try {
     for (const key of keys) {
       const L = LTF[key], id = reqId, since = L.rows[L.rows.length - 1][0];
-      const j = await (await fetch(ltfQuery(L.n, since))).json();
+      const j = await fetchJ(ltfQuery(L.n, since));
       if (LTF[key] !== L || id !== reqId || !j.bars) continue;
       let changed = false;
       for (const c of j.bars) {
@@ -1325,7 +1325,7 @@ async function ltfPoll() {                        // keep the short candles live
     }
   } catch (e) { /* next poll retries */ } finally { ltfBusy = false; }
 }
-setInterval(ltfPoll, 1000);
+ticker(ltfPoll, 1000);
 function ltfCalc(ind, fn) {
   const L = LTF[ind.tf]; if (!L) ltfEnsure(ind);
   const N = raw.length, blank = () => fn(ind).map(a => a.map(() => NaN));
@@ -1520,6 +1520,17 @@ function sessionsInView(ind) {              // day sessions overlapping the visi
   return out;
 }
 async function getJSON(url) { const r = await fetch(url); return r.json(); }
+/* A request that never answers must not freeze the chart: give up after `ms` so the next poll can try again. */
+async function fetchJ(url, ms = 15000) {
+  const c = new AbortController(), t = setTimeout(() => c.abort(), ms);
+  try { return await (await fetch(url, { signal: c.signal })).json(); } finally { clearTimeout(t); }
+}
+/* A timer that keeps its pace in a window that is hidden, minimised or on another screen: browsers slow ordinary timers in
+   such windows to once a minute (so a second chart window stopped getting candles); a worker's timer is not slowed. */
+function ticker(fn, ms) {
+  try { const w = new Worker(URL.createObjectURL(new Blob([`setInterval(() => postMessage(0), ${ms})`]))); w.onmessage = fn; return; } catch (e) {}
+  setInterval(fn, ms);
+}
 async function flowTick() {
   if (FLOW.busy || !raw.length) return;
   FLOW.busy = true;
@@ -3160,7 +3171,7 @@ async function load() {
   $('msg').textContent = kind === 'time' && tfSec >= 60 && tfSec % 60 === 0 ? `Loading ${symbol} bars from ${SRC}...`
     : `Loading ${symbol} ticks... (the first time for a symbol can take a few seconds)`;
   try {
-    const j = await (await fetch(query())).json();
+    const j = await fetchJ(query(), 90000);
     if (id !== reqId) return;
     if (j.error) { $('msg').textContent = j.error; return; }
     if (isSecs() && secHours > 0 && j.bars.length) {           // also trim here, so it works even if the server window is an older version
@@ -3187,16 +3198,20 @@ async function load() {
       : 'No candles yet. Second, tick, Renko and Kagi charts are built from ticks this app records while the market is open. ' +
         'Keep it running during market hours (minute charts like 1m have full history now).';
   } catch (e) {
-    if (id === reqId) $('msg').textContent = `Lost connection to the chart server. Is its window still open?`;
+    if (id === reqId) {
+      $('msg').style.display = 'flex'; $('msg').textContent = `No answer from the chart server yet - trying again... (is its window still open?)`;
+      setTimeout(() => { if (id === reqId && !raw.length) load(); }, 3000);     // keep trying instead of staying empty
+    }
   }
 }
 
 async function poll() {
-  if (polling || !raw.length || RP.on) return;                  // replay: no live candles
-  polling = true;
+  if (!raw.length || RP.on) return;                             // replay: no live candles
+  if (polling && Date.now() - pollAt < 20000) return;
+  polling = true; pollAt = Date.now();
   const id = reqId, since = raw[raw.length - 1][0];
   try {
-    const j = await (await fetch(query(since))).json();
+    const j = await fetchJ(query(since));
     if (id !== reqId || j.error || RP.on) return;
     setStatus(j.status);
     if (j.cnt != null) tickCnt = j.cnt;
@@ -3210,7 +3225,8 @@ async function poll() {
   } catch (e) { /* server busy or restarting; next poll retries */ }
   finally { polling = false; }
 }
-setInterval(poll, 500);
+ticker(poll, 500);
+['visibilitychange', 'focus', 'pageshow', 'online'].forEach(ev => window.addEventListener(ev, () => { if (!document.hidden) poll(); }));
 function applyNewBars(first) {                   // raw grew / changed from index `first`: update chart + indicators
   buildFrom(first);
   showBars(first);
