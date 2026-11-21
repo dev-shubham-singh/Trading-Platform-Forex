@@ -204,6 +204,11 @@ def store_for(sym):
         with STORES_LOCK:
             st = STORES.setdefault(sym, st)
     st.last_used = time.time()
+    with STORES_LOCK:                                  # a scan of hundreds of symbols must not keep days of ticks for each one
+        if len(STORES) > 8:
+            idle = sorted((s for s in STORES.values() if time.time() - s.last_used > 30), key=lambda s: s.last_used)
+            for s in idle[:len(STORES) - 8]:
+                STORES.pop(s.sym, None)
     return st
 
 

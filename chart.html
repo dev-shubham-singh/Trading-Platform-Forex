@@ -4081,6 +4081,7 @@ function scanSave() { store.set('gc_scancfg', SCAN); }
 async function scanSources() {
   const out = [{ id: 'fav', label: `Favorites (${favs.length})`, get: async () => favs.slice() }];
   if (!symbols.length) { try { symbols = (await (await fetch('/api/symbols')).json()).symbols || []; } catch (e) {} }
+  if (SRC === 'MT5' && symbols.length) out.push({ id: 'all', label: `All broker symbols (${symbols.length})`, get: async () => symbols.map(x => ({ name: x.name, desc: x.desc })) });
   const mw = symbols.filter(x => x.mw);
   if (mw.length) out.push({ id: 'mw', label: `${watchLabel} (${mw.length})`, get: async () => mw.map(x => ({ name: x.name, desc: x.desc })) });
   LISTS.forEach(l => out.push({ id: 'l:' + l.id, label: l.label, get: async () => {
@@ -4128,19 +4129,28 @@ async function scanRunNow() {
     $('sc_msg').textContent = 'Reading the list...';
     const list = await src.get(), found = []; let nodata = 0, errs = 0, i = 0;
     const need = SCAN.len * 6 + SCAN.n + 10;                         // enough candles for the SMMA to settle
-    for (const sym of list) {
-      if (scanAbort) break;
-      i++; $('sc_msg').textContent = `Checking ${i} of ${list.length}: ${sym.name}   -   ${found.length} found`;
-      try {
-        const hrs = iv.n < 60 ? Math.max(1, Math.ceil(need * iv.n / 3600 * 1.3)) : 0;
-        const j = await fetchJ(`/api/bars?symbol=${encodeURIComponent(sym.name)}&kind=time&p=${iv.n}` + (hrs ? `&hours=${hrs}` : ''), 90000);
-        if (j.error || !j.bars || j.bars.length < SCAN.len + SCAN.n + 1) { nodata++; continue; }
-        const r = scanCheck(j.bars, SCAN);
-        if (!r.have) { nodata++; continue; }
-        const sides = SCAN.side === 'both' ? ['below', 'above'] : [SCAN.side];
-        for (const sd of sides) if (r[sd] >= SCAN.n && (!SCAN.max || r[sd] <= SCAN.max)) found.push({ name: sym.name, desc: sym.desc || '', side: sd, note: `${sd === 'below' ? '▼ below' : '▲ above'} ${r[sd]}` });
-      } catch (e) { errs++; }
-    }
+    let next = 0;
+    const work = async () => {                                       // a few symbols at a time, so 500 or 1000 symbols finish in reasonable time
+      while (!scanAbort) {
+        const sym = list[next++]; if (!sym) return;
+        let tries = 0;
+        for (;;) {
+          try {
+            const hrs = iv.n < 60 ? Math.max(1, Math.ceil(need * iv.n / 3600 * 1.3)) : 0;
+            const j = await fetchJ(`/api/bars?symbol=${encodeURIComponent(sym.name)}&kind=time&p=${iv.n}` + (hrs ? `&hours=${hrs}` : ''), 120000);
+            if (j.error || !j.bars || j.bars.length < SCAN.len + SCAN.n + 1) { nodata++; break; }
+            const r = scanCheck(j.bars, SCAN);
+            if (!r.have) { nodata++; break; }
+            const sides = SCAN.side === 'both' ? ['below', 'above'] : [SCAN.side];
+            for (const sd of sides) if (r[sd] >= SCAN.n && (!SCAN.max || r[sd] <= SCAN.max)) found.push({ name: sym.name, desc: sym.desc || '', side: sd, note: `${sd === 'below' ? '\u25BC below' : '\u25B2 above'} ${r[sd]}` });
+            break;
+          } catch (e) { if (++tries > 2) { errs++; break; } await new Promise(r => setTimeout(r, 1500 * tries)); }   // rate limit or hiccup: wait and retry
+        }
+        done++; $('sc_msg').textContent = `Checked ${done} of ${list.length}   -   ${found.length} found  (${SCAN.tf}, last: ${sym.name})`;
+      }
+    };
+    let done = 0;
+    await Promise.all(Array.from({ length: SRC === 'MT5' ? 2 : 4 }, work));
     const p2 = n => String(n).padStart(2, '0');
     const title = `${t0.getFullYear()}-${p2(t0.getMonth() + 1)}-${p2(t0.getDate())} ${p2(t0.getHours())}:${p2(t0.getMinutes())} · ${SCAN.tf}`;
     const detail = `SMMA ${SCAN.len} ${SCAN.side === 'both' ? 'below/above' : SCAN.side} ${SCAN.max ? (SCAN.max === SCAN.n ? `exactly ${SCAN.n}` : `${SCAN.n}-${SCAN.max}`) : `≥${SCAN.n}`} candles${SCAN.ha === 'ha' ? ' (HA)' : ''}`;
