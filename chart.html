@@ -353,6 +353,7 @@
     <label style="color:var(--muted)">SMMA</label><input id="sc_len" type="number" min="1" step="1" style="width:60px"></div>
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Price is</label><select id="sc_side" style="flex:1"><option value="below">Below the SMMA (sell side)</option><option value="above">Above the SMMA (buy side)</option><option value="both">Either side (both)</option></select></div>
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">For at least</label><input id="sc_n" type="number" min="1" step="1" style="width:60px"> <span style="color:var(--muted)">candles in a row</span></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">No more than</label><input id="sc_max" type="number" min="0" step="1" style="width:60px" placeholder="any"> <span style="color:var(--muted)">candles (empty = no limit)</span></div>
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Candles</label><select id="sc_ha" style="flex:1"><option value="ha">Heikin Ashi</option><option value="real">Normal candles</option></select></div>
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Counts when</label><select id="sc_whole" style="flex:1"><option value="close">The candle closes beyond the SMMA</option><option value="whole">The whole candle is beyond it</option></select></div>
   <label style="display:flex;gap:6px;align-items:center;color:var(--muted);margin:4px 0;cursor:pointer"><input type="checkbox" id="sc_form"> Include the candle that is still forming</label>
@@ -4074,7 +4075,7 @@ function renderScans() {
   });
   return hits;
 }
-const SCAN = Object.assign({ src: 'fav', tf: '', len: 50, side: 'below', n: 3, ha: 'ha', whole: 'close', form: false }, store.get('gc_scancfg', {}));
+const SCAN = Object.assign({ src: 'fav', tf: '', len: 50, side: 'below', n: 3, ha: 'ha', whole: 'close', form: false, max: 0 }, store.get('gc_scancfg', {}));
 let scanAbort = false, scanRunning = false;
 function scanSave() { store.set('gc_scancfg', SCAN); }
 async function scanSources() {
@@ -4117,7 +4118,8 @@ async function scanRunNow() {
   if (scanRunning) return;
   const iv = parseIv($('sc_tf').value.trim());
   if (!iv || iv.kind !== 'time') { $('sc_msg').textContent = 'Type a time frame like 1s, 15s, 5m, 1h or 1d.'; return; }
-  SCAN.tf = $('sc_tf').value.trim(); SCAN.len = Math.max(1, Math.floor(+$('sc_len').value) || 50); SCAN.n = Math.max(1, Math.floor(+$('sc_n').value) || 1);
+  SCAN.tf = $('sc_tf').value.trim(); SCAN.len = Math.max(1, Math.floor(+$('sc_len').value) || 50); SCAN.n = Math.max(1, Math.floor(+$('sc_n').value) || 1); SCAN.max = Math.max(0, Math.floor(+$('sc_max').value) || 0);
+  if (SCAN.max && SCAN.max < SCAN.n) { $('sc_msg').textContent = '"No more than" must be at least as big as "For at least".'; return; }
   SCAN.src = $('sc_src').value; SCAN.side = $('sc_side').value; SCAN.ha = $('sc_ha').value; SCAN.whole = $('sc_whole').value; SCAN.form = $('sc_form').checked; scanSave();
   const src = (await scanSources()).find(x => x.id === SCAN.src); if (!src) { $('sc_msg').textContent = 'Pick a list to check.'; return; }
   scanRunning = true; scanAbort = false; $('sc_run').disabled = true; $('sc_stop').style.display = ''; $('sc_open').style.display = 'none';
@@ -4136,12 +4138,12 @@ async function scanRunNow() {
         const r = scanCheck(j.bars, SCAN);
         if (!r.have) { nodata++; continue; }
         const sides = SCAN.side === 'both' ? ['below', 'above'] : [SCAN.side];
-        for (const sd of sides) if (r[sd] >= SCAN.n) found.push({ name: sym.name, desc: sym.desc || '', side: sd, note: `${sd === 'below' ? '▼ below' : '▲ above'} ${r[sd]}` });
+        for (const sd of sides) if (r[sd] >= SCAN.n && (!SCAN.max || r[sd] <= SCAN.max)) found.push({ name: sym.name, desc: sym.desc || '', side: sd, note: `${sd === 'below' ? '▼ below' : '▲ above'} ${r[sd]}` });
       } catch (e) { errs++; }
     }
     const p2 = n => String(n).padStart(2, '0');
     const title = `${t0.getFullYear()}-${p2(t0.getMonth() + 1)}-${p2(t0.getDate())} ${p2(t0.getHours())}:${p2(t0.getMinutes())} · ${SCAN.tf}`;
-    const detail = `SMMA ${SCAN.len} ${SCAN.side === 'both' ? 'below/above' : SCAN.side} ≥${SCAN.n} candles${SCAN.ha === 'ha' ? ' (HA)' : ''}`;
+    const detail = `SMMA ${SCAN.len} ${SCAN.side === 'both' ? 'below/above' : SCAN.side} ${SCAN.max ? (SCAN.max === SCAN.n ? `exactly ${SCAN.n}` : `${SCAN.n}-${SCAN.max}`) : `≥${SCAN.n}`} candles${SCAN.ha === 'ha' ? ' (HA)' : ''}`;
     if (!scanAbort || found.length) {
       SCANS.unshift({ id: String(t0.getTime()), title, detail, items: found }); SCANS = SCANS.slice(0, 30); store.set('gc_scans', SCANS); favUI();
     }
@@ -4160,7 +4162,7 @@ $('scanbtn').onclick = async e => {
   $('sc_src').value = SCAN.src; $('sc_tf').value = SCAN.tf || (parseIv(tf) && parseIv(tf).kind === 'time' ? tf : '15s');
   $('sc_tfl').innerHTML = ['1s', ...PRESETS].map(t => `<option value="${t}">`).join('');
   const sm = inds.find(i => i.type === 'smma');
-  $('sc_len').value = SCAN.len || (sm ? sm.len : 50); $('sc_n').value = SCAN.n; $('sc_side').value = SCAN.side; $('sc_ha').value = SCAN.ha; $('sc_whole').value = SCAN.whole; $('sc_form').checked = !!SCAN.form;
+  $('sc_len').value = SCAN.len || (sm ? sm.len : 50); $('sc_n').value = SCAN.n; $('sc_max').value = SCAN.max || ''; $('sc_side').value = SCAN.side; $('sc_ha').value = SCAN.ha; $('sc_whole').value = SCAN.whole; $('sc_form').checked = !!SCAN.form;
   if (!scanRunning) { $('sc_msg').textContent = 'Second timeframes (1s, 5s...) are slower: each symbol has to build its candles from ticks.'; $('sc_open').style.display = 'none'; }
   p.style.display = 'block';
 };
