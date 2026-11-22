@@ -704,7 +704,7 @@ const IND_DEFAULTS = {
          cUp: '#26a69a', cDn: '#ef5350' },
   hl: { iv: '1h', ext: 24, show: 'sweeps', fit: true, cH: '#ff9800', cL: '#29b6f6', width: 2 },
   push: { pIv: '15m', pN: 2, pStyle: 'ha', pForm: false, side: 'both', smLen: 50, sIv: '15s', smSrc: 'ha', smLive: 'closed',
-          sw: 2, brk: 'close', reqHL: true, reset: 'smma', minBelow: 1, look: 0, biasMode: 'entry', showFrom: 1,
+          sw: 2, brk: 'close', reqHL: true, mode: 'candle', stTf: '', stStyle: 'ha', touch: 'wick', rtMin: 1, lvLine: true, lvPend: true, reset: 'smma', minBelow: 1, look: 0, biasMode: 'entry', showFrom: 1,
           zones: true, zoneFrom: 2, zoneTo: 0, zoneExt: 30, zoneLabel: true, zoneAlpha: '0.18', zoneLine: 1,
           color: '#e040fb', width: 2, line: true, cBuy: '#26a69a', cSell: '#ef5350' },
   stretch: { fast: 9, slow: 15, base: 50, k: 4, look: 40, need: 1, level: 'wick', trend: true, tpLook: 300,
@@ -1278,6 +1278,7 @@ function refreshBos() {
   });
   inds.filter(i => i.type === 'push').forEach(ind => {
     ind.res = raw.length > 1 ? pushRun(ind) : null;
+    if (ind.series && ind.series[0] && ind.series[0].applyOptions) ind.series.forEach(x => x.applyOptions({ title: label(ind) }));
     if (!ind.res || ind.visible === false) return;
     [[ind.res.up, 1], [ind.res.dn, -1]].forEach(([r, d]) => {
       for (let i = 0; i < raw.length; i++) {
@@ -1492,10 +1493,67 @@ function pushSmma(rows, o, tfChart) {         // the reference SMMA per row, fro
   }
   return out;
 }
+/* ---- Push count, candle mode ("last red / green candle" swings) ----
+   SELL: price is below the SMMA. When the market retraces up (green candles) the LOW of the last red candle before that retrace is
+   the swing low. A candle of the structure timeframe that breaks it = LL1. Market falls, retraces again, the last red candle before
+   that retrace is the next swing low, its break = LL2, and so on. Every time a candle touches the SMMA the count restarts.
+   BUY is the mirror image (last green candle's high, retrace = red candles). Candles can be Heikin Ashi or normal, of any timeframe. */
+function pushCandle(rows, o, tfChart, res, S, B) {
+  const n = rows.length; let T = pushIvSec(o.stTf); if (!T || T < tfChart) T = tfChart; if (!T || n < 3) return res;
+  const g = pushGroup(rows, T), c = g.c, m = c.length; if (m < 3) return res;
+  const f = new Int32Array(m).fill(-1), l = new Int32Array(m).fill(-1);
+  for (let i = 0; i < n; i++) { const k = g.idx[i]; if (k < 0) continue; if (f[k] < 0) f[k] = i; l[k] = i; }
+  const ha = o.stStyle !== 'real', O = new Array(m), H = new Array(m), Lw = new Array(m), C = new Array(m);
+  for (let k = 0; k < m; k++) {
+    const [co, ch, cl, cc] = c[k];
+    if (ha) { const ac = (co + ch + cl + cc) / 4, ao = k ? (O[k - 1] + C[k - 1]) / 2 : (co + cc) / 2; O[k] = ao; C[k] = ac; H[k] = Math.max(ch, ao, ac); Lw[k] = Math.min(cl, ao, ac); }
+    else { O[k] = co; C[k] = cc; H[k] = ch; Lw[k] = cl; }
+  }
+  const byClose = o.brk !== 'wick', tClose = o.touch === 'close', rt = Math.max(1, Math.floor(o.rtMin) || 1), always = o.biasMode === 'always';
+  res.levels = []; res.pend = { up: null, dn: null };
+  const run = d => {
+    if (o.side === 'long' && d < 0) return; if (o.side === 'short' && d > 0) return;
+    const out = d > 0 ? res.up : res.dn;
+    const hh = k => d > 0 ? H[k] : -Lw[k], ll = k => d > 0 ? Lw[k] : -H[k], cc = k => d * C[k], oo = k => d * O[k];
+    let kc = 0, level = null, lvlK = -1, retrLow = Infinity, lastWith = -1, against = 0, cur = 0;
+    const fill = (a, b, v) => { for (let i = a; i <= b; i++) out.cnt[i] = v; };
+    const reset = () => { kc = 0; level = null; lvlK = -1; retrLow = Infinity; lastWith = -1; against = 0; };
+    for (let k = 0; k < m - 1; k++) {
+      if (l[k] < 0) continue;
+      fill(f[k], l[k] - 1, cur);                                      // while the candle is forming the old state is shown
+      const sv = d * S[l[k]];
+      if (isNaN(sv)) { reset(); cur = 0; out.cnt[l[k]] = 0; continue; }
+      if (tClose ? cc(k) <= sv : ll(k) <= sv) { reset(); cur = 0; out.cnt[l[k]] = 0; continue; }          // touched the SMMA (or is on the wrong side): restart
+      const bOk = !B || B[l[k]] === d, col = cc(k) > oo(k) ? 1 : cc(k) < oo(k) ? -1 : 0;
+      if (always && kc > 0 && !bOk) { reset(); cur = 0; out.cnt[l[k]] = 0; continue; }
+      let broke = false;
+      if (level !== null && (byClose ? cc(k) : hh(k)) > level && (kc > 0 || bOk)) {
+        kc++; broke = true; out.ev[l[k]] = kc;
+        res.levels.push({ d, k: kc, i0: f[lvlK], i1: l[k], price: d * level });
+        res.zones.push({ d, k: kc, i0: f[lvlK], i1: l[k], hi: Math.max(d * level, d * retrLow), lo: Math.min(d * level, d * retrLow) });
+        level = null; against = 0; lastWith = col > 0 ? k : -1; retrLow = Infinity; lvlK = -1;
+      }
+      if (!broke) {
+        if (col > 0) { lastWith = k; against = 0; }
+        else if (col < 0) {
+          against++;
+          if (against === rt && lastWith >= 0) { level = hh(lastWith); lvlK = lastWith; retrLow = Infinity; for (let j = lastWith + 1; j <= k; j++) retrLow = Math.min(retrLow, ll(j)); }
+        }
+        if (level !== null) retrLow = Math.min(retrLow, ll(k));
+      }
+      cur = kc; out.cnt[l[k]] = cur;
+    }
+    fill(f[m - 1] >= 0 ? f[m - 1] : n, n - 1, cur);
+    if (level !== null) res.pend[d > 0 ? 'up' : 'dn'] = { price: d * level, i0: f[lvlK], k: kc + 1 };
+  };
+  run(1); run(-1);
+  return res;
+}
 function pushCalc(rows, o, tfChart) {
   const n = rows.length, S = pushSmma(rows, o, tfChart), B = pushBias(rows, o);
   const mk = () => ({ cnt: new Int16Array(n), ev: new Int16Array(n) });
   const res = { smma: S, bias: B, up: mk(), dn: mk(), zones: [] };
+  if (o.mode !== 'pivot') return pushCandle(rows, o, tfChart, res, S, B);
   const sw = Math.max(1, Math.floor(o.sw) || 1), minB = Math.max(1, Math.floor(o.minBelow) || 1), look = Math.max(0, Math.floor(o.look) || 0);
   const byClose = o.brk !== 'wick', rSm = o.reset === 'smma' || o.reset === 'both', rHl = o.reset === 'hl' || o.reset === 'both', always = o.biasMode === 'always';
   const run = d => {
@@ -1544,7 +1602,7 @@ function pushCalc(rows, o, tfChart) {
   run(1); run(-1);
   return res;
 }
-const PUSH_KEYS = ['pIv', 'pN', 'pStyle', 'pForm', 'side', 'smLen', 'sIv', 'smSrc', 'smLive', 'sw', 'brk', 'reqHL', 'reset', 'minBelow', 'look', 'biasMode'];
+const PUSH_KEYS = ['pIv', 'pN', 'pStyle', 'pForm', 'side', 'smLen', 'sIv', 'smSrc', 'smLive', 'sw', 'brk', 'reqHL', 'reset', 'minBelow', 'look', 'biasMode', 'mode', 'stTf', 'stStyle', 'touch', 'rtMin'];
 function pushRun(ind) {                       // the calculation is shared by the line and the markers, so it is kept until the data or a setting changes
   const n = raw.length, l = raw[n - 1];
   const key = n + '|' + l[0] + '|' + l[2] + '|' + l[3] + '|' + l[4] + '|' + tfSec + kind + '|' + PUSH_KEYS.map(k => ind[k]).join(',');
@@ -2768,6 +2826,14 @@ function renderPanel() {
       `<label>from <select data-k="smSrc">` + opt('smSrc', 'ha', 'Heikin Ashi') + opt('smSrc', 'real', 'Real close') + `</select></label>` +
       `<label title="Closed: the value of the last finished candle of that timeframe (never repaints, same as the SMMA indicator). Live: also follows the candle that is still forming.">Value <select data-k="smLive">` + opt('smLive', 'closed', 'Closed candle') + opt('smLive', 'live', 'Live') + `</select></label>` +
       `<span style="color:var(--muted)">3. Structure:</span>` +
+      `<label title="Candle swing: the swing is the last red candle (sell) / green candle (buy) before the retrace, its break = LL1 / HH1, the next one = 2 ... and the count restarts when a candle touches the SMMA. Pivot swing: the older version with swing pivots and a dip below the SMMA.">Mode <select data-k="mode">` + opt('mode', 'candle', 'Candle swing (last red / green)') + opt('mode', 'pivot', 'Pivot swing (old)') + `</select></label>` +
+      `<label title="Timeframe of the candles that make the swings and break them, e.g. 15s while the chart is 1s. Empty = the chart's own candles. Press Enter.">Candles of <input type="text" data-k="stTf" value="${ind.stTf || ''}" placeholder="chart" style="width:54px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px"></label>` +
+      `<label>as <select data-k="stStyle">` + opt('stStyle', 'ha', 'Heikin Ashi') + opt('stStyle', 'real', 'Normal candles') + `</select></label>` +
+      `<label title="Restart the count when a candle touches the SMMA with its wick, or only when it closes through it">Touch SMMA by <select data-k="touch">` + opt('touch', 'wick', 'Wick') + opt('touch', 'close', 'Close') + `</select></label>` +
+      `<label title="How many candles of the opposite colour make a retrace (1 = a single green candle already counts as the retrace)">Retrace &ge; <input type="number" data-k="rtMin" min="1" step="1" value="${ind.rtMin || 1}" style="width:44px"> candles</label>` +
+      `<label title="Draw a line at the swing level (the low of the last red candle) up to the candle that broke it"><input type="checkbox" data-k="lvLine" ${ind.lvLine !== false ? 'checked' : ''}> Swing lines</label>` +
+      `<label title="Also draw the swing level that is still waiting to be broken"><input type="checkbox" data-k="lvPend" ${ind.lvPend !== false ? 'checked' : ''}> open level</label>` +
+      `<span style="color:var(--muted)">(pivot mode only:)</span>` +
       `<label title="Candles on each side that make a swing low. Bigger = only bigger pullbacks count as a higher low.">Swing <input type="number" data-k="sw" min="1" max="20" step="1" value="${ind.sw}" style="width:44px"></label>` +
       `<label title="Candles in a row that must close beyond the SMMA to count as the dip before the first push">Dip &ge; <input type="number" data-k="minBelow" min="1" step="1" value="${ind.minBelow}" style="width:44px"> candles</label>` +
       `<label title="A push counts when the candle closes beyond the high (buy) / low (sell), or just when it touches it">Break by <select data-k="brk">` + opt('brk', 'close', 'Close') + opt('brk', 'wick', 'Wick') + `</select></label>` +
@@ -2977,7 +3043,7 @@ function renderPanel() {
     row.querySelectorAll('[data-k]').forEach(el => {
       el.addEventListener(el.type === 'number' || el.type === 'color' ? 'input' : 'change', () => {
         const k = el.dataset.k;
-        if (ind.type === 'push' && (k === 'pIv' || k === 'sIv')) {
+        if (ind.type === 'push' && (k === 'pIv' || k === 'sIv' || k === 'stTf')) {
           if (!el.value.trim()) { ind[k] = ''; el.style.borderColor = ''; }
           else {
             const iv = parseIv(el.value), ok = iv && iv.kind === 'time';
@@ -3002,7 +3068,7 @@ function renderPanel() {
         else ind[k] = el.value;
         if (ind.type === 'push') {
           if (k === 'visible' || k === 'line' || k === 'color' || k === 'width') ind.series.forEach(x => x.applyOptions({ visible: lineShown(ind), color: ind.color, lineWidth: ind.width || 2 }));
-          if (!['cBuy', 'cSell', 'color', 'width', 'line', 'visible', 'zones', 'zoneFrom', 'zoneTo', 'zoneExt', 'zoneAlpha', 'zoneLabel'].includes(k) && raw.length) fullData(ind);
+          if (!['cBuy', 'cSell', 'color', 'width', 'line', 'visible', 'zones', 'zoneFrom', 'zoneTo', 'zoneExt', 'zoneAlpha', 'zoneLabel', 'lvLine', 'lvPend'].includes(k) && raw.length) fullData(ind);
           ind.series.forEach(x => x.applyOptions({ title: label(ind) }));
           refreshBos();
         } else if (ind.type === 'stretch') {
@@ -4004,6 +4070,19 @@ function drawPushZones() {
       if (ind.zoneLabel !== false) { ctx.fillStyle = col; ctx.fillText(`${z.d > 0 ? 'BUY' : 'SELL'} ${z.d > 0 ? 'HH' : 'LL'}${z.k}`, x0 + 3, z.d > 0 ? top + h + 12 : top - 4); }
     }
   });
+  /* swing lines (candle mode): the level of the last red / green candle, drawn up to the candle that broke it; the open one runs to the last candle */
+  inds.filter(i => i.type === 'push' && i.visible !== false && i.res && i.res.levels).forEach(ind => {
+    const seg = (d, k, i0, i1, price, open) => {
+      if (i1 < r.from || i0 > r.to) return;
+      const x0 = l2x(i0 - 0.4), x1 = l2x(i1 + 0.5), y = series.priceToCoordinate(price); if (x0 == null || x1 == null || y == null) return;
+      const col = d > 0 ? ind.cBuy : ind.cSell;
+      ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1.5; ctx.setLineDash(open ? [5, 4] : []);
+      ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillText(open ? `${d > 0 ? 'H' : 'L'}${k} level` : `${d > 0 ? 'H' : 'L'}${k} broken`, x0 + 2, d > 0 ? y - 4 : y + 12);
+    };
+    if (ind.lvLine !== false) for (const v of ind.res.levels) { if ((ind.side === 'long' && v.d < 0) || (ind.side === 'short' && v.d > 0)) continue; if (v.k >= (ind.showFrom || 1)) seg(v.d, v.k, v.i0, v.i1, v.price, false); }
+    if (ind.lvPend !== false && ind.res.pend) for (const [nm, d] of [['up', 1], ['dn', -1]]) { const p = ind.res.pend[nm]; if (p) seg(d, p.k, p.i0, raw.length - 1, p.price, true); }
+  });
 }
 function drawStretch() {
   const r = ts.getVisibleLogicalRange(); if (!r) return;
@@ -4303,7 +4382,12 @@ const SPF = [
   ['sIv', 'SMMA timeframe', 'text', null, 'e.g. 15s on a 1s chart. Empty = the scan timeframe itself.'],
   ['smSrc', 'SMMA from', 'select', [['ha', 'Heikin Ashi'], ['real', 'Real close']]],
   ['smLive', 'SMMA value', 'select', [['closed', 'Closed candle'], ['live', 'Live']]],
-  ['sw', 'Swing size', 'number', null, 'Candles on each side that make a swing low (higher low)'],
+  ['mode', 'Swing mode', 'select', [['candle', 'Candle swing (last red / green candle)'], ['pivot', 'Pivot swing (old)']], 'Candle swing: the swing is the last red candle (sell) / green candle (buy) before the retrace; its break = LL1 / HH1, the next = 2 ... The count restarts when a candle touches the SMMA.'],
+  ['stTf', 'Swing candles of', 'text', null, 'Timeframe of the candles that make and break the swings, e.g. 15s. Empty = the scan timeframe itself.'],
+  ['stStyle', 'Swing candles as', 'select', [['ha', 'Heikin Ashi'], ['real', 'Normal candles']]],
+  ['touch', 'Touch SMMA by', 'select', [['wick', 'Wick'], ['close', 'Close']], 'Restart the count when a candle touches the SMMA with its wick, or only when it closes through it.'],
+  ['rtMin', 'Retrace at least', 'number', null, 'Candles of the opposite colour that make a retrace (1 = one green candle is enough).'],
+  ['sw', 'Swing size (pivot mode)', 'number', null, 'Candles on each side that make a swing low (higher low)'],
   ['minBelow', 'Dip at least', 'number', null, 'Candles in a row that must close beyond the SMMA before the first push'],
   ['brk', 'Break by', 'select', [['close', 'Close'], ['wick', 'Wick']]],
   ['reqHL', 'Need HL / LH', 'check'],
@@ -4366,7 +4450,8 @@ function scanPushHits(rows, P, tfN, form) {       // -> [{ side, note }] for the
     }
     if (!k || k < P.kMin || (P.kMax && k > P.kMax)) continue;
     if (P.recent) { let ok = false; for (let m = L; m > L - P.recent && m >= 0; m--) if (r.ev[m]) { ok = true; break; } if (!ok) continue; }
-    out.push({ side, note: `${d > 0 ? '▲ HH' : '▼ LL'}${k}` });
+    const pd = res.pend && res.pend[nm], f = v => (+v.toPrecision(7)).toString();
+    out.push({ side, note: `${d > 0 ? '▲ HH' : '▼ LL'}${k}` + (pd ? ` · next ${d > 0 ? 'H' : 'L'}${pd.k} level ${f(pd.price)}` : '') });
   }
   return out;
 }
