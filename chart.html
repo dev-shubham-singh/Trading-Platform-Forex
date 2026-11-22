@@ -345,18 +345,20 @@
   <label style="display:flex;gap:6px;align-items:center;color:var(--muted);margin:4px 0;cursor:pointer"><input type="checkbox" id="fsl_tight"> Never wider than my original stop</label>
   <div id="fsl_info" style="margin-top:6px;padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.6"></div>
 </div>
-<div id="scanpop" class="pop" style="width:min(380px, calc(100vw - 24px)); padding:10px 12px; font-size:12px">
+<div id="scanpop" class="pop" style="width:min(400px, calc(100vw - 24px)); max-height:calc(100vh - 90px); overflow-y:auto; padding:10px 12px; font-size:12px">
   <div class="th" style="margin:0 0 6px">Scanner: price vs SMMA</div>
   <div style="color:var(--muted);line-height:1.5;margin-bottom:6px">Checks every symbol of the list you pick and saves the matches as a new list (Symbols &gt; Scans), named with the time and timeframe.</div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Scan for</label><select id="sc_type" style="flex:1"><option value="smma">Price below / above an SMMA</option><option value="push">Push count: HH / HL breaks after the SMMA</option></select></div>
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Check</label><select id="sc_src" style="flex:1"></select></div>
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Timeframe</label><input id="sc_tf" list="sc_tfl" style="width:80px" title="Any time frame: 1s, 5s, 15s, 1m, 15m, 1h, 1d ..."><datalist id="sc_tfl"></datalist>
-    <label style="color:var(--muted)">SMMA</label><input id="sc_len" type="number" min="1" step="1" style="width:60px"></div>
-  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Price is</label><select id="sc_side" style="flex:1"><option value="below">Below the SMMA (sell side)</option><option value="above">Above the SMMA (buy side)</option><option value="both">Either side (both)</option></select></div>
-  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">For at least</label><input id="sc_n" type="number" min="1" step="1" style="width:60px"> <span style="color:var(--muted)">candles in a row</span></div>
-  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">No more than</label><input id="sc_max" type="number" min="0" step="1" style="width:60px" placeholder="any"> <span style="color:var(--muted)">candles (empty = no limit)</span></div>
-  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Candles</label><select id="sc_ha" style="flex:1"><option value="ha">Heikin Ashi</option><option value="real">Normal candles</option></select></div>
-  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Counts when</label><select id="sc_whole" style="flex:1"><option value="close">The candle closes beyond the SMMA</option><option value="whole">The whole candle is beyond it</option></select></div>
-  <label style="display:flex;gap:6px;align-items:center;color:var(--muted);margin:4px 0;cursor:pointer"><input type="checkbox" id="sc_form"> Include the candle that is still forming</label>
+    <span class="sc_smma"><label style="color:var(--muted)">SMMA</label><input id="sc_len" type="number" min="1" step="1" style="width:60px"></span></div>
+  <div class="tpr sc_smma" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Price is</label><select id="sc_side" style="flex:1"><option value="below">Below the SMMA (sell side)</option><option value="above">Above the SMMA (buy side)</option><option value="both">Either side (both)</option></select></div>
+  <div class="tpr sc_smma" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">For at least</label><input id="sc_n" type="number" min="1" step="1" style="width:60px"> <span style="color:var(--muted)">candles in a row</span></div>
+  <div class="tpr sc_smma" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">No more than</label><input id="sc_max" type="number" min="0" step="1" style="width:60px" placeholder="any"> <span style="color:var(--muted)">candles (empty = no limit)</span></div>
+  <div class="tpr sc_smma" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Candles</label><select id="sc_ha" style="flex:1"><option value="ha">Heikin Ashi</option><option value="real">Normal candles</option></select></div>
+  <div class="tpr sc_smma" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Counts when</label><select id="sc_whole" style="flex:1"><option value="close">The candle closes beyond the SMMA</option><option value="whole">The whole candle is beyond it</option></select></div>
+  <div id="sc_pushbox" style="display:none"></div>
+  <label style="display:flex;gap:6px;align-items:center;color:var(--muted);margin:4px 0;cursor:pointer"><input type="checkbox" id="sc_form"> Include the candle that is still forming (off = closed candles only)</label>
   <div style="display:flex;gap:6px;margin-top:8px"><button class="tool" id="sc_run" style="flex:1">Run scan</button><button class="tool" id="sc_stop" style="display:none">Stop</button><button class="tool" id="sc_open" style="display:none">Open results</button></div>
   <div id="sc_msg" style="margin-top:6px;padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.6;color:var(--muted)"></div>
 </div>
@@ -385,6 +387,7 @@
     <button data-add="bb">Bollinger Bands</button>
     <button data-add="bos">HA BOS bias</button>
     <button data-add="stretch">Stretch reversal</button>
+    <button data-add="push" title="Counts the higher highs (or lower lows) broken after price reclaims an SMMA, when the higher-timeframe candles agree">Push count (HH / HL)</button>
     <button data-add="pivot">Pivot points</button>
     <button data-add="hl">Candle high/low sweeps</button>
     <button data-add="pdhl">Previous day high/low</button>
@@ -700,6 +703,9 @@ const IND_DEFAULTS = {
   htf: { mode: 'fixed', iv: '4h', nx: 4, style: 'ha', last: 'all', alpha: '0.12', border: 1, body: true, forming: true, labels: true,
          cUp: '#26a69a', cDn: '#ef5350' },
   hl: { iv: '1h', ext: 24, show: 'sweeps', fit: true, cH: '#ff9800', cL: '#29b6f6', width: 2 },
+  push: { pIv: '15m', pN: 2, pStyle: 'ha', pForm: false, side: 'both', smLen: 50, sIv: '15s', smSrc: 'ha', smLive: 'closed',
+          sw: 2, brk: 'close', reqHL: true, reset: 'smma', minBelow: 1, look: 0, biasMode: 'entry', showFrom: 1,
+          color: '#e040fb', width: 2, line: true, cBuy: '#26a69a', cSell: '#ef5350' },
   stretch: { fast: 9, slow: 15, base: 50, k: 4, look: 40, need: 1, level: 'wick', trend: true, tpLook: 300,
              trade: 'limit', entry: 'close', ext: 0.5, win: 5, rr: 2, be: 0.3, hold: 10, stall: true, comm: 0.07,
              pull: 0.2, limValid: 1, brkExt: 0.2, brkValid: 2, useLim: true, useBrk: true,
@@ -1269,6 +1275,17 @@ function refreshBos() {
       });
     });
   });
+  inds.filter(i => i.type === 'push').forEach(ind => {
+    ind.res = raw.length > 1 ? pushRun(ind) : null;
+    if (!ind.res || ind.visible === false) return;
+    [[ind.res.up, 1], [ind.res.dn, -1]].forEach(([r, d]) => {
+      for (let i = 0; i < raw.length; i++) {
+        const k = r.ev[i]; if (!k || k < (ind.showFrom || 1)) continue;
+        markers.push({ time: raw[i][0], position: d > 0 ? 'belowBar' : 'aboveBar', shape: d > 0 ? 'arrowUp' : 'arrowDown',
+                       color: d > 0 ? ind.cBuy : ind.cSell, text: (d > 0 ? 'HH' : 'LL') + k });
+      }
+    });
+  });
   markers.sort((a, b) => a.time - b.time);
   series.setMarkers(markers);
   const el = $('bias');
@@ -1410,8 +1427,130 @@ function bands(x, n, m) {
   }
   return [up, mid, lo];
 }
+/* ---------------- Push count: HH / HL pushes after price reclaims an SMMA, with a higher-timeframe colour bias ----------------
+   rows: [time, o, h, l, c, realTime, volume]. LONG: the higher-timeframe candles are green, price closed below the reference SMMA
+   (a dip), then breaks back above it AND above the top of the dip (push 1); after each higher low a break of the high before it is the
+   next push (2, 3, 4 ...). SHORT is the mirror image. All inputs are plain parameters, so the chart and the scanner share this. */
+function pushGroup(rows, T) {                 // higher candles from rows: c[k] = [o, h, l, c], idx[i] = candle of row i (-1 = first, partly loaded candle)
+  const c = [], idx = new Array(rows.length); let last = null;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i], st = htfStart(r[5], T);
+    if (st !== last) { last = st; c.push([r[1], r[2], r[3], r[4]]); }
+    else { const h = c[c.length - 1]; if (r[2] > h[1]) h[1] = r[2]; if (r[3] < h[2]) h[2] = r[3]; h[3] = r[4]; }
+    idx[i] = c.length - 1;
+  }
+  if (rows.length && rows[0][5] > htfStart(rows[0][5], T)) { c.shift(); for (let i = 0; i < idx.length; i++) idx[i]--; }
+  return { c, idx };
+}
+function pushIvSec(s) { const iv = s ? parseIv(s) : null; return iv && iv.kind === 'time' ? iv.n : 0; }
+function pushBias(rows, o) {                  // per row: 1 = the last N higher candles are green, -1 = red, 0 = neither; null = no bias filter
+  const T = pushIvSec(o.pIv); if (!T) return null;
+  const n = rows.length, out = new Int8Array(n), g = pushGroup(rows, T), c = g.c, m = c.length, N = Math.max(1, Math.floor(o.pN) || 1), ha = o.pStyle !== 'real';
+  const hao = new Array(m), hac = new Array(m), col = new Array(m);
+  for (let k = 0; k < m; k++) {
+    const [co, ch, cl, cc] = c[k];
+    if (ha) { const ac = (co + ch + cl + cc) / 4, ao = k ? (hao[k - 1] + hac[k - 1]) / 2 : (co + cc) / 2; hao[k] = ao; hac[k] = ac; col[k] = ac > ao ? 1 : ac < ao ? -1 : 0; }
+    else col[k] = cc > co ? 1 : cc < co ? -1 : 0;
+  }
+  let cur = -2, po = 0, ph = 0, pl = 0;
+  for (let i = 0; i < n; i++) {
+    const k = g.idx[i], r = rows[i]; if (k < 0) continue;
+    if (k !== cur) { cur = k; po = r[1]; ph = r[2]; pl = r[3]; } else { if (r[2] > ph) ph = r[2]; if (r[3] < pl) pl = r[3]; }
+    let up = true, dn = true, cnt = 0;
+    if (o.pForm) {
+      let fc;
+      if (ha) { const ao = k ? (hao[k - 1] + hac[k - 1]) / 2 : (po + r[4]) / 2, ac = (po + ph + pl + r[4]) / 4; fc = ac > ao ? 1 : ac < ao ? -1 : 0; }
+      else fc = r[4] > po ? 1 : r[4] < po ? -1 : 0;
+      if (fc !== 1) up = false; if (fc !== -1) dn = false; cnt = 1;
+    }
+    for (let j = 1; cnt < N; j++, cnt++) {
+      const kk = k - j; if (kk < 0) { up = dn = false; break; }
+      if (col[kk] !== 1) up = false; if (col[kk] !== -1) dn = false;
+    }
+    out[i] = up ? 1 : dn ? -1 : 0;
+  }
+  return out;
+}
+function pushSmma(rows, o, tfChart) {         // the reference SMMA per row, from the chosen timeframe (closed higher candle unless live)
+  const n = rows.length, len = Math.max(1, Math.floor(o.smLen) || 1), T = pushIvSec(o.sIv), ha = o.smSrc !== 'real';
+  if (!T || T <= tfChart) return smma(ha ? scanHA(rows).c : rows.map(r => r[4]), len);
+  const out = new Array(n).fill(NaN), g = pushGroup(rows, T), c = g.c, m = c.length;
+  const src = new Array(m); let ao = 0, ac = 0;
+  for (let k = 0; k < m; k++) {
+    const [co, ch, cl, cc] = c[k];
+    if (ha) { ac = (co + ch + cl + cc) / 4; ao = k ? (ao + src[k - 1]) / 2 : (co + cc) / 2; src[k] = ac; } else src[k] = cc;
+  }
+  const S = smma(src, len), live = o.smLive === 'live';
+  let cur = -2, po = 0, ph = 0, pl = 0;
+  for (let i = 0; i < n; i++) {
+    const k = g.idx[i], r = rows[i]; if (k < 0) continue;
+    if (k !== cur) { cur = k; po = r[1]; ph = r[2]; pl = r[3]; } else { if (r[2] > ph) ph = r[2]; if (r[3] < pl) pl = r[3]; }
+    const prev = k - 1 >= 0 ? S[k - 1] : NaN;
+    if (isNaN(prev)) continue;
+    out[i] = live ? (prev * (len - 1) + (ha ? (po + ph + pl + r[4]) / 4 : r[4])) / len : prev;
+  }
+  return out;
+}
+function pushCalc(rows, o, tfChart) {
+  const n = rows.length, S = pushSmma(rows, o, tfChart), B = pushBias(rows, o);
+  const mk = () => ({ cnt: new Int16Array(n), ev: new Int16Array(n) });
+  const res = { smma: S, bias: B, up: mk(), dn: mk() };
+  const sw = Math.max(1, Math.floor(o.sw) || 1), minB = Math.max(1, Math.floor(o.minBelow) || 1), look = Math.max(0, Math.floor(o.look) || 0);
+  const byClose = o.brk !== 'wick', rSm = o.reset === 'smma' || o.reset === 'both', rHl = o.reset === 'hl' || o.reset === 'both', always = o.biasMode === 'always';
+  const run = d => {
+    const out = d > 0 ? res.up : res.dn;
+    if (o.side === 'long' && d < 0) return; if (o.side === 'short' && d > 0) return;
+    const H = i => d > 0 ? rows[i][2] : -rows[i][3], L = i => d > 0 ? rows[i][3] : -rows[i][2], C = i => d * rows[i][4];
+    const biasOk = i => !B || B[i] === d;
+    let st = 0, runHigh = -Infinity, belowN = 0, top = -Infinity, dipLow = Infinity, k = 0, lastBrk = -1, prevHL = -Infinity, topLock = null, runH = -Infinity, lastPiv = -1;
+    for (let i = 0; i < n; i++) {
+      const s = d * S[i]; if (isNaN(s)) continue;
+      const h = H(i), l = L(i), c = C(i), bv = byClose ? c : h;
+      if (st === 0) {
+        runHigh = Math.max(runHigh, h);
+        if (c < s) { belowN++; dipLow = Math.min(dipLow, l); } else { belowN = 0; dipLow = Infinity; }
+        if (belowN >= minB) {
+          st = 1; top = runHigh;
+          if (look) { top = -Infinity; for (let j = Math.max(0, i - look + 1); j <= i; j++) top = Math.max(top, H(j)); }
+          runHigh = -Infinity;
+        }
+      } else if (st === 1) {
+        if (c > s && bv > top && biasOk(i)) { st = 2; k = 1; out.ev[i] = 1; lastBrk = i; lastPiv = i; prevHL = dipLow; topLock = null; runH = h; }
+        else { top = Math.max(top, h); dipLow = Math.min(dipLow, l); }
+      } else {
+        runH = Math.max(runH, h);
+        const j = i - sw;
+        if (j > lastBrk && j > lastPiv && j - sw >= 0) {
+          let piv = true;
+          for (let m = j - sw; m <= j + sw && piv; m++) { if (m === j) continue; if (m < j ? L(m) < L(j) : L(m) <= L(j)) piv = false; }
+          if (piv) {
+            lastPiv = j;
+            if (o.reqHL !== false && L(j) <= prevHL) { st = 1; top = runH; dipLow = L(j); k = 0; out.cnt[i] = 0; continue; }
+            prevHL = L(j); topLock = runH;
+          }
+        }
+        let broke = false;
+        if (topLock !== null && bv > topLock) { k++; out.ev[i] = k; lastBrk = i; lastPiv = i; topLock = null; runH = h; broke = true; }
+        if ((rSm && c < s) || (rHl && !broke && (byClose ? c : l) < prevHL) || (always && !biasOk(i))) {
+          st = 1; top = Math.max(runH, h); dipLow = l; k = 0; out.cnt[i] = 0; continue;
+        }
+      }
+      out.cnt[i] = st === 2 ? k : 0;
+    }
+  };
+  run(1); run(-1);
+  return res;
+}
+const PUSH_KEYS = ['pIv', 'pN', 'pStyle', 'pForm', 'side', 'smLen', 'sIv', 'smSrc', 'smLive', 'sw', 'brk', 'reqHL', 'reset', 'minBelow', 'look', 'biasMode'];
+function pushRun(ind) {                       // the calculation is shared by the line and the markers, so it is kept until the data or a setting changes
+  const n = raw.length, l = raw[n - 1];
+  const key = n + '|' + l[0] + '|' + l[2] + '|' + l[3] + '|' + l[4] + '|' + tfSec + kind + '|' + PUSH_KEYS.map(k => ind[k]).join(',');
+  if (ind._pk !== key || !ind._pr) { ind._pk = key; ind._pr = pushCalc(raw, ind, kind === 'time' ? tfSec : 0); }
+  return ind._pr;
+}
 function calc(ind) { return mtf(ind, calcNow); }
 function calcNow(ind) {
+  if (ind.type === 'push') return [raw.length ? pushRun(ind).smma : []];
   if (ind.type === 'stretch') return stretchLines(ha, ind);
   const src = ind.src === 'real' ? raw.map(r => r[4]) : ha.map(b => b.close);
   const n = Math.max(1, Math.floor(ind.len) || 1);
@@ -2362,6 +2501,7 @@ function labelBase(ind) {
   if (ind.type === 'hswitch') return 'HA switch boxes';
   if (ind.type === 'chop') return 'Sideways filter';
   if (ind.type === 'stretch') return 'Stretch';
+  if (ind.type === 'push') return `Push count (SMMA ${ind.smLen}${ind.sIv ? ' ' + ind.sIv : ''})`;
   return ind.type === 'bb' ? `BB ${ind.len} ${ind.mult}` : `${ind.type.toUpperCase()} ${ind.len}`;
 }
 function makeSeries(ind) {
@@ -2432,7 +2572,7 @@ function makeSeries(ind) {
     }));
   }
 }
-const lineShown = ind => ind.visible !== false && !(ind.type === 'smma' && ind.line === false);   // SMMA: line can be hidden while its candle colours stay
+const lineShown = ind => ind.visible !== false && !((ind.type === 'smma' || ind.type === 'push') && ind.line === false);   // SMMA: line can be hidden while its candle colours stay
 function fullData(ind) {
   if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind);
   if (ind.type === 'vprof' || ind.type === 'foot') return;
@@ -2480,7 +2620,7 @@ function addInd(type) {
   const ind = { id: Date.now() + Math.random(), type, src: 'ha', width: type === 'bb' ? 1 : 2,
                 visible: true, ...IND_DEFAULTS[type], series: [], vals: null, res: null };
   inds.push(ind); makeSeries(ind); if (raw.length) fullData(ind);
-  if (type === 'bos' || type === 'stretch' || type === 'pivot' || type === 'pdhl' || type === 'hl' || type === 'hdoji' || type === 'hswitch' || type === 'chop' || type === 'htf' || type === 'burke') refreshBos();
+  if (type === 'bos' || type === 'stretch' || type === 'pivot' || type === 'pdhl' || type === 'hl' || type === 'hdoji' || type === 'hswitch' || type === 'chop' || type === 'htf' || type === 'burke' || type === 'push') refreshBos();
   saveInds(); renderPanel(); legend(null);
 }
 function renderPanel() {
@@ -2609,6 +2749,32 @@ function renderPanel() {
       `<label title="How many days in a row before the first opposite day">after <input type="number" data-k="run" min="1" max="6" step="1" value="${ind.run}" style="width:44px"> days</label>` +
       `<label title="Only show signals that agree with the first red / green day"><input type="checkbox" data-k="biasOnly" ${ind.biasOnly ? 'checked' : ''}> Only with day bias</label>` +
       `<label>Buy <input type="color" data-k="cBuy" value="${ind.cBuy}"></label><label>Sell <input type="color" data-k="cSell" value="${ind.cSell}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'push') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Push count (HH / HL)</b>` +
+      `<span style="color:var(--muted)">1. Bias:</span>` +
+      `<label title="Higher timeframe whose candle colours give the bias: 5m, 15m, 1h, 4h, 1d... Leave empty for no bias filter. Press Enter.">Candles <input type="text" data-k="pIv" value="${ind.pIv}" placeholder="off" style="width:54px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px"></label>` +
+      `<label title="How many of the last candles of that timeframe must have the same colour (green = buy side, red = sell side)">last <input type="number" data-k="pN" min="1" max="10" step="1" value="${ind.pN}" style="width:44px"> same colour</label>` +
+      `<label>as <select data-k="pStyle">` + opt('pStyle', 'ha', 'Heikin Ashi') + opt('pStyle', 'real', 'Normal candles') + `</select></label>` +
+      `<label title="Also count the higher candle that is still forming"><input type="checkbox" data-k="pForm" ${ind.pForm ? 'checked' : ''}> incl. forming</label>` +
+      `<label title="Only look for pushes up (buy), down (sell) or both">Side <select data-k="side">` + opt('side', 'both', 'Both') + opt('side', 'long', 'Buy (HH / HL)') + opt('side', 'short', 'Sell (LL / LH)') + `</select></label>` +
+      `<span style="color:var(--muted)">2. SMMA:</span>` +
+      `<label>Length <input type="number" data-k="smLen" min="1" step="1" value="${ind.smLen}" style="width:54px"></label>` +
+      `<label title="Timeframe of the SMMA, e.g. 15s on a 1s chart. Empty = the chart's own candles. Press Enter.">on <input type="text" data-k="sIv" value="${ind.sIv}" placeholder="chart" style="width:54px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px"></label>` +
+      `<label>from <select data-k="smSrc">` + opt('smSrc', 'ha', 'Heikin Ashi') + opt('smSrc', 'real', 'Real close') + `</select></label>` +
+      `<label title="Closed: the value of the last finished candle of that timeframe (never repaints, same as the SMMA indicator). Live: also follows the candle that is still forming.">Value <select data-k="smLive">` + opt('smLive', 'closed', 'Closed candle') + opt('smLive', 'live', 'Live') + `</select></label>` +
+      `<span style="color:var(--muted)">3. Structure:</span>` +
+      `<label title="Candles on each side that make a swing low. Bigger = only bigger pullbacks count as a higher low.">Swing <input type="number" data-k="sw" min="1" max="20" step="1" value="${ind.sw}" style="width:44px"></label>` +
+      `<label title="Candles in a row that must close beyond the SMMA to count as the dip before the first push">Dip &ge; <input type="number" data-k="minBelow" min="1" step="1" value="${ind.minBelow}" style="width:44px"> candles</label>` +
+      `<label title="A push counts when the candle closes beyond the high (buy) / low (sell), or just when it touches it">Break by <select data-k="brk">` + opt('brk', 'close', 'Close') + opt('brk', 'wick', 'Wick') + `</select></label>` +
+      `<label title="Every pullback must make a higher low (buy) / lower high (sell) than the one before, or the push count restarts"><input type="checkbox" data-k="reqHL" ${ind.reqHL !== false ? 'checked' : ''}> Need HL / LH</label>` +
+      `<label title="When the count restarts: a close back on the wrong side of the SMMA, a break of the last higher low, both, or never">Restart on <select data-k="reset">` + opt('reset', 'smma', 'SMMA cross') + opt('reset', 'hl', 'HL break') + opt('reset', 'both', 'Either') + opt('reset', 'none', 'Never') + `</select></label>` +
+      `<label title="How far back, in candles, to look for the top of the dip that push 1 must break. 0 = the whole move above the SMMA before the dip.">Top within <input type="number" data-k="look" min="0" step="10" value="${ind.look}" style="width:58px"> candles</label>` +
+      `<label title="Entry: the bias must be right when push 1 happens. Always: the count restarts if the bias is lost.">Bias <select data-k="biasMode">` + opt('biasMode', 'entry', 'At push 1') + opt('biasMode', 'always', 'Always') + `</select></label>` +
+      `<label title="Only mark pushes from this number up (e.g. 2 hides the first break)">Mark from <input type="number" data-k="showFrom" min="1" step="1" value="${ind.showFrom}" style="width:44px"></label>` +
+      `<label><input type="checkbox" data-k="line" ${ind.line !== false ? 'checked' : ''}> SMMA line</label>` +
+      `<label>Line <input type="color" data-k="color" value="${ind.color}"></label><label>Buy <input type="color" data-k="cBuy" value="${ind.cBuy}"></label><label>Sell <input type="color" data-k="cSell" value="${ind.cSell}"></label>` +
       `<button class="x" title="Remove">Remove</button>`;
     else if (ind.type === 'htf') row.innerHTML =
       `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
@@ -2801,7 +2967,15 @@ function renderPanel() {
     row.querySelectorAll('[data-k]').forEach(el => {
       el.addEventListener(el.type === 'number' || el.type === 'color' ? 'input' : 'change', () => {
         const k = el.dataset.k;
-        if ((ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop') && k === 'iv' && !el.value.trim()) { ind.iv = ''; ind.on_custom = false; }
+        if (ind.type === 'push' && (k === 'pIv' || k === 'sIv')) {
+          if (!el.value.trim()) { ind[k] = ''; el.style.borderColor = ''; }
+          else {
+            const iv = parseIv(el.value), ok = iv && iv.kind === 'time';
+            el.style.borderColor = ok ? '' : 'var(--down)'; el.title = ok ? '' : 'Use a time length: 1s, 15s, 1m, 5m, 15m, 1h, 4h, 1d';
+            if (!ok) return; ind[k] = iv.label; el.value = iv.label;
+          }
+        } else if (ind.type === 'push' && k === 'look') ind.look = Math.max(0, Math.floor(Number(el.value)) || 0);
+        else if ((ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop') && k === 'iv' && !el.value.trim()) { ind.iv = ''; ind.on_custom = false; }
         else if ((ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf' || ind.type === 'burke') && k === 'iv') {
           const iv = parseIv(el.value), ok = iv && iv.kind === 'time';
           el.style.borderColor = ok ? '' : 'var(--down)';
@@ -2816,7 +2990,12 @@ function renderPanel() {
         else if (k === 'need') ind.need = Number(el.value);
         else if (el.type === 'number') { const v = Number(el.value); if (!(v > 0)) return; ind[k] = v; }
         else ind[k] = el.value;
-        if (ind.type === 'stretch') {
+        if (ind.type === 'push') {
+          if (k === 'visible' || k === 'line' || k === 'color' || k === 'width') ind.series.forEach(x => x.applyOptions({ visible: lineShown(ind), color: ind.color, lineWidth: ind.width || 2 }));
+          if (k !== 'cBuy' && k !== 'cSell' && k !== 'color' && k !== 'width' && k !== 'line' && k !== 'visible' && raw.length) fullData(ind);
+          ind.series.forEach(x => x.applyOptions({ title: label(ind) }));
+          refreshBos();
+        } else if (ind.type === 'stretch') {
           if (['c1', 'c2', 'c3', 'lines', 'visible'].includes(k)) {
             [ind.c1, ind.c2, ind.c3].forEach((c, j) => ind.series[j] &&
               ind.series[j].applyOptions({ color: c, visible: ind.visible !== false && ind.lines }));
@@ -3043,7 +3222,13 @@ function legend(idx) {
     });
     html += `<div>${eye(i)}<span style="color:var(--text)">Switch ${i.doji === 'candle' ? '(normal)' : '(HA)'}</span> ${parts.join(' &nbsp;&middot;&nbsp; ') || 'tick a timeframe'}</div>`;
   });
-  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'hswitch', 'chop', 'htf', 'burke', 'vprof', 'foot', 'cvd'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
+  inds.filter(i => i.type === 'push' && i.visible !== false && i.res).forEach(i => {
+    const r = i.res, k = idx == null ? raw.length - 1 : idx, b = r.bias ? r.bias[k] : 0, u = r.up.cnt[k], dn = r.dn.cnt[k];
+    const bt = !r.bias ? 'no filter' : b > 0 ? `<b style="color:${i.cBuy}">${i.pIv} green</b>` : b < 0 ? `<b style="color:${i.cSell}">${i.pIv} red</b>` : `${i.pIv} mixed`;
+    const st = u ? `<b style="color:${i.cBuy}">&#9650; HH${u}</b>` : dn ? `<b style="color:${i.cSell}">&#9660; LL${dn}</b>` : 'no push running';
+    html += `<div>${eye(i)}<span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${fmt(r.smma[k])}</span> &nbsp;&middot;&nbsp; bias ${bt} &nbsp;&middot;&nbsp; ${st}</div>`;
+  });
+  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'hswitch', 'chop', 'htf', 'burke', 'vprof', 'foot', 'cvd', 'push'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
     const v = i.vals.map(a => fmt(a[idx])).join(' / ');
     html += `<div>${eye(i)}<span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${v}</span></div>`;
   });
@@ -4076,6 +4261,68 @@ function renderScans() {
   return hits;
 }
 const SCAN = Object.assign({ src: 'fav', tf: '', len: 50, side: 'below', n: 3, ha: 'ha', whole: 'close', form: false, max: 0 }, store.get('gc_scancfg', {}));
+/* settings of the Push-count scan (same parameters as the indicator, so what you see on the chart is what is scanned) */
+const SPF = [
+  ['pIv', 'Bias candles', 'text', null, 'Higher timeframe whose candle colours give the bias (5m, 15m, 1h, 4h, 1d). Empty = no bias filter.'],
+  ['pN', 'Last N same colour', 'number', null, 'How many of the last candles of that timeframe must be green (buy) / red (sell)'],
+  ['pStyle', 'Colours from', 'select', [['ha', 'Heikin Ashi'], ['real', 'Normal candles']]],
+  ['side', 'Side', 'select', [['both', 'Both'], ['long', 'Buy (HH / HL)'], ['short', 'Sell (LL / LH)']]],
+  ['smLen', 'SMMA length', 'number'],
+  ['sIv', 'SMMA timeframe', 'text', null, 'e.g. 15s on a 1s chart. Empty = the scan timeframe itself.'],
+  ['smSrc', 'SMMA from', 'select', [['ha', 'Heikin Ashi'], ['real', 'Real close']]],
+  ['smLive', 'SMMA value', 'select', [['closed', 'Closed candle'], ['live', 'Live']]],
+  ['sw', 'Swing size', 'number', null, 'Candles on each side that make a swing low (higher low)'],
+  ['minBelow', 'Dip at least', 'number', null, 'Candles in a row that must close beyond the SMMA before the first push'],
+  ['brk', 'Break by', 'select', [['close', 'Close'], ['wick', 'Wick']]],
+  ['reqHL', 'Need HL / LH', 'check'],
+  ['reset', 'Restart on', 'select', [['smma', 'SMMA cross'], ['hl', 'HL break'], ['both', 'Either'], ['none', 'Never']]],
+  ['look', 'Top within (candles)', 'number', null, '0 = the whole move above the SMMA before the dip', 0],
+  ['biasMode', 'Bias must hold', 'select', [['entry', 'At push 1'], ['always', 'Always']]],
+  ['kMin', 'Push count at least', 'number', null, 'Show symbols whose running push count is at least this (2 = HH2 or more)'],
+  ['kMax', 'and at most', 'number', null, '0 = no upper limit. Use e.g. 2 and 4 to find pushes 2 to 4 only.', 0],
+  ['recent', 'Last push within', 'number', null, 'Only if the latest push happened within this many candles. 0 = any time.', 0],
+];
+const SCANP = Object.assign({}, IND_DEFAULTS.push, { kMin: 2, kMax: 0, recent: 0 }, store.get('gc_scanp', {}));
+function scanPushBuild() {
+  $('sc_pushbox').innerHTML = SPF.map(([k, lab, t, opts, tip]) => {
+    const id = 'sp_' + k, v = SCANP[k];
+    const ctl = t === 'select' ? `<select id="${id}" style="flex:1">${opts.map(([o, n]) => `<option value="${o}"${String(v) === o ? ' selected' : ''}>${n}</option>`).join('')}</select>`
+      : t === 'check' ? `<input id="${id}" type="checkbox"${v !== false ? ' checked' : ''}>`
+      : t === 'number' ? `<input id="${id}" type="number" min="${SPF.find(x => x[0] === k)[5] === 0 ? 0 : 1}" step="1" value="${v}" style="width:70px">`
+      : `<input id="${id}" type="text" value="${v || ''}" style="width:80px" placeholder="off">`;
+    return `<div class="tpr" style="display:flex;gap:6px;align-items:center;margin:3px 0" title="${tip || ''}"><label style="width:140px;color:var(--muted)">${lab}</label>${ctl}</div>`;
+  }).join('') + `<button class="tool" id="sp_copy" style="width:100%;margin-top:4px" title="Fill these boxes from the Push count indicator on your chart">Copy settings from my chart indicator</button>`;
+  $('sp_copy').onclick = () => {
+    const ind = inds.find(i => i.type === 'push'); if (!ind) { $('sc_msg').textContent = 'No Push count indicator on this chart yet (Indicators > Push count).'; return; }
+    SPF.forEach(([k]) => { if (k in ind) SCANP[k] = ind[k]; }); scanPushBuild(); $('sc_msg').textContent = 'Copied the settings of your Push count indicator.';
+  };
+}
+function scanPushRead() {
+  let bad = '';
+  SPF.forEach(([k, lab, t]) => {
+    const el = $('sp_' + k); if (!el) return;
+    if (t === 'check') SCANP[k] = el.checked;
+    else if (t === 'number') SCANP[k] = Math.max(SPF.find(x => x[0] === k)[5] === 0 ? 0 : 1, Math.floor(+el.value) || 0);
+    else if (t === 'text') {
+      const v = el.value.trim();
+      if (v) { const iv = parseIv(v); if (!iv || iv.kind !== 'time') bad = `${lab}: use a time like 15s, 5m, 1h or 1d.`; else SCANP[k] = iv.label; } else SCANP[k] = '';
+    } else SCANP[k] = el.value;
+  });
+  store.set('gc_scanp', SCANP);
+  return bad;
+}
+function scanPushHits(rows, P, tfN, form) {       // -> [{ side, note }] for the last candle used
+  const res = pushCalc(rows, P, tfN), L = rows.length - 1 - (form ? 0 : 1), out = [];
+  if (L < 0 || isNaN(res.smma[L])) return out;
+  for (const [d, nm, side] of [[1, 'up', 'above'], [-1, 'dn', 'below']]) {
+    if ((P.side === 'long' && d < 0) || (P.side === 'short' && d > 0)) continue;
+    const r = res[nm], k = r.cnt[L];
+    if (!k || k < P.kMin || (P.kMax && k > P.kMax)) continue;
+    if (P.recent) { let ok = false; for (let m = L; m > L - P.recent && m >= 0; m--) if (r.ev[m]) { ok = true; break; } if (!ok) continue; }
+    out.push({ side, note: `${d > 0 ? '▲ HH' : '▼ LL'}${k}` });
+  }
+  return out;
+}
 let scanAbort = false, scanRunning = false;
 function scanSave() { store.set('gc_scancfg', SCAN); }
 async function scanSources() {
@@ -4120,7 +4367,9 @@ async function scanRunNow() {
   const iv = parseIv($('sc_tf').value.trim());
   if (!iv || iv.kind !== 'time') { $('sc_msg').textContent = 'Type a time frame like 1s, 15s, 5m, 1h or 1d.'; return; }
   SCAN.tf = $('sc_tf').value.trim(); SCAN.len = Math.max(1, Math.floor(+$('sc_len').value) || 50); SCAN.n = Math.max(1, Math.floor(+$('sc_n').value) || 1); SCAN.max = Math.max(0, Math.floor(+$('sc_max').value) || 0);
-  if (SCAN.max && SCAN.max < SCAN.n) { $('sc_msg').textContent = '"No more than" must be at least as big as "For at least".'; return; }
+  if (SCAN.type !== 'push' && SCAN.max && SCAN.max < SCAN.n) { $('sc_msg').textContent = '"No more than" must be at least as big as "For at least".'; return; }
+  SCAN.type = $('sc_type').value;
+  if (SCAN.type === 'push') { const bad = scanPushRead(); if (bad) { $('sc_msg').textContent = bad; return; } if (SCANP.kMax && SCANP.kMax < SCANP.kMin) { $('sc_msg').textContent = '"and at most" must be at least as big as "Push count at least".'; return; } }
   SCAN.src = $('sc_src').value; SCAN.side = $('sc_side').value; SCAN.ha = $('sc_ha').value; SCAN.whole = $('sc_whole').value; SCAN.form = $('sc_form').checked; scanSave();
   const src = (await scanSources()).find(x => x.id === SCAN.src); if (!src) { $('sc_msg').textContent = 'Pick a list to check.'; return; }
   scanRunning = true; scanAbort = false; $('sc_run').disabled = true; $('sc_stop').style.display = ''; $('sc_open').style.display = 'none';
@@ -4128,7 +4377,9 @@ async function scanRunNow() {
   try {
     $('sc_msg').textContent = 'Reading the list...';
     const list = await src.get(), found = []; let nodata = 0, errs = 0, i = 0;
-    const need = SCAN.len * 6 + SCAN.n + 10;                         // enough candles for the SMMA to settle
+    const push = SCAN.type === 'push', pT = pushIvSec(SCANP.pIv), sT = pushIvSec(SCANP.sIv);
+    const need = push ? Math.ceil(Math.max((SCANP.pN + 2) * pT, SCANP.smLen * 8 * Math.max(sT, iv.n), 1500 * iv.n) / iv.n)   // enough history for the bias candles and for the SMMA to settle
+      : SCAN.len * 6 + SCAN.n + 10;                                  // enough candles for the SMMA to settle
     let next = 0;
     const work = async () => {                                       // a few symbols at a time, so 500 or 1000 symbols finish in reasonable time
       while (!scanAbort) {
@@ -4138,7 +4389,12 @@ async function scanRunNow() {
           try {
             const hrs = iv.n < 60 ? Math.max(1, Math.ceil(need * iv.n / 3600 * 1.3)) : 0;
             const j = await fetchJ(`/api/bars?symbol=${encodeURIComponent(sym.name)}&kind=time&p=${iv.n}` + (hrs ? `&hours=${hrs}` : ''), 120000);
-            if (j.error || !j.bars || j.bars.length < SCAN.len + SCAN.n + 1) { nodata++; break; }
+            if (j.error || !j.bars || j.bars.length < (push ? Math.max(100, SCANP.smLen + 5) : SCAN.len + SCAN.n + 1)) { nodata++; break; }
+            if (push) {
+              const hits = scanPushHits(j.bars, SCANP, iv.n, SCAN.form);
+              for (const h of hits) found.push({ name: sym.name, desc: sym.desc || '', side: h.side, note: h.note });
+              break;
+            }
             const r = scanCheck(j.bars, SCAN);
             if (!r.have) { nodata++; break; }
             const sides = SCAN.side === 'both' ? ['below', 'above'] : [SCAN.side];
@@ -4153,7 +4409,7 @@ async function scanRunNow() {
     await Promise.all(Array.from({ length: SRC === 'MT5' ? 2 : 4 }, work));
     const p2 = n => String(n).padStart(2, '0');
     const title = `${t0.getFullYear()}-${p2(t0.getMonth() + 1)}-${p2(t0.getDate())} ${p2(t0.getHours())}:${p2(t0.getMinutes())} · ${SCAN.tf}`;
-    const detail = `SMMA ${SCAN.len} ${SCAN.side === 'both' ? 'below/above' : SCAN.side} ${SCAN.max ? (SCAN.max === SCAN.n ? `exactly ${SCAN.n}` : `${SCAN.n}-${SCAN.max}`) : `≥${SCAN.n}`} candles${SCAN.ha === 'ha' ? ' (HA)' : ''}`;
+    const detail = push ? `Push ${SCANP.side === 'both' ? 'HH / LL' : SCANP.side === 'long' ? 'HH' : 'LL'} ${SCANP.kMax ? (SCANP.kMax === SCANP.kMin ? `exactly ${SCANP.kMin}` : `${SCANP.kMin}-${SCANP.kMax}`) : `\u2265${SCANP.kMin}`}, bias ${SCANP.pIv ? SCANP.pIv + ' x' + SCANP.pN : 'off'}, SMMA ${SCANP.smLen}${SCANP.sIv ? ' ' + SCANP.sIv : ''}${SCANP.recent ? `, last ${SCANP.recent} candles` : ''}` : `SMMA ${SCAN.len} ${SCAN.side === 'both' ? 'below/above' : SCAN.side} ${SCAN.max ? (SCAN.max === SCAN.n ? `exactly ${SCAN.n}` : `${SCAN.n}-${SCAN.max}`) : `≥${SCAN.n}`} candles${SCAN.ha === 'ha' ? ' (HA)' : ''}`;
     if (!scanAbort || found.length) {
       SCANS.unshift({ id: String(t0.getTime()), title, detail, items: found }); SCANS = SCANS.slice(0, 30); store.set('gc_scans', SCANS); favUI();
     }
@@ -4172,10 +4428,17 @@ $('scanbtn').onclick = async e => {
   $('sc_src').value = SCAN.src; $('sc_tf').value = SCAN.tf || (parseIv(tf) && parseIv(tf).kind === 'time' ? tf : '15s');
   $('sc_tfl').innerHTML = ['1s', ...PRESETS].map(t => `<option value="${t}">`).join('');
   const sm = inds.find(i => i.type === 'smma');
+  $('sc_type').value = SCAN.type || 'smma'; scanPushBuild(); scanTypeUI();
   $('sc_len').value = SCAN.len || (sm ? sm.len : 50); $('sc_n').value = SCAN.n; $('sc_max').value = SCAN.max || ''; $('sc_side').value = SCAN.side; $('sc_ha').value = SCAN.ha; $('sc_whole').value = SCAN.whole; $('sc_form').checked = !!SCAN.form;
   if (!scanRunning) { $('sc_msg').textContent = 'Second timeframes (1s, 5s...) are slower: each symbol has to build its candles from ticks.'; $('sc_open').style.display = 'none'; }
   p.style.display = 'block';
 };
+function scanTypeUI() {
+  const push = $('sc_type').value === 'push';
+  document.querySelectorAll('#scanpop .sc_smma').forEach(e => e.style.display = push ? 'none' : (e.tagName === 'SPAN' ? 'inline' : 'flex'));
+  $('sc_pushbox').style.display = push ? 'block' : 'none';
+}
+$('sc_type').onchange = () => { SCAN.type = $('sc_type').value; scanSave(); scanTypeUI(); };
 $('sc_run').onclick = scanRunNow;
 $('sc_stop').onclick = () => { scanAbort = true; };
 $('sc_open').onclick = () => { $('scanpop').style.display = 'none'; scanTab = true; store.set('gc_scantab', true); favUI(); openSymbols(); };

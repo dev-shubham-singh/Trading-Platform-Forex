@@ -26,6 +26,7 @@ Both use the same page, `chart.html`. Restart the `.bat` after updating `chart.h
 - **Clear** button (next to Indicators): deletes every indicator in one click; pick a template to bring them back
 - Indicator **Timeframe shorter than the chart** (e.g. a 1s SMMA/EMA on a 15s chart): the short candles load in the background, the indicator is calculated on them and each chart candle shows the value at its close
 - **Scan** button: checks every symbol of Favorites / Market Watch / an India list on any time frame (1s ... 1d) for price below / above an SMMA of your length for at least N candles in a row (Heikin Ashi or normal, close or whole candle); saves each run as a new list named `date time · timeframe` under Symbols > Scans
+- **Push count (HH / HL)** indicator + scanner: bias from the last N higher-timeframe candle colours (e.g. 2 green 15m candles), then on the lower chart price dips below an SMMA (own length / timeframe), reclaims it, breaks the top of the dip (HH1) and each later higher high after a higher low (HH2, HH3 ...); mirror for sells (LL1, LL2...). Every parameter is editable; Scan > Push count scans a whole list with the same settings (`pushCalc` is shared by the chart and the scanner)
 - **New window + Sync**: open a second chart window (e.g. 5m) for another screen; drawings, crosshair, symbol and theme stay in sync (toggle)
 - Indicators: EMA, SMMA, SMA, Bollinger Bands, pivot points (any period, R3/S3, history),
   candle high/low liquidity sweeps, previous day high/low/close, VWAP with deviation bands, ATR (own pane)
