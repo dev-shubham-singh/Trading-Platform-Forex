@@ -4311,8 +4311,11 @@ const SPF = [
   ['kMin', 'Push count at least', 'number', null, 'Show symbols whose running push count is at least this (2 = HH2 or more)'],
   ['kMax', 'and at most', 'number', null, '0 = no upper limit. Use e.g. 2 and 4 to find pushes 2 to 4 only.', 0],
   ['recent', 'Last push within', 'number', null, 'Only if the latest push happened within this many candles. 0 = any time.', 0],
+  ['inZone', 'Entry zone filter', 'select', [['off', 'Off'], ['inside', 'Price is inside the latest zone'], ['near', 'Price is inside or has just left it (within the extend candles)']], 'Uses the same rectangle zones as the chart: the pullback between the broken high and the higher low.'],
+  ['zoneFrom', 'Zone from push', 'number', null, 'Only zones of this push number or later count (2 = the retrace after HH1 that breaks the previous high).'],
+  ['zoneExt', 'Zone valid for (candles)', 'number', null, 'How many candles after the break the zone still counts.', 0],
 ];
-const SCANP = Object.assign({}, IND_DEFAULTS.push, { kMin: 2, kMax: 0, recent: 0 }, store.get('gc_scanp', {}));
+const SCANP = Object.assign({}, IND_DEFAULTS.push, { kMin: 2, kMax: 0, recent: 0, inZone: 'off' }, store.get('gc_scanp', {}));
 function scanPushBuild() {
   $('sc_pushbox').innerHTML = SPF.map(([k, lab, t, opts, tip]) => {
     const id = 'sp_' + k, v = SCANP[k];
@@ -4344,9 +4347,21 @@ function scanPushRead() {
 function scanPushHits(rows, P, tfN, form) {       // -> [{ side, note }] for the last candle used
   const res = pushCalc(rows, P, tfN), L = rows.length - 1 - (form ? 0 : 1), out = [];
   if (L < 0 || isNaN(res.smma[L])) return out;
+  const px = rows[L][4];
   for (const [d, nm, side] of [[1, 'up', 'above'], [-1, 'dn', 'below']]) {
     if ((P.side === 'long' && d < 0) || (P.side === 'short' && d > 0)) continue;
     const r = res[nm], k = r.cnt[L];
+    if (P.inZone && P.inZone !== 'off') {                          // entry-zone scan: latest zone of this side
+      let z = null;
+      for (let q = (res.zones || []).length - 1; q >= 0; q--) { const zz = res.zones[q]; if (zz.d === d && zz.k >= (P.zoneFrom || 2) && zz.i1 <= L) { z = zz; break; } }
+      if (!z || L - z.i1 > (P.zoneExt || 30)) continue;
+      const inside = px <= z.hi && px >= z.lo;
+      if (P.inZone === 'inside' && !inside) continue;
+      if (P.inZone === 'near' && !inside && !(d > 0 ? px > z.hi : px < z.lo)) continue;
+      const f = v => (+v.toPrecision(7)).toString();
+      out.push({ side, note: `${d > 0 ? 'BUY' : 'SELL'} zone ${d > 0 ? "HH" : "LL"}${z.k} ${f(z.lo)}-${f(z.hi)}${inside ? ' (inside)' : ''}` });
+      continue;
+    }
     if (!k || k < P.kMin || (P.kMax && k > P.kMax)) continue;
     if (P.recent) { let ok = false; for (let m = L; m > L - P.recent && m >= 0; m--) if (r.ev[m]) { ok = true; break; } if (!ok) continue; }
     out.push({ side, note: `${d > 0 ? '▲ HH' : '▼ LL'}${k}` });
