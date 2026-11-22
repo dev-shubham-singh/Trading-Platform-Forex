@@ -705,6 +705,7 @@ const IND_DEFAULTS = {
   hl: { iv: '1h', ext: 24, show: 'sweeps', fit: true, cH: '#ff9800', cL: '#29b6f6', width: 2 },
   push: { pIv: '15m', pN: 2, pStyle: 'ha', pForm: false, side: 'both', smLen: 50, sIv: '15s', smSrc: 'ha', smLive: 'closed',
           sw: 2, brk: 'close', reqHL: true, reset: 'smma', minBelow: 1, look: 0, biasMode: 'entry', showFrom: 1,
+          zones: true, zoneFrom: 2, zoneTo: 0, zoneExt: 30, zoneLabel: true, zoneAlpha: '0.18', zoneLine: 1,
           color: '#e040fb', width: 2, line: true, cBuy: '#26a69a', cSell: '#ef5350' },
   stretch: { fast: 9, slow: 15, base: 50, k: 4, look: 40, need: 1, level: 'wick', trend: true, tpLook: 300,
              trade: 'limit', entry: 'close', ext: 0.5, win: 5, rr: 2, be: 0.3, hold: 10, stall: true, comm: 0.07,
@@ -1444,8 +1445,8 @@ function pushGroup(rows, T) {                 // higher candles from rows: c[k] 
 }
 function pushIvSec(s) { const iv = s ? parseIv(s) : null; return iv && iv.kind === 'time' ? iv.n : 0; }
 function pushBias(rows, o) {                  // per row: 1 = the last N higher candles are green, -1 = red, 0 = neither; null = no bias filter
-  const T = pushIvSec(o.pIv); if (!T) return null;
-  const n = rows.length, out = new Int8Array(n), g = pushGroup(rows, T), c = g.c, m = c.length, N = Math.max(1, Math.floor(o.pN) || 1), ha = o.pStyle !== 'real';
+  const T = pushIvSec(o.pIv); if (!T || !(Math.floor(o.pN) >= 1)) return null;          // no timeframe, or 0 candles = no bias filter
+  const n = rows.length, out = new Int8Array(n), g = pushGroup(rows, T), c = g.c, m = c.length, N = Math.floor(o.pN), ha = o.pStyle !== 'real';
   const hao = new Array(m), hac = new Array(m), col = new Array(m);
   for (let k = 0; k < m; k++) {
     const [co, ch, cl, cc] = c[k];
@@ -1494,7 +1495,7 @@ function pushSmma(rows, o, tfChart) {         // the reference SMMA per row, fro
 function pushCalc(rows, o, tfChart) {
   const n = rows.length, S = pushSmma(rows, o, tfChart), B = pushBias(rows, o);
   const mk = () => ({ cnt: new Int16Array(n), ev: new Int16Array(n) });
-  const res = { smma: S, bias: B, up: mk(), dn: mk() };
+  const res = { smma: S, bias: B, up: mk(), dn: mk(), zones: [] };
   const sw = Math.max(1, Math.floor(o.sw) || 1), minB = Math.max(1, Math.floor(o.minBelow) || 1), look = Math.max(0, Math.floor(o.look) || 0);
   const byClose = o.brk !== 'wick', rSm = o.reset === 'smma' || o.reset === 'both', rHl = o.reset === 'hl' || o.reset === 'both', always = o.biasMode === 'always';
   const run = d => {
@@ -1503,36 +1504,38 @@ function pushCalc(rows, o, tfChart) {
     const H = i => d > 0 ? rows[i][2] : -rows[i][3], L = i => d > 0 ? rows[i][3] : -rows[i][2], C = i => d * rows[i][4];
     const biasOk = i => !B || B[i] === d;
     let st = 0, runHigh = -Infinity, belowN = 0, top = -Infinity, dipLow = Infinity, k = 0, lastBrk = -1, prevHL = -Infinity, topLock = null, runH = -Infinity, lastPiv = -1;
+    let dipStart = -1, runHIdx = -1, lockIdx = -1;
+    const zone = (i0, i1, a, b, kk) => res.zones.push({ d, k: kk, i0, i1, hi: Math.max(d * a, d * b), lo: Math.min(d * a, d * b) });
     for (let i = 0; i < n; i++) {
       const s = d * S[i]; if (isNaN(s)) continue;
       const h = H(i), l = L(i), c = C(i), bv = byClose ? c : h;
       if (st === 0) {
         runHigh = Math.max(runHigh, h);
-        if (c < s) { belowN++; dipLow = Math.min(dipLow, l); } else { belowN = 0; dipLow = Infinity; }
+        if (c < s) { if (!belowN) dipStart = i; belowN++; dipLow = Math.min(dipLow, l); } else { belowN = 0; dipLow = Infinity; dipStart = -1; }
         if (belowN >= minB) {
           st = 1; top = runHigh;
           if (look) { top = -Infinity; for (let j = Math.max(0, i - look + 1); j <= i; j++) top = Math.max(top, H(j)); }
           runHigh = -Infinity;
         }
       } else if (st === 1) {
-        if (c > s && bv > top && biasOk(i)) { st = 2; k = 1; out.ev[i] = 1; lastBrk = i; lastPiv = i; prevHL = dipLow; topLock = null; runH = h; }
+        if (c > s && bv > top && biasOk(i)) { zone(Math.max(0, dipStart), i, top, dipLow, 1); st = 2; k = 1; out.ev[i] = 1; lastBrk = i; lastPiv = i; prevHL = dipLow; topLock = null; runH = h; runHIdx = i; }
         else { top = Math.max(top, h); dipLow = Math.min(dipLow, l); }
       } else {
-        runH = Math.max(runH, h);
+        if (h > runH) { runH = h; runHIdx = i; }
         const j = i - sw;
         if (j > lastBrk && j > lastPiv && j - sw >= 0) {
           let piv = true;
           for (let m = j - sw; m <= j + sw && piv; m++) { if (m === j) continue; if (m < j ? L(m) < L(j) : L(m) <= L(j)) piv = false; }
           if (piv) {
             lastPiv = j;
-            if (o.reqHL !== false && L(j) <= prevHL) { st = 1; top = runH; dipLow = L(j); k = 0; out.cnt[i] = 0; continue; }
-            prevHL = L(j); topLock = runH;
+            if (o.reqHL !== false && L(j) <= prevHL) { st = 1; top = runH; dipLow = L(j); dipStart = i; k = 0; out.cnt[i] = 0; continue; }
+            prevHL = L(j); topLock = runH; lockIdx = runHIdx;
           }
         }
         let broke = false;
-        if (topLock !== null && bv > topLock) { k++; out.ev[i] = k; lastBrk = i; lastPiv = i; topLock = null; runH = h; broke = true; }
+        if (topLock !== null && bv > topLock) { k++; out.ev[i] = k; zone(Math.max(0, lockIdx), i, topLock, prevHL, k); lastBrk = i; lastPiv = i; topLock = null; runH = h; runHIdx = i; broke = true; }
         if ((rSm && c < s) || (rHl && !broke && (byClose ? c : l) < prevHL) || (always && !biasOk(i))) {
-          st = 1; top = Math.max(runH, h); dipLow = l; k = 0; out.cnt[i] = 0; continue;
+          st = 1; top = Math.max(runH, h); dipLow = l; dipStart = i; k = 0; out.cnt[i] = 0; continue;
         }
       }
       out.cnt[i] = st === 2 ? k : 0;
@@ -2755,7 +2758,7 @@ function renderPanel() {
       `<b style="width:auto">Push count (HH / HL)</b>` +
       `<span style="color:var(--muted)">1. Bias:</span>` +
       `<label title="Higher timeframe whose candle colours give the bias: 5m, 15m, 1h, 4h, 1d... Leave empty for no bias filter. Press Enter.">Candles <input type="text" data-k="pIv" value="${ind.pIv}" placeholder="off" style="width:54px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px"></label>` +
-      `<label title="How many of the last candles of that timeframe must have the same colour (green = buy side, red = sell side)">last <input type="number" data-k="pN" min="1" max="10" step="1" value="${ind.pN}" style="width:44px"> same colour</label>` +
+      `<label title="How many of the last candles of that timeframe must have the same colour (green = buy side, red = sell side)">last <input type="number" data-k="pN" min="0" max="10" step="1" value="${ind.pN}" style="width:44px"> same colour (0 = no filter)</label>` +
       `<label>as <select data-k="pStyle">` + opt('pStyle', 'ha', 'Heikin Ashi') + opt('pStyle', 'real', 'Normal candles') + `</select></label>` +
       `<label title="Also count the higher candle that is still forming"><input type="checkbox" data-k="pForm" ${ind.pForm ? 'checked' : ''}> incl. forming</label>` +
       `<label title="Only look for pushes up (buy), down (sell) or both">Side <select data-k="side">` + opt('side', 'both', 'Both') + opt('side', 'long', 'Buy (HH / HL)') + opt('side', 'short', 'Sell (LL / LH)') + `</select></label>` +
@@ -2773,6 +2776,13 @@ function renderPanel() {
       `<label title="How far back, in candles, to look for the top of the dip that push 1 must break. 0 = the whole move above the SMMA before the dip.">Top within <input type="number" data-k="look" min="0" step="10" value="${ind.look}" style="width:58px"> candles</label>` +
       `<label title="Entry: the bias must be right when push 1 happens. Always: the count restarts if the bias is lost.">Bias <select data-k="biasMode">` + opt('biasMode', 'entry', 'At push 1') + opt('biasMode', 'always', 'Always') + `</select></label>` +
       `<label title="Only mark pushes from this number up (e.g. 2 hides the first break)">Mark from <input type="number" data-k="showFrom" min="1" step="1" value="${ind.showFrom}" style="width:44px"></label>` +
+      `<span style="color:var(--muted)">4. Zones:</span>` +
+      `<label title="Draw a rectangle on each push: the pullback between the broken high and the higher low (push 1: the dip). Its colour tells buy or sell."><input type="checkbox" data-k="zones" ${ind.zones !== false ? 'checked' : ''}> Zones</label>` +
+      `<label title="First push number that gets a zone. 2 = the retrace that ends with the second higher high (HH2). 1 also draws the dip box.">from push <input type="number" data-k="zoneFrom" min="1" step="1" value="${ind.zoneFrom}" style="width:44px"></label>` +
+      `<label title="Last push number that gets a zone. 0 = no limit.">to <input type="number" data-k="zoneTo" min="0" step="1" value="${ind.zoneTo}" style="width:44px"></label>` +
+      `<label title="Candles the rectangle is stretched to the right after the break, so you can see where to enter">extend <input type="number" data-k="zoneExt" min="0" step="5" value="${ind.zoneExt}" style="width:50px"> candles</label>` +
+      `<label>Fill <select data-k="zoneAlpha">` + opt('zoneAlpha', '0.10', 'Light') + opt('zoneAlpha', '0.18', 'Normal') + opt('zoneAlpha', '0.30', 'Strong') + `</select></label>` +
+      `<label><input type="checkbox" data-k="zoneLabel" ${ind.zoneLabel !== false ? 'checked' : ''}> Label</label>` +
       `<label><input type="checkbox" data-k="line" ${ind.line !== false ? 'checked' : ''}> SMMA line</label>` +
       `<label>Line <input type="color" data-k="color" value="${ind.color}"></label><label>Buy <input type="color" data-k="cBuy" value="${ind.cBuy}"></label><label>Sell <input type="color" data-k="cSell" value="${ind.cSell}"></label>` +
       `<button class="x" title="Remove">Remove</button>`;
@@ -2974,7 +2984,7 @@ function renderPanel() {
             el.style.borderColor = ok ? '' : 'var(--down)'; el.title = ok ? '' : 'Use a time length: 1s, 15s, 1m, 5m, 15m, 1h, 4h, 1d';
             if (!ok) return; ind[k] = iv.label; el.value = iv.label;
           }
-        } else if (ind.type === 'push' && k === 'look') ind.look = Math.max(0, Math.floor(Number(el.value)) || 0);
+        } else if (ind.type === 'push' && (k === 'look' || k === 'pN' || k === 'zoneTo' || k === 'zoneExt')) ind[k] = Math.max(0, Math.floor(Number(el.value)) || 0);
         else if ((ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop') && k === 'iv' && !el.value.trim()) { ind.iv = ''; ind.on_custom = false; }
         else if ((ind.type === 'pivot' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf' || ind.type === 'burke') && k === 'iv') {
           const iv = parseIv(el.value), ok = iv && iv.kind === 'time';
@@ -2992,7 +3002,7 @@ function renderPanel() {
         else ind[k] = el.value;
         if (ind.type === 'push') {
           if (k === 'visible' || k === 'line' || k === 'color' || k === 'width') ind.series.forEach(x => x.applyOptions({ visible: lineShown(ind), color: ind.color, lineWidth: ind.width || 2 }));
-          if (k !== 'cBuy' && k !== 'cSell' && k !== 'color' && k !== 'width' && k !== 'line' && k !== 'visible' && raw.length) fullData(ind);
+          if (!['cBuy', 'cSell', 'color', 'width', 'line', 'visible', 'zones', 'zoneFrom', 'zoneTo', 'zoneExt', 'zoneAlpha', 'zoneLabel'].includes(k) && raw.length) fullData(ind);
           ind.series.forEach(x => x.applyOptions({ title: label(ind) }));
           refreshBos();
         } else if (ind.type === 'stretch') {
@@ -3847,6 +3857,7 @@ function render() {
       drawBandFills();
       drawBos();
       drawStretch();
+      drawPushZones();
       drawPivots(pw);
       drawPanes(pw, ph);
       drawHtf(pw, ph);
@@ -3972,6 +3983,25 @@ function drawMomentum(ind, r) {
       ctx.fillText(m.outcome, x1 + 4, (m.outcome === 'TP' ? ytp : m.outcome === 'SL' ? ysl : ye) + 4);
     }
   }
+}
+function drawPushZones() {
+  const r = ts.getVisibleLogicalRange(); if (!r || !raw.length) return;
+  ctx.font = '11px sans-serif';
+  inds.filter(i => i.type === 'push' && i.visible !== false && i.zones !== false && i.res && i.res.zones).forEach(ind => {
+    const from = Math.max(1, ind.zoneFrom || 1), to = ind.zoneTo || 0, ext = ind.zoneExt || 0, n = raw.length;
+    for (const z of ind.res.zones) {
+      if (z.k < from || (to && z.k > to)) continue;
+      if ((ind.side === 'long' && z.d < 0) || (ind.side === 'short' && z.d > 0)) continue;
+      const i1 = z.i1 + ext;
+      if (i1 < r.from || z.i0 > r.to) continue;
+      const x0 = l2x(z.i0 - 0.4), x1 = l2x(i1 + 0.5), y0 = series.priceToCoordinate(z.hi), y1 = series.priceToCoordinate(z.lo);
+      if (x0 == null || x1 == null || y0 == null || y1 == null) continue;
+      const col = z.d > 0 ? ind.cBuy : ind.cSell, top = Math.min(y0, y1), h = Math.max(2, Math.abs(y1 - y0));
+      ctx.globalAlpha = Number(ind.zoneAlpha) || 0.18; ctx.fillStyle = col; ctx.fillRect(x0, top, Math.max(4, x1 - x0), h); ctx.globalAlpha = 1;
+      ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.strokeRect(x0, top, Math.max(4, x1 - x0), h);
+      if (ind.zoneLabel !== false) { ctx.fillStyle = col; ctx.fillText(`${z.d > 0 ? 'BUY' : 'SELL'} ${z.d > 0 ? 'HH' : 'LL'}${z.k}`, x0 + 3, z.d > 0 ? top + h + 12 : top - 4); }
+    }
+  });
 }
 function drawStretch() {
   const r = ts.getVisibleLogicalRange(); if (!r) return;
@@ -4264,7 +4294,7 @@ const SCAN = Object.assign({ src: 'fav', tf: '', len: 50, side: 'below', n: 3, h
 /* settings of the Push-count scan (same parameters as the indicator, so what you see on the chart is what is scanned) */
 const SPF = [
   ['pIv', 'Bias candles', 'text', null, 'Higher timeframe whose candle colours give the bias (5m, 15m, 1h, 4h, 1d). Empty = no bias filter.'],
-  ['pN', 'Last N same colour', 'number', null, 'How many of the last candles of that timeframe must be green (buy) / red (sell)'],
+  ['pN', 'Last N same colour', 'number', null, 'How many of the last candles of that timeframe must be green (buy) / red (sell). 0 = no bias filter.', 0],
   ['pStyle', 'Colours from', 'select', [['ha', 'Heikin Ashi'], ['real', 'Normal candles']]],
   ['side', 'Side', 'select', [['both', 'Both'], ['long', 'Buy (HH / HL)'], ['short', 'Sell (LL / LH)']]],
   ['smLen', 'SMMA length', 'number'],
