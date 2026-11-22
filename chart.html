@@ -2129,7 +2129,7 @@ function hdojiCalc(ind) {
    its open to its close. The length is either fixed (4h, 1d, 1w, 30d ...) or "chart x N" so it follows the chart
    interval (on a 15s chart, x2 = 30s candles). Closed candles never change; only the last one is still forming. */
 function htfLen(ind) {                         // length of one higher candle in seconds, or null
-  if (ind.mode === 'mult') return kind === 'time' ? tfSec * Math.max(2, Math.floor(Number(ind.nx)) || 2) : null;
+  if (ind.mode === 'mult') return kind === 'time' ? tfSec * Math.max(1, Math.floor(Number(ind.nx)) || 1) : null;
   const iv = parseIv(ind.iv);
   return iv && iv.kind === 'time' ? iv.n : null;
 }
@@ -2146,7 +2146,7 @@ function htfCalc(ind) {
   if (!n) return;
   if (!T) { ind.hWarn = ind.mode === 'mult' ? 'needs a time chart' : 'type a time length such as 4h, 1d, 1w or 30d'; return; }
   ind.hName = htfName(T);
-  if (kind === 'time' && T <= tfSec) { ind.hWarn = `${ind.hName} must be longer than the chart interval (${tf})`; return; }
+  if (kind === 'time' && T < tfSec) { ind.hWarn = `${ind.hName} is shorter than the chart interval (${tf}); use ${tf} or longer`; return; }
   const per = [];
   for (let i = 0; i < n; i++) {
     const r = raw[i], st = htfStart(r[5], T), p = per[per.length - 1];
@@ -2862,7 +2862,7 @@ function renderPanel() {
       `<label title="Fixed: always the same length, e.g. 4h. Chart x N: follows the chart interval, e.g. x4 on a 1h chart is 4h, on a 15s chart x2 is 30s.">Length <select data-k="mode">` +
       opt('mode', 'fixed', 'Fixed') + opt('mode', 'mult', 'Chart x N') + `</select></label>` +
       (ind.mode === 'mult'
-        ? `<label title="How many chart candles each higher candle covers">x <input type="number" data-k="nx" min="2" step="1" value="${ind.nx}" style="width:54px"></label>`
+        ? `<label title="How many chart candles each higher candle covers">x <input type="number" data-k="nx" min="1" step="1" value="${ind.nx}" style="width:54px"></label>`
         : `<label title="Any time length: 30s, 5m, 1h, 4h, 1d, 1w, 4w, 30d (1 month = 30d). Press Enter."><input type="text" data-k="iv" list="htfl" value="${ind.iv}" placeholder="4h" style="width:62px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px">` +
           `<datalist id="htfl">${['15s', '30s', '1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d', '1w', '2w', '4w', '30d'].map(v => `<option value="${v}">`).join('')}</datalist></label>`) +
       `<label>Candles <select data-k="style">` + opt('style', 'ha', 'Heikin Ashi') + opt('style', 'candle', 'Normal') + `</select></label>` +
