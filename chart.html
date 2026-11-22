@@ -3236,7 +3236,9 @@ function legend(idx) {
     const r = i.res, k = idx == null ? raw.length - 1 : idx, b = r.bias ? r.bias[k] : 0, u = r.up.cnt[k], dn = r.dn.cnt[k];
     const bt = !r.bias ? 'no filter' : b > 0 ? `<b style="color:${i.cBuy}">${i.pIv} green</b>` : b < 0 ? `<b style="color:${i.cSell}">${i.pIv} red</b>` : `${i.pIv} mixed`;
     const st = u ? `<b style="color:${i.cBuy}">&#9650; HH${u}</b>` : dn ? `<b style="color:${i.cSell}">&#9660; LL${dn}</b>` : 'no push running';
-    html += `<div>${eye(i)}<span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${fmt(r.smma[k])}</span> &nbsp;&middot;&nbsp; bias ${bt} &nbsp;&middot;&nbsp; ${st}</div>`;
+    const zf = Math.max(1, i.zoneFrom || 1), zn = (r.zones || []).filter(z => z.k >= zf && (!i.zoneTo || z.k <= i.zoneTo) && !((i.side === 'long' && z.d < 0) || (i.side === 'short' && z.d > 0))).length;
+    const zinfo = i.zones === false ? 'zones off' : zn ? `<b>${zn} zone${zn > 1 ? 's' : ''}</b>` : `<span style="color:var(--muted)">no zone yet (needs HH${zf}; try bias 0 or zone from 1)</span>`;
+    html += `<div>${eye(i)}<span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${fmt(r.smma[k])}</span> &nbsp;&middot;&nbsp; bias ${bt} &nbsp;&middot;&nbsp; ${st} &nbsp;&middot;&nbsp; ${zinfo}</div>`;
   });
   inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'hswitch', 'chop', 'htf', 'burke', 'vprof', 'foot', 'cvd', 'push'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
     const v = i.vals.map(a => fmt(a[idx])).join(' / ');
