@@ -210,3 +210,7 @@ The **Hide candles / Show candles** button (next to Dark / Light) hides the cand
 ## Profit lock
 
 Toolbar button **Profit lock** (arrow = settings). When a trade's profit reaches the *trigger* amount, its stop loss is raised to lock in the *minimum profit*; a stop of yours that is already better is left alone. On a live MT5 account it runs inside `gold_chart.py` (checks 10x a second, works with the chart closed; settings in `profit_lock.json`, not committed). Practice / paper trades are handled by the page. Restart `gold_chart.py` after updating.
+
+## Demo / real account switch
+
+Toolbar button **DEMO 12345 / REAL 12345** (top row, next to Light / Dark). It shows which MT5 account is live; click it to switch. No password is typed or stored: MT5 logs in with the password saved in the terminal (File > Login to Trade Account > Save password). Accounts you log into in MT5 appear automatically; you can also add one by login number and server. Switching to a REAL account needs a second confirming click. The list is kept in `mt5_accounts.json` (not committed). Restart `gold_chart.py` after updating.

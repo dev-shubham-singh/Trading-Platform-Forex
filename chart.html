@@ -243,6 +243,7 @@
   <button class="tool" id="syncbtn" title="Sync drawings, crosshair, symbol and theme between your chart windows">&#8644; Sync</button>
   <button class="tool" id="hidebtn" title="Hide the candles so only your indicators, drawings and orders show. Click again to show them.">&#128065; Hide candles</button>
   <button class="tool" id="themebtn" title="Switch between dark and light mode">&#9788; Light</button>
+  <button class="tool mt5only" id="acctbtn" title="Your MT5 account: switch between your demo and real accounts" style="font-weight:600">Account</button>
   <div class="quote">
     <span id="bias" style="display:none;padding:3px 10px;border-radius:4px;font-weight:600"></span>
     <span>Bid <b id="bid">-</b></span>
@@ -334,6 +335,17 @@
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:150px">...to this profit (above entry)</label><input id="pm_to" type="number" min="0" step="0.05" style="width:60px"> <span style="color:var(--muted)">R</span></div>
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:150px">Final target (for the maths)</label><input id="pm_t" type="number" min="0.2" step="0.05" style="width:60px"> <span style="color:var(--muted)">R (your take profit)</span></div>
   <div id="pm_math" style="margin-top:6px;padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.7"></div>
+</div>
+<div id="acctpop" class="pop" style="width:min(400px, calc(100vw - 24px)); padding:10px 12px; font-size:12px">
+  <div class="th" style="margin:0 0 6px">MT5 account: demo / real</div>
+  <div id="ac_cur" style="padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.6"></div>
+  <div style="color:var(--muted);margin:8px 0 4px">Switch to</div>
+  <div id="ac_list"></div>
+  <div id="ac_msg" style="margin:6px 0;line-height:1.5"></div>
+  <div style="color:var(--muted);line-height:1.5;margin-top:6px">No password is typed or stored here. MT5 uses the password it has saved: open MT5 once, <b>File &gt; Login to Trade Account</b>, choose the account and tick <b>Save password</b>. Every account you log into in MT5 shows up in this list by itself. Your open trades stay open on the account they belong to; the Profit lock and other automatic tools act on whichever account is active.</div>
+  <details style="margin-top:6px"><summary style="cursor:pointer;color:var(--muted)">Add an account by number</summary>
+    <div style="display:flex;gap:6px;align-items:center;margin:6px 0;flex-wrap:wrap"><input id="ac_login" type="text" inputmode="numeric" placeholder="login number" style="width:110px"><input id="ac_server" type="text" placeholder="server, e.g. Exness-MT5Trial9" style="flex:1;min-width:150px">
+      <select id="ac_kind"><option value="demo">Demo</option><option value="real">Real</option></select><button class="tool" id="ac_add">Add</button></div></details>
 </div>
 <div id="lkpop" class="pop" style="width:min(380px, calc(100vw - 24px)); padding:10px 12px; font-size:12px">
   <div class="th" style="margin:0 0 6px">Profit lock: a fast safety stop</div>
@@ -4952,6 +4964,50 @@ function pmTick() {
   }
 }
 setInterval(() => { if (PM.on) pmTick(); }, 250);
+/* ---------------- Account switcher: demo <-> real (MT5 logs in with the password saved in the terminal) ---------------- */
+let acctArm = null;
+function acctBadge() {                                         // the toolbar button always shows which account is live
+  const b = $('acctbtn'); if (!b) return;
+  if (!ACC || !ACC.login) { b.textContent = 'Account'; b.style.background = ''; b.style.color = ''; return; }
+  const real = ACC.kind === 'real';
+  b.textContent = (real ? 'REAL ' : 'DEMO ') + ACC.login; b.style.background = real ? '#ef5350' : '#26a69a'; b.style.color = '#fff';
+}
+async function acctRender() {
+  let j; try { j = await (await fetch('/api/accounts')).json(); } catch (e) { $('ac_cur').textContent = 'Could not reach the chart server.'; return; }
+  const cur = j.current, esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  $('ac_cur').innerHTML = cur ? `Connected: <b style="color:${cur.kind === 'real' ? '#ef5350' : '#26a69a'}">${cur.kind === 'real' ? 'REAL' : 'DEMO'}</b> account <b>${cur.login}</b> on ${esc(cur.server)}<br>Balance ${cur.balance.toFixed(2)} ${esc(cur.currency)} &middot; Equity ${cur.equity.toFixed(2)}` +
+    ((ACC && ACC.all && ACC.all.length) ? `<br><span style="color:var(--muted)">${ACC.all.length} open trade${ACC.all.length > 1 ? 's' : ''} on this account (they stay open if you switch)</span>` : '') : 'No account connected.';
+  const others = (j.saved || []).filter(a => !(cur && +a.login === cur.login && a.server === cur.server));
+  $('ac_list').innerHTML = others.length ? others.map(a => {
+    const real = a.kind === 'real', armed = acctArm === a.login + '|' + a.server;
+    return `<div style="display:flex;gap:6px;align-items:center;margin:3px 0"><span style="flex:1"><b style="color:${real ? '#ef5350' : '#26a69a'}">${real ? 'REAL' : 'DEMO'}</b> ${a.login} <span style="color:var(--muted)">${esc(a.server)}</span></span>` +
+      `<button class="tool" data-sw="${a.login}|${esc(a.server)}" style="${armed ? 'background:#ef5350;color:#fff' : ''}">${armed ? 'Confirm: switch to REAL' : 'Switch'}</button>` +
+      `<button class="tool" data-rm="${a.login}|${esc(a.server)}" title="Remove from this list" style="padding:4px 6px">&times;</button></div>`;
+  }).join('') : '<div style="color:var(--muted)">No other account saved yet. Log into your other account once in MT5 (with Save password ticked) or add it below.</div>';
+  $('ac_list').querySelectorAll('[data-sw]').forEach(el => el.onclick = () => acctSwitch(el.dataset.sw, others));
+  $('ac_list').querySelectorAll('[data-rm]').forEach(el => el.onclick = async () => { const [l, sv] = el.dataset.rm.split('|'); const r = await postJSON('/api/acctremove', { login: +l, server: sv }); $('ac_msg').innerHTML = r.error ? `<span style="color:#ef5350">${r.error}</span>` : ''; acctRender(); });
+}
+async function acctSwitch(key, list) {
+  const [l, sv] = key.split('|'), a = list.find(x => +x.login === +l && x.server === sv); if (!a) return;
+  if (a.kind === 'real' && acctArm !== key) { acctArm = key; acctRender(); clearTimeout(acctSwitch.t); acctSwitch.t = setTimeout(() => { acctArm = null; if ($('acctpop').style.display === 'block') acctRender(); }, 6000); return; }
+  acctArm = null; $('ac_msg').innerHTML = '<span style="color:var(--muted)">Switching... (MT5 is logging in)</span>';
+  const r = await postJSON('/api/acctswitch', { login: +l, server: sv });
+  if (r.error) { $('ac_msg').innerHTML = `<span style="color:#ef5350">${r.error}</span>`; acctRender(); return; }
+  $('ac_msg').innerHTML = '<span style="color:#26a69a">Switched. Reloading the chart...</span>'; setTimeout(() => location.reload(), 400);
+}
+$('acctbtn').onclick = e => {
+  e.stopPropagation(); const p = $('acctpop');
+  if (p.style.display === 'block') { p.style.display = 'none'; return; }
+  const r = $('acctbtn').getBoundingClientRect(); p.style.left = Math.max(8, Math.min(r.left, innerWidth - 420)) + 'px'; p.style.top = (r.bottom + 6) + 'px';
+  acctArm = null; $('ac_msg').innerHTML = ''; acctRender(); p.style.display = 'block';
+};
+document.addEventListener('mousedown', e => { if (!$('acctpop').contains(e.target) && !$('acctbtn').contains(e.target)) $('acctpop').style.display = 'none'; });
+$('ac_add').onclick = async () => {
+  const r = await postJSON('/api/acctadd', { login: $('ac_login').value.trim(), server: $('ac_server').value.trim(), kind: $('ac_kind').value });
+  $('ac_msg').innerHTML = r.error ? `<span style="color:#ef5350">${r.error}</span>` : '<span style="color:#26a69a">Added.</span>'; if (!r.error) { $('ac_login').value = ''; $('ac_server').value = ''; } acctRender();
+};
+setInterval(acctBadge, 1000);
+
 /* ---------------- Profit lock: when a trade reaches a profit, move the stop to lock a minimum profit ---------------- */
 let LK = Object.assign({ on: false, trigger: 1.5, lock: 1, once: false, close: true }, store.get('gc_lock', {}));
 const lkArmed = new Set(), lkDone = new Set(); let lkLastId = null, lkErr = '';

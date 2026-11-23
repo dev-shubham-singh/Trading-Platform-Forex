@@ -568,7 +568,7 @@ def account(sym):
     allp = [pos_dict(p, pcomm.get(p.ticket, 0.0)) for p in allpos]
     return {
         "token": TOKEN, "allow": ALLOW_TRADING, "algo": algo, "accTrade": bool(getattr(acc, "trade_allowed", True)),
-        "login": acc.login, "server": acc.server, "currency": acc.currency, "balance": acc.balance, "equity": acc.equity,
+        "login": acc.login, "server": acc.server, "kind": acct_kind(acc), "currency": acc.currency, "balance": acc.balance, "equity": acc.equity,
         "profit": getattr(acc, "profit", 0), "margin": getattr(acc, "margin", 0), "freeMargin": getattr(acc, "margin_free", 0),
         "marginLevel": getattr(acc, "margin_level", 0), "leverage": getattr(acc, "leverage", 0),
         "sym": {"name": sym, "digits": info.digits, "point": info.point, "vmin": info.volume_min, "vmax": info.volume_max,
@@ -997,6 +997,133 @@ def lock_loop():
         time.sleep(0.1 if LOCK["on"] else 0.5)
 
 
+# ---------------- Switch between your demo and real MT5 accounts ----------------
+# Passwords are NEVER stored or typed here: mt5.login() is called with the login number and server only, so MT5 uses the
+# password saved in your terminal (File > Login to Trade Account, tick "Save password"). The list of accounts is remembered in
+# mt5_accounts.json (login numbers and server names only, not committed). Any account you log into in MT5 is added automatically.
+ACCTS_FILE = HERE / "mt5_accounts.json"
+ACCT_SWITCH_LOCK = threading.Lock()
+
+
+def acct_kind(acc):
+    return "real" if getattr(acc, "trade_mode", 0) == 2 else "demo"        # 0 demo, 1 contest, 2 real
+
+
+def accts_load():
+    try:
+        v = json.loads(ACCTS_FILE.read_text())
+        return [a for a in v if isinstance(a, dict) and a.get("login") and a.get("server")]
+    except (OSError, ValueError):
+        return []
+
+
+def accts_save(lst):
+    try:
+        ACCTS_FILE.write_text(json.dumps(lst, indent=1))
+    except OSError:
+        pass
+
+
+def accts_current():
+    with MT5_LOCK:
+        acc = mt5.account_info()
+    if not acc:
+        return None
+    return {"login": int(acc.login), "server": acc.server, "kind": acct_kind(acc), "currency": acc.currency,
+            "balance": acc.balance, "equity": acc.equity, "name": getattr(acc, "name", "") or "", "company": getattr(acc, "company", "") or ""}
+
+
+def accts_remember(cur=None):
+    cur = cur or accts_current()
+    if not cur:
+        return
+    lst = accts_load()
+    for a in lst:
+        if int(a["login"]) == cur["login"] and a["server"] == cur["server"]:
+            if a.get("kind") != cur["kind"] or a.get("currency") != cur["currency"]:
+                a.update(kind=cur["kind"], currency=cur["currency"]); accts_save(lst)
+            return
+    lst.append({"login": cur["login"], "server": cur["server"], "kind": cur["kind"], "currency": cur["currency"]})
+    accts_save(lst)
+
+
+def accounts_info():
+    cur = accts_current()
+    accts_remember(cur)
+    return {"current": cur, "saved": accts_load()}
+
+
+def account_add(login, server, kind):
+    try:
+        login = int(login)
+    except (TypeError, ValueError):
+        return {"error": "the login must be the account number (digits only)"}
+    server = str(server or "").strip()
+    if not server:
+        return {"error": "type the server name exactly as MT5 shows it (for example Exness-MT5Trial9)"}
+    lst = accts_load()
+    if not any(int(a["login"]) == login and a["server"] == server for a in lst):
+        lst.append({"login": login, "server": server, "kind": "real" if kind == "real" else "demo"})
+        accts_save(lst)
+    return {"ok": True, **accounts_info()}
+
+
+def account_remove(login, server):
+    cur = accts_current()
+    if cur and int(login) == cur["login"] and server == cur["server"]:
+        return {"error": "that is the account you are connected to; switch to another one first"}
+    accts_save([a for a in accts_load() if not (int(a["login"]) == int(login) and a["server"] == server)])
+    return {"ok": True, **accounts_info()}
+
+
+def account_switch(login, server):
+    """Log the MT5 terminal into another saved account (the password saved in MT5 is used) and reset the chart's caches."""
+    if not ACCT_SWITCH_LOCK.acquire(blocking=False):
+        return {"error": "an account switch is already running"}
+    try:
+        try:
+            login = int(login)
+        except (TypeError, ValueError):
+            return {"error": "bad login"}
+        ent = next((a for a in accts_load() if int(a["login"]) == login and (not server or a["server"] == server)), None)
+        if not ent:
+            return {"error": "that account is not in your list"}
+        cur = accts_current()
+        if cur and cur["login"] == login and cur["server"] == ent["server"]:
+            return {"ok": True, **accounts_info()}
+        with MT5_LOCK:
+            ok = mt5.login(login, server=ent["server"])
+            err = None if ok else mt5.last_error()
+        if not ok:
+            return {"error": f"MT5 would not log in to {login} on {ent['server']} ({err}). Open MT5 once, File > Login to Trade Account, "
+                             "choose this account and tick 'Save password', then try again."}
+        now = None
+        for _ in range(40):                                           # wait (up to ~8 s) until the terminal reports the new account
+            now = accts_current()
+            with MT5_LOCK:
+                term = mt5.terminal_info()
+            if now and now["login"] == login and (term is None or getattr(term, "connected", True)):
+                break
+            time.sleep(0.2)
+        else:
+            return {"error": f"MT5 did not finish connecting to {login} in time. Check MT5; the chart may still be on the old account."}
+        with STORES_LOCK:
+            STORES.clear()
+        with BUILDERS_LOCK:
+            BUILDERS.clear()
+        SYMBOL_DIGITS.clear()
+        _tz["offset"] = None
+        for k in ("armed", "done"):
+            LOCK_STATE[k].clear()
+        LOCK_STATE["tries"].clear()
+        accts_remember(now)
+        sym = default_symbol()
+        log_order(f"{datetime.now():%Y-%m-%d %H:%M:%S} ACCOUNT switched to {login} {ent['server']} ({now['kind']})")
+        return {"ok": True, "symbol": sym, **accounts_info()}
+    finally:
+        ACCT_SWITCH_LOCK.release()
+
+
 # ---------------- order flow (tick rule) ----------------
 def nice_step(x, point):
     """Round a price step to 1 / 2 / 2.5 / 5 x 10^k, never below the symbol's point."""
@@ -1230,6 +1357,8 @@ def make_handler(default_sym):
                 if url.path == "/api/account":
                     ensure_symbol(sym)
                     return self.js(account(sym))
+                if url.path == "/api/accounts":
+                    return self.js(accounts_info())
                 if url.path == "/api/lock":
                     return self.js({"cfg": LOCK, "log": LOCK_LOG[-12:]})
                 self.send_error(404)
@@ -1254,6 +1383,12 @@ def make_handler(default_sym):
                 if url.path == "/api/order":
                     ensure_symbol(str(body.get("symbol", "")))
                     return self.js(place_limit(body) if body.get("type") in ("limit", "stop") else place_order(body))
+                if url.path == "/api/acctswitch":
+                    return self.js(account_switch(body.get("login"), body.get("server")))
+                if url.path == "/api/acctadd":
+                    return self.js(account_add(body.get("login"), body.get("server"), body.get("kind")))
+                if url.path == "/api/acctremove":
+                    return self.js(account_remove(body.get("login"), body.get("server")))
                 if url.path == "/api/lockcfg":
                     err = lock_config(body)
                     return self.js({"error": err} if err else {"ok": True, "cfg": LOCK})
@@ -1312,6 +1447,7 @@ def main():
     print(f"Default symbol: {sym}")
     threading.Thread(target=live_loop, daemon=True).start()
     lock_load()
+    accts_remember()
     threading.Thread(target=lock_loop, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), make_handler(sym))
     url = f"http://127.0.0.1:{PORT}"
