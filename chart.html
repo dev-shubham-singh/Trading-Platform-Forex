@@ -235,6 +235,9 @@
   <span style="display:inline-flex;white-space:nowrap">
   <button class="tool" id="pmbtn" title="Partial profit + secure: closes part of the trade at a small profit, then moves the stop above your entry once the trade is far enough in profit. Click to turn on / off.">&#9986; Partial + Secure: <b id="pmst">off</b></button>
   <button class="tool" id="pmcfg" title="Partial profit settings and the maths" style="padding:4px 6px">&#9662;</button></span>
+  <span style="display:inline-flex;white-space:nowrap">
+  <button class="tool" id="lkbtn" title="Profit lock: once a trade's profit reaches your trigger amount, its stop loss jumps to lock in your minimum profit, fast. A stop of yours that is already better is left alone. Click to turn on / off.">&#128274; Profit lock: <b id="lkst">off</b></button>
+  <button class="tool" id="lkcfg" title="Profit lock settings" style="padding:4px 6px">&#9662;</button></span>
   <div class="sep"></div>
   <button class="tool" id="winbtn" title="Open another chart window (e.g. 5m) to put on your other screen">&#10697; New window</button>
   <button class="tool" id="syncbtn" title="Sync drawings, crosshair, symbol and theme between your chart windows">&#8644; Sync</button>
@@ -331,6 +334,16 @@
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:150px">...to this profit (above entry)</label><input id="pm_to" type="number" min="0" step="0.05" style="width:60px"> <span style="color:var(--muted)">R</span></div>
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:150px">Final target (for the maths)</label><input id="pm_t" type="number" min="0.2" step="0.05" style="width:60px"> <span style="color:var(--muted)">R (your take profit)</span></div>
   <div id="pm_math" style="margin-top:6px;padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.7"></div>
+</div>
+<div id="lkpop" class="pop" style="width:min(380px, calc(100vw - 24px)); padding:10px 12px; font-size:12px">
+  <div class="th" style="margin:0 0 6px">Profit lock: a fast safety stop</div>
+  <div style="color:var(--muted);line-height:1.5;margin-bottom:6px">When a trade's profit reaches the <b>trigger</b>, its stop loss is moved to the price that locks in your <b>minimum profit</b>, and if the price then reverses you are stopped out with at least that. A stop of yours that is already better (for example you dragged it to lock 1.5) is <b>left alone</b>; one that is worse, or missing, is raised to the lock. Amounts are in your account currency, per trade, before commission. On a live MT5 account it runs inside the Python server (checks 10 times a second, keeps working with the chart closed).</div>
+  <label style="display:flex;gap:6px;align-items:center;margin:4px 0;cursor:pointer"><input type="checkbox" id="lk_on"> <b>Profit lock on</b></label>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:170px">When a trade's profit reaches</label><input id="lk_trig" type="number" min="0.01" step="0.1" style="width:70px"> <span style="color:var(--muted)">money</span></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:170px">...lock in at least</label><input id="lk_lock" type="number" min="0.01" step="0.1" style="width:70px"> <span style="color:var(--muted)">money</span></div>
+  <label style="display:flex;gap:6px;align-items:center;color:var(--muted);margin:4px 0;cursor:pointer"><input type="checkbox" id="lk_close"> If the price has already fallen back through the lock level, close the trade now (while it is still in profit)</label>
+  <label style="display:flex;gap:6px;align-items:center;color:var(--muted);margin:4px 0;cursor:pointer"><input type="checkbox" id="lk_once"> Apply only once per trade (if I later drag the stop lower, don't move it back)</label>
+  <div id="lk_msg" style="margin-top:6px;padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.6"></div>
 </div>
 <div id="fslpop" class="pop" style="width:min(340px, calc(100vw - 24px)); padding:10px 12px; font-size:12px">
   <div class="th" style="margin:0 0 6px">Flip SL: stop and target after the order fills</div>
@@ -4939,6 +4952,71 @@ function pmTick() {
   }
 }
 setInterval(() => { if (PM.on) pmTick(); }, 250);
+/* ---------------- Profit lock: when a trade reaches a profit, move the stop to lock a minimum profit ---------------- */
+let LK = Object.assign({ on: false, trigger: 1.5, lock: 1, once: false, close: true }, store.get('gc_lock', {}));
+const lkArmed = new Set(), lkDone = new Set(); let lkLastId = null, lkErr = '';
+function lkSave() { store.set('gc_lock', LK); }
+function lkMsg() {
+  const t = Number(LK.trigger), l = Number(LK.lock);
+  $('lk_msg').innerHTML = lkErr ? `<span style="color:#ef5350">${lkErr}</span>` :
+    `When a trade is <b>${money(t)}</b> in profit, the stop is raised to lock <b>${money(l)}</b>. If it then reverses you keep about ${money(l)}. If you drag the stop higher than that, yours is kept.` +
+    (SRC === 'MT5' && !RP.on ? '' : '<br><span style="color:var(--muted)">Practice / paper trades are handled by this page (the page must stay open).</span>');
+}
+function lkUI() {
+  $('lkst').textContent = LK.on ? 'ON' : 'off'; $('lkbtn').style.background = LK.on ? '#26a69a' : ''; $('lkbtn').style.color = LK.on ? '#fff' : '';
+  const set = (id, v) => { const el = $(id); if (document.activeElement !== el) el.value = v; };
+  set('lk_trig', LK.trigger); set('lk_lock', LK.lock); $('lk_on').checked = !!LK.on; $('lk_close').checked = !!LK.close; $('lk_once').checked = !!LK.once; lkMsg();
+}
+async function lkPush() {                                    // send the settings to the server (live MT5), which does the real work
+  lkSave(); lkErr = '';
+  if (Number(LK.lock) >= Number(LK.trigger)) lkErr = 'The locked profit must be smaller than the trigger (e.g. trigger 1.5, lock 1).';
+  else if (SRC === 'MT5' && ACC && ACC.token) { const r = await postJSON('/api/lockcfg', LK); if (r.error) lkErr = r.error; }
+  lkUI();
+}
+function lkRead() {
+  const t = Number($('lk_trig').value), l = Number($('lk_lock').value);
+  if (t > 0) LK.trigger = t; if (l > 0) LK.lock = l;
+  LK.on = $('lk_on').checked; LK.close = $('lk_close').checked; LK.once = $('lk_once').checked; lkPush();
+}
+['lk_on', 'lk_close', 'lk_once'].forEach(id => $(id).onchange = lkRead); ['lk_trig', 'lk_lock'].forEach(id => $(id).oninput = lkRead);
+$('lkbtn').onclick = () => { LK.on = !LK.on; lkPush(); };
+$('lkcfg').onclick = e => {
+  e.stopPropagation(); const p = $('lkpop');
+  if (p.style.display === 'block') { p.style.display = 'none'; return; }
+  const r = $('lkbtn').getBoundingClientRect(); p.style.left = Math.max(8, Math.min(r.left, innerWidth - 400)) + 'px'; p.style.top = (r.bottom + 6) + 'px';
+  lkUI(); p.style.display = 'block';
+};
+document.addEventListener('mousedown', e => { if (!$('lkpop').contains(e.target) && !$('lkcfg').contains(e.target)) $('lkpop').style.display = 'none'; });
+async function lkPoll() {                                    // live account: take the server's settings and show what it did
+  if (SRC !== 'MT5' || !ACC || !ACC.token) return;
+  try {
+    const j = await (await fetch('/api/lock')).json(); if (!j || !j.cfg) return;
+    if (lkLastId === null) { lkLastId = j.log.length ? j.log[j.log.length - 1].id : 0; if (!store.get('gc_lock', null)) { Object.assign(LK, j.cfg); lkSave(); } else await lkPush(); lkUI(); return; }
+    j.log.filter(x => x.id > lkLastId).forEach(x => { lkLastId = x.id; tbNote('Profit lock: ' + x.msg, 'pl-up'); });
+    if (!lkErr && j.cfg.on !== LK.on && document.activeElement && !$('lkpop').contains(document.activeElement)) { LK.on = j.cfg.on; lkSave(); lkUI(); }
+  } catch (e) { /* server busy */ }
+}
+setInterval(lkPoll, 1500);
+function lkPractice() {                                      // replay / paper trades live in this page, so the page does the locking
+  if (!LK.on || !practice() || !status || status.bid == null || Number(LK.lock) >= Number(LK.trigger)) return;
+  const vpp = rpVpp(), live = new Set(A().pos.map(p => p.ticket));
+  [lkArmed, lkDone].forEach(st => st.forEach(t => { if (!live.has(t)) st.delete(t); }));
+  for (const q of A().pos) {
+    if (!RP.on && q.symbol !== symbol) continue;
+    const buy = q.side === 'buy', px = buy ? status.bid : status.ask, d = buy ? 1 : -1, unit = q.volume * vpp;
+    if (!(unit > 0)) continue;
+    const pr = (px - q.open) * d * unit;
+    if (!lkArmed.has(q.ticket)) { if (pr >= Number(LK.trigger)) lkArmed.add(q.ticket); else continue; }
+    if (LK.once && lkDone.has(q.ticket)) continue;
+    const k = Math.pow(10, digits), raw = q.open + d * Number(LK.lock) / unit, sl = (buy ? Math.ceil(raw * k - 1e-6) : Math.floor(raw * k + 1e-6)) / k;
+    if (q.sl && (buy ? q.sl >= sl : q.sl <= sl)) { lkDone.add(q.ticket); continue; }
+    if (buy ? sl < px : sl > px) { q.sl = sl; lkDone.add(q.ticket); if (!RP.on) paperSave(); tbNote(`Profit lock: #${q.ticket} stop moved to ${fmt(sl)} (locks ${money(Number(LK.lock))})`, 'pl-up'); renderBar(true); bump(); }
+    else if (LK.close && pr > 0) { const pl = rpClose(q, px, 'closed'); tbNote(`Profit lock: #${q.ticket} price fell through the lock level, closed for ${pl >= 0 ? '+' : ''}${money(pl)}`, 'pl-up'); rpView(); renderBar(true); bump(); }
+  }
+}
+setInterval(lkPractice, 250);
+setTimeout(lkUI, 0);                                        // after the rest of the page has loaded (money() is defined further down)
+
 let fslFast = 0;                                       // after any order: check the account quickly so the stop moves at once
 setInterval(() => { if ((FSL.on || PM.on) && SRC === 'MT5' && !RP.on && !paperOn() && (Date.now() < fslFast || (ACC && ACC.orders && ACC.orders.length))) accTick(); }, 400);
 async function accTick() {

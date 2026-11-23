@@ -206,3 +206,7 @@ The green **Partial + Secure: ON / off** button (next to Flip SL; the arrow open
 ## Hide candles
 
 The **Hide candles / Show candles** button (next to Dark / Light) hides the candles so only indicators, drawings, orders and levels show. The price scale stays the same and your choice is remembered.
+
+## Profit lock
+
+Toolbar button **Profit lock** (arrow = settings). When a trade's profit reaches the *trigger* amount, its stop loss is raised to lock in the *minimum profit*; a stop of yours that is already better is left alone. On a live MT5 account it runs inside `gold_chart.py` (checks 10x a second, works with the chart closed; settings in `profit_lock.json`, not committed). Practice / paper trades are handled by the page. Restart `gold_chart.py` after updating.

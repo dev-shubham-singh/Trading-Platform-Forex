@@ -17,6 +17,7 @@ Run:          python gold_chart.py      (close this window to stop)
 """
 
 import json
+import math
 import os
 import secrets
 import sys
@@ -883,6 +884,119 @@ def log_order(line):
         pass
 
 
+# ---------------- Profit lock: a fast safety stop for open trades ----------------
+# When a trade's profit has reached LOCK["trigger"] (money), its stop loss is moved to the price that locks in LOCK["lock"].
+# A stop of yours that is already better than that is left alone; one that is worse (or missing) is raised to the lock.
+# It runs here (not in the page), every 0.1 s, so it keeps working when the chart is minimised or closed. Settings: profit_lock.json.
+LOCK_FILE = HERE / "profit_lock.json"
+LOCK = {"on": False, "trigger": 1.5, "lock": 1.0, "once": False, "close": True}
+LOCK_LOG, LOCK_STATE = [], {"armed": set(), "done": set(), "tries": {}, "next": 0}
+
+
+def lock_load():
+    try:
+        LOCK.update({k: v for k, v in json.loads(LOCK_FILE.read_text()).items() if k in LOCK})
+    except (OSError, ValueError):
+        pass
+
+
+def lock_save():
+    try:
+        LOCK_FILE.write_text(json.dumps(LOCK))
+    except OSError:
+        pass
+
+
+def lock_note(msg):
+    LOCK_STATE["next"] += 1
+    LOCK_LOG.append({"id": LOCK_STATE["next"], "t": time.time(), "msg": msg})
+    del LOCK_LOG[:-30]
+    log_order(f"{datetime.now():%Y-%m-%d %H:%M:%S} PROFIT-LOCK {msg}")
+
+
+def lock_config(body):
+    """Validate and store new settings from the page. Returns an error string or None."""
+    try:
+        trig, lk = float(body.get("trigger", LOCK["trigger"])), float(body.get("lock", LOCK["lock"]))
+    except (TypeError, ValueError):
+        return "trigger and lock must be numbers"
+    if not (trig > 0 and lk > 0):
+        return "trigger and lock must be above 0"
+    if lk >= trig:
+        return "the locked profit must be smaller than the trigger (for example trigger 1.5, lock 1)"
+    LOCK.update({"on": bool(body.get("on")), "trigger": trig, "lock": lk, "once": bool(body.get("once")), "close": bool(body.get("close", True))})
+    if not LOCK["on"]:
+        LOCK_STATE["armed"].clear(); LOCK_STATE["done"].clear(); LOCK_STATE["tries"].clear()
+    lock_save()
+    return None
+
+
+def lock_step():
+    if not LOCK["on"] or not ALLOW_TRADING:
+        return
+    todo = []
+    with MT5_LOCK:
+        pos = list(mt5.positions_get() or ())
+        live = {p.ticket for p in pos}
+        for k in ("armed", "done"):
+            LOCK_STATE[k] &= live
+        for t in [t for t in LOCK_STATE["tries"] if t not in live]:
+            del LOCK_STATE["tries"][t]
+        for p in pos:
+            info, tk = mt5.symbol_info(p.symbol), mt5.symbol_info_tick(p.symbol)
+            if not info or not tk:
+                continue
+            buy = p.type == mt5.POSITION_TYPE_BUY
+            if p.ticket not in LOCK_STATE["armed"]:
+                if p.profit >= LOCK["trigger"]:
+                    LOCK_STATE["armed"].add(p.ticket)
+                    LOCK_STATE.setdefault("peak", {})[p.ticket] = p.profit
+                else:
+                    continue
+            if LOCK["once"] and p.ticket in LOCK_STATE["done"]:
+                continue
+            d = 1.0 if buy else -1.0
+            unit = mt5.order_calc_profit(mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL, p.symbol, p.volume, p.price_open, p.price_open + d)
+            if not unit or unit <= 0:
+                continue
+            k = 10 ** info.digits
+            raw_sl = p.price_open + d * LOCK["lock"] / unit
+            sl = (math.ceil(raw_sl * k - 1e-6) if buy else math.floor(raw_sl * k + 1e-6)) / k      # rounded in your favour
+            if p.sl and (p.sl >= sl - 1e-9 if buy else p.sl <= sl + 1e-9):
+                LOCK_STATE["done"].add(p.ticket)                      # your stop is already at least that good: respected
+                continue
+            stops = getattr(info, "trade_stops_level", 0) * info.point
+            px = tk.bid if buy else tk.ask
+            todo.append((p.ticket, sl, p.tp, p.profit, buy and sl < px - stops or (not buy) and sl > px + stops))
+    for ticket, sl, tp, profit, valid in todo:
+        n = LOCK_STATE["tries"].get(ticket, 0)
+        if valid:
+            if n >= 25:
+                continue
+            res = modify_position(ticket, sl, tp)
+            if res.get("ok"):
+                LOCK_STATE["done"].add(ticket); LOCK_STATE["tries"].pop(ticket, None)
+                lock_note(f"#{ticket}: stop moved to {sl} (locks about {LOCK['lock']:g} profit after it reached {LOCK['trigger']:g})")
+            else:
+                LOCK_STATE["tries"][ticket] = n + 1
+                if n + 1 == 25:
+                    lock_note(f"#{ticket}: could not move the stop to {sl}: {res.get('error')}")
+        elif LOCK["close"] and profit > 0 and n < 5:                  # price already fell through the lock level: take what is left
+            LOCK_STATE["tries"][ticket] = n + 1
+            res = close_positions([ticket])
+            lock_note(f"#{ticket}: price fell back through the lock level, closed it at market (profit now about {profit:.2f})"
+                      if res.get("ok") else f"#{ticket}: could not close it: {res.get('error')}")
+
+
+def lock_loop():
+    while True:
+        try:
+            lock_step()
+        except Exception as e:                                         # never let the guard thread die
+            print("profit lock:", e)
+        time.sleep(0.1 if LOCK["on"] else 0.5)
+
+
 # ---------------- order flow (tick rule) ----------------
 def nice_step(x, point):
     """Round a price step to 1 / 2 / 2.5 / 5 x 10^k, never below the symbol's point."""
@@ -1116,6 +1230,8 @@ def make_handler(default_sym):
                 if url.path == "/api/account":
                     ensure_symbol(sym)
                     return self.js(account(sym))
+                if url.path == "/api/lock":
+                    return self.js({"cfg": LOCK, "log": LOCK_LOG[-12:]})
                 self.send_error(404)
             except Exception as e:
                 self.js({"error": str(e)}, 500)
@@ -1138,6 +1254,9 @@ def make_handler(default_sym):
                 if url.path == "/api/order":
                     ensure_symbol(str(body.get("symbol", "")))
                     return self.js(place_limit(body) if body.get("type") in ("limit", "stop") else place_order(body))
+                if url.path == "/api/lockcfg":
+                    err = lock_config(body)
+                    return self.js({"error": err} if err else {"ok": True, "cfg": LOCK})
                 if url.path == "/api/cancel":
                     return self.js(cancel_order(body.get("ticket")))
                 if url.path == "/api/modify":
@@ -1192,6 +1311,8 @@ def main():
         fail("No symbols found in MT5. Add some to Market Watch and try again.")
     print(f"Default symbol: {sym}")
     threading.Thread(target=live_loop, daemon=True).start()
+    lock_load()
+    threading.Thread(target=lock_loop, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), make_handler(sym))
     url = f"http://127.0.0.1:{PORT}"
     print(f"\nChart running at {url}  (keep this window open, Ctrl+C to stop)")
