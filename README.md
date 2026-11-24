@@ -221,4 +221,4 @@ Templates can be put in groups (e.g. "15s execution" with its higher and lower t
 
 ## Pivot-zone scan
 
-Scan > *Scan for* > **Price near a current pivot level**. Pick the pivot period (15m ... 360d), the type and *Within (%)*. A symbol is listed when its last close is within that percent of ANY current level (P, R1-R8, S1-S8), above or below it. The percent is of the distance between that level and the next level on the same side. Works on every list the scanner already has.
+Scan > *Scan for* > **Price near a current pivot level**. Pick the pivot period (15m ... 360d), the type and *More than (%)* / *Less than (%)* (e.g. 0 and 15 = close to a level, 15 and 85 = away from both levels). A symbol is listed when its last close is between those two percents away from ANY current level (P, R1-R8, S1-S8), above or below it. The percent is of the distance between that level and the next level on the same side. Works on every list the scanner already has.

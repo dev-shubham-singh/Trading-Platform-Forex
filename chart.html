@@ -4551,14 +4551,15 @@ function scanPushHits(rows, P, tfN, form) {       // -> [{ side, note }] for the
 }
 /* ---------------- scan: price between two pivot levels ---------------- */
 const PVLV = ['R8', 'R7', 'R6', 'R5', 'R4', 'R3', 'R2', 'R1', 'P', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8'];
-const SCANV = Object.assign({ pvIv: '1d', pvType: 'traditional', pvPct: 15 }, store.get('gc_scanpv', {}));
+const SCANV = Object.assign({ pvIv: '1d', pvType: 'traditional', pvMin: 0, pvPct: 15 }, store.get('gc_scanpv', {}));
 function scanPvBuild() {
   const row = (lab, ctl, tip) => `<div class="tpr" style="display:flex;gap:6px;align-items:center;margin:3px 0" title="${tip || ''}"><label style="width:140px;color:var(--muted)">${lab}</label>${ctl}</div>`;
   $('sc_pvbox').innerHTML =
     row('Pivot period', `<input id="pv_iv" type="text" value="${SCANV.pvIv}" style="width:80px">`, 'The pivot period: 15m, 1h, 1d, 360d ... any length. The levels used are the current ones (made from the previous period). Separate from the candle Timeframe above.') +
     row('Pivot type', `<select id="pv_type" style="flex:1">${Object.entries(PIVOT_TYPES).map(([v, t]) => `<option value="${v}"${SCANV.pvType === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`) +
-    row('Within (%)', `<input id="pv_pct" type="number" step="any" min="0" value="${SCANV.pvPct}" style="width:70px">`, 'Report the symbol when its last close is this close to ANY current level (P, R1-R8, S1-S8), above or below it. The percent is of the distance between that level and the next level on the same side.') +
-    `<div style="color:var(--muted);margin:4px 0;line-height:1.5">Finds symbols whose price is within this percent of any current pivot level, up or down. Example: 15 = within 15% of the gap to the next level.</div>` +
+    row('More than (%)', `<input id="pv_min" type="number" step="any" min="0" value="${SCANV.pvMin}" style="width:70px">`, 'Price must be MORE than this percent away from the level. 0 = no lower limit (price right on the level counts).') +
+    row('Less than (%)', `<input id="pv_pct" type="number" step="any" min="0" value="${SCANV.pvPct}" style="width:70px">`, 'Price must be LESS than this percent away from the level.') +
+    `<div style="color:var(--muted);margin:4px 0;line-height:1.5">Finds symbols whose last close is between these two percents away from ANY current pivot level (P, R1-R8, S1-S8), above or below it. The percent is of the distance between that level and the next level on the same side. Examples: 0 and 15 = close to a level; 15 and 85 = away from both levels, in the middle.</div>` +
     `<button class="tool" id="pv_copy" style="width:100%;margin-top:4px" title="Fill the pivot period and type from the Pivots indicator on your chart">Copy period and type from my chart pivots</button>`;
   $('pv_copy').onclick = () => {
     const ind = inds.find(i => i.type === 'pivot'); if (!ind) { $('sc_msg').textContent = 'No Pivots indicator on this chart yet.'; return; }
@@ -4568,9 +4569,10 @@ function scanPvBuild() {
 function scanPvRead() {
   const iv = parseIv($('pv_iv').value.trim());
   if (!iv || iv.kind !== 'time') return 'Pivot period: use a time like 15m, 1h, 1d or 360d.';
-  const pc = Number($('pv_pct').value);
-  if (!isFinite(pc) || pc < 0) return 'Type the percent as a number, e.g. 15.';
-  Object.assign(SCANV, { pvIv: iv.label, pvType: $('pv_type').value, pvPct: pc });
+  const pc = Number($('pv_pct').value), mn = Number($('pv_min').value);
+  if (!isFinite(pc) || pc < 0 || !isFinite(mn) || mn < 0) return 'Type the percents as numbers, e.g. 0 and 15.';
+  if (mn > pc) return '"More than" must not be bigger than "Less than".';
+  Object.assign(SCANV, { pvIv: iv.label, pvType: $('pv_type').value, pvMin: mn, pvPct: pc });
   store.set('gc_scanpv', SCANV); return '';
 }
 function scanPivotHits(rows, P, form) {          // -> null = no pivots could be made, [] = no match, else [{ side, note }]
@@ -4580,15 +4582,15 @@ function scanPivotHits(rows, P, form) {          // -> null = no pivots could be
   if (!cur) return null;
   const lv = Object.entries(cur.map).filter(e => isFinite(e[1])).sort((x, y) => x[1] - y[1]), px = rows[L][4];
   if (lv.length < 2) return null;
-  const f = v => (+v.toPrecision(7)).toString(), pc = P.pvPct, hits = [];
+  const f = v => (+v.toPrecision(7)).toString(), pc = P.pvPct, mn = P.pvMin || 0, hits = [];
   for (let q = 0; q < lv.length; q++) {
     const [n, v] = lv[q];
     if (px >= v) {                                                // price above this level: gap = up to the next level (or the one below for the top level)
       const gap = q + 1 < lv.length ? lv[q + 1][1] - v : v - lv[q - 1][1], d = (px - v) / gap * 100;
-      if (d <= pc && (q + 1 >= lv.length || px < lv[q + 1][1])) hits.push({ d, side: 'above', n, v, m: q + 1 < lv.length ? lv[q + 1] : lv[q - 1] });
+      if (d >= mn && d <= pc && (q + 1 >= lv.length || px < lv[q + 1][1])) hits.push({ d, side: 'above', n, v, m: q + 1 < lv.length ? lv[q + 1] : lv[q - 1] });
     } else {                                                      // price below this level: gap = down to the previous level (or the one above for the bottom level)
       const gap = q > 0 ? v - lv[q - 1][1] : lv[1][1] - v, d = (v - px) / gap * 100;
-      if (d <= pc && (q === 0 || px >= lv[q - 1][1])) hits.push({ d, side: 'below', n, v, m: q > 0 ? lv[q - 1] : lv[1] });
+      if (d >= mn && d <= pc && (q === 0 || px >= lv[q - 1][1])) hits.push({ d, side: 'below', n, v, m: q > 0 ? lv[q - 1] : lv[1] });
     }
   }
   hits.sort((x, y) => x.d - y.d);
@@ -4686,7 +4688,7 @@ async function scanRunNow() {
     await Promise.all(Array.from({ length: SRC === 'MT5' ? 2 : 4 }, work));
     const p2 = n => String(n).padStart(2, '0');
     const title = `${t0.getFullYear()}-${p2(t0.getMonth() + 1)}-${p2(t0.getDate())} ${p2(t0.getHours())}:${p2(t0.getMinutes())} · ${SCAN.tf}`;
-    const detail = piv ? `Pivots ${SCANV.pvIv} ${PIVOT_TYPES[SCANV.pvType]}: within ${SCANV.pvPct}% of any level` : push ? `Push ${SCANP.side === 'both' ? 'HH / LL' : SCANP.side === 'long' ? 'HH' : 'LL'} ${SCANP.kMax ? (SCANP.kMax === SCANP.kMin ? `exactly ${SCANP.kMin}` : `${SCANP.kMin}-${SCANP.kMax}`) : `\u2265${SCANP.kMin}`}, bias ${SCANP.pIv ? SCANP.pIv + ' x' + SCANP.pN : 'off'}, SMMA ${SCANP.smLen}${SCANP.sIv ? ' ' + SCANP.sIv : ''}${SCANP.recent ? `, last ${SCANP.recent} candles` : ''}` : `SMMA ${SCAN.len} ${SCAN.side === 'both' ? 'below/above' : SCAN.side} ${SCAN.max ? (SCAN.max === SCAN.n ? `exactly ${SCAN.n}` : `${SCAN.n}-${SCAN.max}`) : `≥${SCAN.n}`} candles${SCAN.ha === 'ha' ? ' (HA)' : ''}`;
+    const detail = piv ? `Pivots ${SCANV.pvIv} ${PIVOT_TYPES[SCANV.pvType]}: ${SCANV.pvMin || 0}% to ${SCANV.pvPct}% away from any level` : push ? `Push ${SCANP.side === 'both' ? 'HH / LL' : SCANP.side === 'long' ? 'HH' : 'LL'} ${SCANP.kMax ? (SCANP.kMax === SCANP.kMin ? `exactly ${SCANP.kMin}` : `${SCANP.kMin}-${SCANP.kMax}`) : `\u2265${SCANP.kMin}`}, bias ${SCANP.pIv ? SCANP.pIv + ' x' + SCANP.pN : 'off'}, SMMA ${SCANP.smLen}${SCANP.sIv ? ' ' + SCANP.sIv : ''}${SCANP.recent ? `, last ${SCANP.recent} candles` : ''}` : `SMMA ${SCAN.len} ${SCAN.side === 'both' ? 'below/above' : SCAN.side} ${SCAN.max ? (SCAN.max === SCAN.n ? `exactly ${SCAN.n}` : `${SCAN.n}-${SCAN.max}`) : `≥${SCAN.n}`} candles${SCAN.ha === 'ha' ? ' (HA)' : ''}`;
     if (!scanAbort || found.length) {
       SCANS.unshift({ id: String(t0.getTime()), title, detail, items: found }); SCANS = SCANS.slice(0, 30); store.set('gc_scans', SCANS); favUI();
     }
