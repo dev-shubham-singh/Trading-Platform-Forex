@@ -4789,6 +4789,19 @@ async function applyTemplate(t) {
   await load();
   renderPanel(); legend(null); bump();
 }
+/* Ready-made pair for 15 second execution (added once, to the group "15s execution"): the 1d / 1h-SMMA / 360d-pivot bias view and the
+   1h / 5m-SMMA / 30d-pivot execution view, both scaled down by 240 (1h -> 15s): bias = 6m chart, 15s SMMA, 36h pivot;
+   execution = 15s chart, 1s SMMA (length x 1.25 because 1.25s is not possible), 3h pivot. Pivots R1-R8 / S1-S8. Edit and Update them freely. */
+(function seedTemplates() {
+  if (store.get('gc_seed_exec15', false)) return;
+  const mk = (type, o) => ({ type, src: 'ha', width: type === 'pivot' ? 1 : 2, visible: true, ...IND_DEFAULTS[type], ...o });
+  const SEED = [
+    { name: '15s exec - Bias (6m chart)', g: '15s execution', tf: '6m', ct: 'ha', vc: false, inds: [mk('smma', { len: 50, tf: '15s' }), mk('pivot', { iv: '36h', nlev: 8 })] },
+    { name: '15s exec - Execution (15s chart)', g: '15s execution', tf: '15s', ct: 'ha', vc: false, inds: [mk('smma', { len: 63, tf: '1s' }), mk('pivot', { iv: '3h', nlev: 8 })] },
+  ];
+  SEED.forEach(t => { if (!TPL.some(x => x.name === t.name)) TPL.push(t); });
+  tplSave(); store.set('gc_seed_exec15', true);
+})();
 function closeTpl() { $('tplpop').style.display = 'none'; }
 $('tplbtn').onclick = e => {
   e.stopPropagation();
