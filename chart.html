@@ -976,23 +976,31 @@ function pivotLevels(type, H, L, C, O) {
   const R = H - L;
   if (type === 'fibonacci') {
     const P = (H + L + C) / 3;
-    return { P, R1: P + 0.382 * R, S1: P - 0.382 * R, R2: P + 0.618 * R, S2: P - 0.618 * R, R3: P + R, S3: P - R };
+    const o = { P, R1: P + 0.382 * R, S1: P - 0.382 * R, R2: P + 0.618 * R, S2: P - 0.618 * R, R3: P + R, S3: P - R };
+    [1.382, 1.618, 2, 2.382, 2.618].forEach((m, i) => { o['R' + (i + 4)] = P + m * R; o['S' + (i + 4)] = P - m * R; });     // R4-R8 continue the Fibonacci ratios
+    return o;
   }
   if (type === 'woodie') {
     const P = (H + L + 2 * O) / 4, R3 = H + 2 * (P - L), S3 = L - 2 * (H - P);
-    return { P, R1: 2 * P - L, S1: 2 * P - H, R2: P + R, S2: P - R, R3, S3, R4: R3 + R, S4: S3 - R };
+    const o = { P, R1: 2 * P - L, S1: 2 * P - H, R2: P + R, S2: P - R, R3, S3, R4: R3 + R, S4: S3 - R };
+    for (let n = 5; n <= 8; n++) { o['R' + n] = o['R' + (n - 1)] + R; o['S' + n] = o['S' + (n - 1)] - R; }               // R5-R8: one more range each
+    return o;
   }
   if (type === 'camarilla') {
     const P = (H + L + C) / 3, R4 = C + 1.1 * R / 2, R3 = C + 1.1 * R / 4, S4 = C - 1.1 * R / 2, S3 = C - 1.1 * R / 4;
-    return { P, R1: C + 1.1 * R / 12, S1: C - 1.1 * R / 12, R2: C + 1.1 * R / 6, S2: C - 1.1 * R / 6, R3, S3, R4, S4,
-             R5: R4 + 1.168 * (R4 - R3), S5: S4 - 1.168 * (S3 - S4) };
+    const o = { P, R1: C + 1.1 * R / 12, S1: C - 1.1 * R / 12, R2: C + 1.1 * R / 6, S2: C - 1.1 * R / 6, R3, S3, R4, S4,
+                R5: R4 + 1.168 * (R4 - R3), S5: S4 - 1.168 * (S3 - S4) };
+    for (let n = 6; n <= 8; n++) { o['R' + n] = o['R' + (n - 1)] + 1.168 * (o['R' + (n - 1)] - o['R' + (n - 2)]); o['S' + n] = o['S' + (n - 1)] - 1.168 * (o['S' + (n - 2)] - o['S' + (n - 1)]); }   // R6-R8 extend the same growth
+    return o;
   }
   const P = (H + L + C) / 3;
   if (type === 'classic')
-    return { P, R1: 2 * P - L, S1: 2 * P - H, R2: P + R, S2: P - R, R3: P + 2 * R, S3: P - 2 * R, R4: P + 3 * R, S4: P - 3 * R };
-  return { P, R1: 2 * P - L, S1: 2 * P - H, R2: P + R, S2: P - R,                       // traditional
-           R3: 2 * P + (H - 2 * L), S3: 2 * P - (2 * H - L), R4: 3 * P + (H - 3 * L), S4: 3 * P - (3 * H - L),
-           R5: 4 * P + (H - 4 * L), S5: 4 * P - (4 * H - L) };
+  { const o = { P, R1: 2 * P - L, S1: 2 * P - H, R2: P + R, S2: P - R };
+    for (let n = 3; n <= 8; n++) { o['R' + n] = P + (n - 1) * R; o['S' + n] = P - (n - 1) * R; }
+    return o; }
+  const o = { P, R1: 2 * P - L, S1: 2 * P - H, R2: P + R, S2: P - R };                      // traditional
+  for (let n = 3; n <= 8; n++) { o['R' + n] = H + (n - 1) * (P - L); o['S' + n] = L - (n - 1) * (H - P); }
+  return o;
 }
 // Start of the period holding time t. With a session start A (Indian markets), periods that don't divide a day
 // restart at the session open each day; with A = 0 (MT5) the plain clock grid is used, as before.
@@ -1020,7 +1028,7 @@ function pivotCalc(rows, T, type, nlev, A = 0) {     // rows: [id, open, high, l
 }
 function pivotNames(ind) {                  // level names for this type, top to bottom: R3, R2, R1, P, S1, ...
   if (ind.type === 'pdhl') return ['PDH', ...(ind.close ? ['PDC'] : []), 'PDL'];
-  const order = ['R5', 'R4', 'R3', 'R2', 'R1', 'P', 'S1', 'S2', 'S3', 'S4', 'S5'];
+  const order = ['R8', 'R7', 'R6', 'R5', 'R4', 'R3', 'R2', 'R1', 'P', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8'];
   const have = pivotLevels(ind.ptype, 2, 1, 1.5, 1.5);
   return order.filter(n => n in have && (n === 'P' || Number(n.slice(1)) <= ind.nlev));
 }
@@ -2737,7 +2745,7 @@ function renderPanel() {
       `<input type="text" data-k="iv" value="${ind.iv}" style="width:58px;background:var(--bg);color:var(--text);` +
       `border:1px solid var(--line);border-radius:4px;padding:3px 5px"></label>` +
       `<label>Type <select data-k="ptype">${Object.entries(PIVOT_TYPES).map(([v, t]) => opt('ptype', v, t)).join('')}</select></label>` +
-      `<label>Levels <select data-k="nlev">${[1, 2, 3, 4, 5].map(n => opt('nlev', n, `R${n} / S${n}`)).join('')}</select></label>` +
+      `<label>Levels <select data-k="nlev">${[1, 2, 3, 4, 5, 6, 7, 8].map(n => opt('nlev', n, `R${n} / S${n}`)).join('')}</select></label>` +
       `<label><input type="checkbox" data-k="labels" ${ind.labels ? 'checked' : ''}> Labels</label>` +
       `<label><input type="checkbox" data-k="prices" ${ind.prices ? 'checked' : ''}> Prices</label>` +
       `<label title="Show pivots for past periods too, or only the current one"><input type="checkbox" data-k="history" ${ind.history ? 'checked' : ''}> Past periods</label>` +
@@ -2826,7 +2834,7 @@ function renderPanel() {
       `<b style="width:auto">Burke setups at pivots</b>` +
       `<label title="Pivot period whose levels (P, R1, S1...) the setups must form at: 15m, 1h, 4h, 1d. Longer than the chart interval. Press Enter.">Pivots <input type="text" data-k="iv" value="${ind.iv}" style="width:54px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px"></label>` +
       `<label>Type <select data-k="ptype">${Object.entries(PIVOT_TYPES).map(([v, t]) => opt('ptype', v, t)).join('')}</select></label>` +
-      `<label>Levels <select data-k="nlev">${[1, 2, 3, 4, 5].map(v => `<option ${v == ind.nlev ? 'selected' : ''}>${v}</option>`).join('')}</select></label>` +
+      `<label>Levels <select data-k="nlev">${[1, 2, 3, 4, 5, 6, 7, 8].map(v => `<option ${v == ind.nlev ? 'selected' : ''}>${v}</option>`).join('')}</select></label>` +
       `<label title="How close to a pivot level the peak must be, as a part of the average candle range (ATR). Smaller = stricter, only right at the level.">Zone <select data-k="zone">` +
       opt('zone', '0.15', 'Very tight') + opt('zone', '0.25', 'Tight') + opt('zone', '0.35', 'Normal') + opt('zone', '0.6', 'Wide') + opt('zone', '1', 'Very wide') + `</select></label>` +
       `<label title="Candles on each side that make a swing high / low. Bigger = fewer, larger patterns.">Swing <input type="number" data-k="sw" min="1" max="20" step="1" value="${ind.sw}" style="width:50px"></label>` +
