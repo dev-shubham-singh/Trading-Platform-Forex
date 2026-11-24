@@ -347,6 +347,7 @@
     <div style="display:flex;gap:6px;align-items:center;margin:6px 0;flex-wrap:wrap"><input id="ac_login" type="text" inputmode="numeric" placeholder="login number" style="width:110px"><input id="ac_server" type="text" placeholder="server, e.g. Exness-MT5Trial9" style="flex:1;min-width:150px">
       <select id="ac_kind"><option value="demo">Demo</option><option value="real">Real</option></select><button class="tool" id="ac_add">Add</button></div></details>
 </div>
+<datalist id="mtflist"></datalist>
 <div id="lkpop" class="pop" style="width:min(380px, calc(100vw - 24px)); padding:10px 12px; font-size:12px">
   <div class="th" style="margin:0 0 6px">Profit lock: a fast safety stop</div>
   <div style="color:var(--muted);line-height:1.5;margin-bottom:6px">When a trade's profit reaches the <b>trigger</b>, its stop loss is moved to the price that locks in your <b>minimum profit</b>, and if the price then reverses you are stopped out with at least that. A stop of yours that is already better (for example you dragged it to lock 1.5) is <b>left alone</b>; one that is worse, or missing, is raised to the lock. Amounts are in your account currency, per trade, before commission. On a live MT5 account it runs inside the Python server (checks 10 times a second, keeps working with the chart closed).</div>
@@ -1336,6 +1337,7 @@ function sma(x, n) {
    follows the higher candle that is still forming. The timeframe must be longer than the chart interval. */
 const MTF_TYPES = ['ema', 'smma', 'sma', 'bb', 'macd', 'atr'];
 const MTF_PRESETS = ['1s', '5s', '10s', '15s', '30s', '1m', '2m', '3m', '5m', '10m', '15m', '30m', '1h', '2h', '4h', '1d'];
+document.getElementById('mtflist').innerHTML = MTF_PRESETS.map(v => `<option value="${v}">`).join('');
 function mtfLen(ind) {
   if (!MTF_TYPES.includes(ind.type) || !ind.tf || (kind !== 'time' && kind !== 'tick')) return null;
   const iv = parseIv(ind.tf);            // on a tick chart (100t...) any time frame works: ticks are grouped by their real time
@@ -3056,9 +3058,8 @@ function renderPanel() {
       `<label>Width <select data-k="width">${[1, 2, 3, 4].map(w => `<option ${w == ind.width ? 'selected' : ''}>${w}</option>`).join('')}</select></label>` +
       `<button class="x" title="Remove">Remove</button>`;
     if (MTF_TYPES.includes(ind.type)) {
-      const cur = ind.tf || '', opts = !cur || MTF_PRESETS.includes(cur) ? MTF_PRESETS : [...MTF_PRESETS, cur];
-      const html = `<label title="Calculate this indicator on the candles of another timeframe and show it on this chart. Chart = this chart's own candles. A longer timeframe follows its higher candles; a shorter one (e.g. 1s on a 15s chart) is calculated on those shorter candles and shows its value at each candle's close.">Timeframe <select data-k="tf"><option value="">Chart</option>` +
-        opts.map(v => `<option value="${v}" ${v === cur ? 'selected' : ''}>${v}</option>`).join('') + `</select></label>` +
+      const cur = ind.tf || '';
+      const html = `<label title="Calculate this indicator on the candles of another timeframe and show it on this chart. Chart = this chart's own candles. A longer timeframe follows its higher candles; a shorter one (e.g. 1s on a 15s chart) is calculated on those shorter candles and shows its value at each candle's close. Pick one from the list or type ANY length (150s, 2.5m, 7m, 90m, 3d...) and press Enter. Empty = the chart's own candles.">Timeframe <input type="text" data-k="tf" list="mtflist" value="${cur}" placeholder="Chart" style="width:64px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 5px"></label>` +
         (cur ? `<label title="Off: the value of the last closed higher candle (never repaints). On: also follows the higher candle that is still forming, so it can move until that candle closes."><input type="checkbox" data-k="tfLive" ${ind.tfLive ? 'checked' : ''}> Live</label>` : '');
       const xb = row.querySelector('.x'); if (xb) xb.insertAdjacentHTML('beforebegin', html); else row.insertAdjacentHTML('beforeend', html);
     }
@@ -3078,6 +3079,14 @@ function renderPanel() {
             const iv = parseIv(el.value), ok = iv && iv.kind === 'time';
             el.style.borderColor = ok ? '' : 'var(--down)'; el.title = ok ? '' : 'Use a time length: 1s, 15s, 1m, 5m, 15m, 1h, 4h, 1d';
             if (!ok) return; ind[k] = iv.label; el.value = iv.label;
+          }
+        } else if (k === 'tf' && MTF_TYPES.includes(ind.type)) {
+          const v = el.value.trim().toLowerCase();
+          if (!v || v === 'chart') { ind.tf = ''; el.style.borderColor = ''; }
+          else {
+            const iv = parseIv(v), ok = iv && iv.kind === 'time';
+            el.style.borderColor = ok ? '' : 'var(--down)'; el.title = ok ? '' : 'Use a time length: 30s, 150s, 2.5m, 5m, 1h, 90m, 1d ...';
+            if (!ok) return; ind.tf = iv.label; el.value = iv.label;
           }
         } else if (ind.type === 'push' && (k === 'look' || k === 'pN' || k === 'zoneTo' || k === 'zoneExt')) ind[k] = Math.max(0, Math.floor(Number(el.value)) || 0);
         else if ((ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop') && k === 'iv' && !el.value.trim()) { ind.iv = ''; ind.on_custom = false; }
