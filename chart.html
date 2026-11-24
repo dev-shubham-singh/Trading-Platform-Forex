@@ -380,7 +380,7 @@
 <div id="scanpop" class="pop" style="width:min(400px, calc(100vw - 24px)); max-height:calc(100vh - 90px); overflow-y:auto; padding:10px 12px; font-size:12px">
   <div class="th" style="margin:0 0 6px">Scanner: price vs SMMA</div>
   <div style="color:var(--muted);line-height:1.5;margin-bottom:6px">Checks every symbol of the list you pick and saves the matches as a new list (Symbols &gt; Scans), named with the time and timeframe.</div>
-  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Scan for</label><select id="sc_type" style="flex:1"><option value="smma">Price below / above an SMMA</option><option value="push">Push count: HH / HL breaks after the SMMA</option></select></div>
+  <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Scan for</label><select id="sc_type" style="flex:1"><option value="smma">Price below / above an SMMA</option><option value="push">Push count: HH / HL breaks after the SMMA</option><option value="pivot">Price between two pivot levels (R1 / R2, P / S1 ...)</option></select></div>
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Check</label><select id="sc_src" style="flex:1"></select></div>
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Timeframe</label><input id="sc_tf" list="sc_tfl" style="width:80px" title="Any time frame: 1s, 5s, 15s, 1m, 15m, 1h, 1d ..."><datalist id="sc_tfl"></datalist>
     <span class="sc_smma"><label style="color:var(--muted)">SMMA</label><input id="sc_len" type="number" min="1" step="1" style="width:60px"></span></div>
@@ -390,6 +390,7 @@
   <div class="tpr sc_smma" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Candles</label><select id="sc_ha" style="flex:1"><option value="ha">Heikin Ashi</option><option value="real">Normal candles</option></select></div>
   <div class="tpr sc_smma" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Counts when</label><select id="sc_whole" style="flex:1"><option value="close">The candle closes beyond the SMMA</option><option value="whole">The whole candle is beyond it</option></select></div>
   <div id="sc_pushbox" style="display:none"></div>
+  <div id="sc_pvbox" style="display:none"></div>
   <label style="display:flex;gap:6px;align-items:center;color:var(--muted);margin:4px 0;cursor:pointer"><input type="checkbox" id="sc_form"> Include the candle that is still forming (off = closed candles only)</label>
   <div style="display:flex;gap:6px;margin-top:8px"><button class="tool" id="sc_run" style="flex:1">Run scan</button><button class="tool" id="sc_stop" style="display:none">Stop</button><button class="tool" id="sc_open" style="display:none">Open results</button></div>
   <div id="sc_msg" style="margin-top:6px;padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.6;color:var(--muted)"></div>
@@ -4548,6 +4549,51 @@ function scanPushHits(rows, P, tfN, form) {       // -> [{ side, note }] for the
   }
   return out;
 }
+/* ---------------- scan: price between two pivot levels ---------------- */
+const PVLV = ['R8', 'R7', 'R6', 'R5', 'R4', 'R3', 'R2', 'R1', 'P', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8'];
+const SCANV = Object.assign({ pvIv: '1d', pvType: 'traditional', pvA: 'R1', pvB: 'R2', pvFrom: 15, pvTo: 85, pvUse: 'close' }, store.get('gc_scanpv', {}));
+function scanPvBuild() {
+  const lv = v => PVLV.map(n => `<option value="${n}"${v === n ? ' selected' : ''}>${n === 'P' ? 'P (pivot point)' : n}</option>`).join('');
+  const row = (lab, ctl, tip) => `<div class="tpr" style="display:flex;gap:6px;align-items:center;margin:3px 0" title="${tip || ''}"><label style="width:140px;color:var(--muted)">${lab}</label>${ctl}</div>`;
+  const num = (id, v) => `<input id="${id}" type="number" step="any" value="${v}" style="width:70px">`;
+  $('sc_pvbox').innerHTML =
+    row('Pivot period', `<input id="pv_iv" type="text" value="${SCANV.pvIv}" style="width:80px">`, 'The pivot period: 15m, 1h, 1d, 360d ... any length (seconds too). The levels come from the previous period. Separate from the candle Timeframe above.') +
+    row('Pivot type', `<select id="pv_type" style="flex:1">${Object.entries(PIVOT_TYPES).map(([v, t]) => `<option value="${v}"${SCANV.pvType === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`) +
+    row('Between level', `<select id="pv_a" style="flex:1">${lv(SCANV.pvA)}</select>`, 'First level (0%). Any of R1-R8, P, S1-S8.') +
+    row('and level', `<select id="pv_b" style="flex:1">${lv(SCANV.pvB)}</select>`, 'Second level (100%).') +
+    row('Band from (%)', num('pv_from', SCANV.pvFrom), 'Where the band starts, as a percent of the distance from the first level (0%) to the second (100%). 15 = 15% of the way in, so price sitting right on the level is not reported.') +
+    row('Band to (%)', num('pv_to', SCANV.pvTo), '85 = stop 15% before the second level. Examples for R1 / R2: 15 and 85 = in the middle, away from both levels; 85 and 100 = approaching R2; -15 and 15 = around R1 (15% either side); 100 and 115 = just above R2.') +
+    row('Price used', `<select id="pv_use" style="flex:1"><option value="close"${SCANV.pvUse === 'close' ? ' selected' : ''}>Close of the last candle</option><option value="touch"${SCANV.pvUse === 'touch' ? ' selected' : ''}>Any part of the last candle is in the band</option></select>`) +
+    `<div style="color:var(--muted);margin:4px 0;line-height:1.5">0% = the first level, 100% = the second level. Use a negative or a bigger-than-100 number to go beyond a level. The candle Timeframe above is the candle checked (e.g. 1d); the pivot period can be different (e.g. 360d).</div>` +
+    `<button class="tool" id="pv_copy" style="width:100%;margin-top:4px" title="Fill the pivot period and type from the Pivots indicator on your chart">Copy period and type from my chart pivots</button>`;
+  $('pv_copy').onclick = () => {
+    const ind = inds.find(i => i.type === 'pivot'); if (!ind) { $('sc_msg').textContent = 'No Pivots indicator on this chart yet.'; return; }
+    SCANV.pvIv = ind.iv; SCANV.pvType = ind.ptype; scanPvBuild(); $('sc_msg').textContent = `Copied: ${ind.iv} ${PIVOT_TYPES[ind.ptype]} pivots.`;
+  };
+}
+function scanPvRead() {
+  const iv = parseIv($('pv_iv').value.trim());
+  if (!iv || iv.kind !== 'time') return 'Pivot period: use a time like 15m, 1h, 1d or 360d.';
+  const a = $('pv_a').value, b = $('pv_b').value, f = Number($('pv_from').value), t = Number($('pv_to').value);
+  if (a === b) return 'Pick two different levels.';
+  if (!isFinite(f) || !isFinite(t)) return 'Type the band as numbers (percent).';
+  Object.assign(SCANV, { pvIv: iv.label, pvType: $('pv_type').value, pvA: a, pvB: b, pvFrom: f, pvTo: t, pvUse: $('pv_use').value });
+  store.set('gc_scanpv', SCANV); return '';
+}
+function scanPivotHits(rows, P, form) {          // -> null = no pivots could be made, [] = no match, else [{ side, note }]
+  const T = pushIvSec(P.pvIv), L = rows.length - 1 - (form ? 0 : 1);
+  if (L < 0 || !T) return null;
+  const per = pivotCalc(rows, T, P.pvType, 8, anchor), t = rows[L][5], cur = per.find(p => t >= p.start && t < p.end);
+  if (!cur) return null;
+  const A = cur.map[P.pvA], B = cur.map[P.pvB]; if (A == null || B == null || A === B) return null;
+  const pos = v => (v - A) / (B - A) * 100, lo = Math.min(P.pvFrom, P.pvTo), hi = Math.max(P.pvFrom, P.pvTo), r = rows[L];
+  const p = pos(r[4]);
+  let ok;
+  if (P.pvUse === 'touch') { const x = pos(r[2]), y = pos(r[3]); ok = Math.min(x, y) <= hi && Math.max(x, y) >= lo; } else ok = p >= lo && p <= hi;
+  if (!ok) return [];
+  const f = v => (+v.toPrecision(7)).toString();
+  return [{ side: p >= 50 ? 'above' : 'below', note: `${P.pvA}-${P.pvB} at ${p.toFixed(0)}% (${f(r[4])} in ${f(Math.min(A, B))}-${f(Math.max(A, B))})` }];
+}
 let scanAbort = false, scanRunning = false;
 function scanSave() { store.set('gc_scancfg', SCAN); }
 async function scanSources() {
@@ -4592,8 +4638,9 @@ async function scanRunNow() {
   const iv = parseIv($('sc_tf').value.trim());
   if (!iv || iv.kind !== 'time') { $('sc_msg').textContent = 'Type a time frame like 1s, 15s, 5m, 1h or 1d.'; return; }
   SCAN.tf = $('sc_tf').value.trim(); SCAN.len = Math.max(1, Math.floor(+$('sc_len').value) || 50); SCAN.n = Math.max(1, Math.floor(+$('sc_n').value) || 1); SCAN.max = Math.max(0, Math.floor(+$('sc_max').value) || 0);
-  if (SCAN.type !== 'push' && SCAN.max && SCAN.max < SCAN.n) { $('sc_msg').textContent = '"No more than" must be at least as big as "For at least".'; return; }
+  if ($('sc_type').value === 'smma' && SCAN.max && SCAN.max < SCAN.n) { $('sc_msg').textContent = '"No more than" must be at least as big as "For at least".'; return; }
   SCAN.type = $('sc_type').value;
+  if (SCAN.type === 'pivot') { const bad = scanPvRead(); if (bad) { $('sc_msg').textContent = bad; return; } }
   if (SCAN.type === 'push') { const bad = scanPushRead(); if (bad) { $('sc_msg').textContent = bad; return; } if (SCANP.kMax && SCANP.kMax < SCANP.kMin) { $('sc_msg').textContent = '"and at most" must be at least as big as "Push count at least".'; return; } }
   SCAN.src = $('sc_src').value; SCAN.side = $('sc_side').value; SCAN.ha = $('sc_ha').value; SCAN.whole = $('sc_whole').value; SCAN.form = $('sc_form').checked; scanSave();
   const src = (await scanSources()).find(x => x.id === SCAN.src); if (!src) { $('sc_msg').textContent = 'Pick a list to check.'; return; }
@@ -4602,8 +4649,8 @@ async function scanRunNow() {
   try {
     $('sc_msg').textContent = 'Reading the list...';
     const list = await src.get(), found = []; let nodata = 0, errs = 0, i = 0;
-    const push = SCAN.type === 'push', pT = pushIvSec(SCANP.pIv), sT = pushIvSec(SCANP.sIv);
-    const need = push ? Math.ceil(Math.max((SCANP.pN + 2) * pT, SCANP.smLen * 8 * Math.max(sT, iv.n), 1500 * iv.n) / iv.n)   // enough history for the bias candles and for the SMMA to settle
+    const push = SCAN.type === 'push', piv = SCAN.type === 'pivot', pT = pushIvSec(SCANP.pIv), sT = pushIvSec(SCANP.sIv);
+    const need = piv ? Math.ceil(2.3 * pushIvSec(SCANV.pvIv) / iv.n) + 20 : push ? Math.ceil(Math.max((SCANP.pN + 2) * pT, SCANP.smLen * 8 * Math.max(sT, iv.n), 1500 * iv.n) / iv.n)   // enough history for the bias candles and for the SMMA to settle
       : SCAN.len * 6 + SCAN.n + 10;                                  // enough candles for the SMMA to settle
     let next = 0;
     const work = async () => {                                       // a few symbols at a time, so 500 or 1000 symbols finish in reasonable time
@@ -4614,7 +4661,12 @@ async function scanRunNow() {
           try {
             const hrs = iv.n < 60 ? Math.max(1, Math.ceil(need * iv.n / 3600 * 1.3)) : 0;
             const j = await fetchJ(`/api/bars?symbol=${encodeURIComponent(sym.name)}&kind=time&p=${iv.n}` + (hrs ? `&hours=${hrs}` : ''), 120000);
-            if (j.error || !j.bars || j.bars.length < (push ? Math.max(100, SCANP.smLen + 5) : SCAN.len + SCAN.n + 1)) { nodata++; break; }
+            if (j.error || !j.bars || j.bars.length < (piv ? 10 : push ? Math.max(100, SCANP.smLen + 5) : SCAN.len + SCAN.n + 1)) { nodata++; break; }
+            if (piv) {
+              const hits = scanPivotHits(j.bars, SCANV, SCAN.form);
+              if (hits === null) nodata++; else for (const h of hits) found.push({ name: sym.name, desc: sym.desc || '', side: h.side, note: h.note });
+              break;
+            }
             if (push) {
               const hits = scanPushHits(j.bars, SCANP, iv.n, SCAN.form);
               for (const h of hits) found.push({ name: sym.name, desc: sym.desc || '', side: h.side, note: h.note });
@@ -4634,7 +4686,7 @@ async function scanRunNow() {
     await Promise.all(Array.from({ length: SRC === 'MT5' ? 2 : 4 }, work));
     const p2 = n => String(n).padStart(2, '0');
     const title = `${t0.getFullYear()}-${p2(t0.getMonth() + 1)}-${p2(t0.getDate())} ${p2(t0.getHours())}:${p2(t0.getMinutes())} · ${SCAN.tf}`;
-    const detail = push ? `Push ${SCANP.side === 'both' ? 'HH / LL' : SCANP.side === 'long' ? 'HH' : 'LL'} ${SCANP.kMax ? (SCANP.kMax === SCANP.kMin ? `exactly ${SCANP.kMin}` : `${SCANP.kMin}-${SCANP.kMax}`) : `\u2265${SCANP.kMin}`}, bias ${SCANP.pIv ? SCANP.pIv + ' x' + SCANP.pN : 'off'}, SMMA ${SCANP.smLen}${SCANP.sIv ? ' ' + SCANP.sIv : ''}${SCANP.recent ? `, last ${SCANP.recent} candles` : ''}` : `SMMA ${SCAN.len} ${SCAN.side === 'both' ? 'below/above' : SCAN.side} ${SCAN.max ? (SCAN.max === SCAN.n ? `exactly ${SCAN.n}` : `${SCAN.n}-${SCAN.max}`) : `≥${SCAN.n}`} candles${SCAN.ha === 'ha' ? ' (HA)' : ''}`;
+    const detail = piv ? `Pivots ${SCANV.pvIv} ${PIVOT_TYPES[SCANV.pvType]}: ${SCANV.pvA} to ${SCANV.pvB}, band ${SCANV.pvFrom}% to ${SCANV.pvTo}%` : push ? `Push ${SCANP.side === 'both' ? 'HH / LL' : SCANP.side === 'long' ? 'HH' : 'LL'} ${SCANP.kMax ? (SCANP.kMax === SCANP.kMin ? `exactly ${SCANP.kMin}` : `${SCANP.kMin}-${SCANP.kMax}`) : `\u2265${SCANP.kMin}`}, bias ${SCANP.pIv ? SCANP.pIv + ' x' + SCANP.pN : 'off'}, SMMA ${SCANP.smLen}${SCANP.sIv ? ' ' + SCANP.sIv : ''}${SCANP.recent ? `, last ${SCANP.recent} candles` : ''}` : `SMMA ${SCAN.len} ${SCAN.side === 'both' ? 'below/above' : SCAN.side} ${SCAN.max ? (SCAN.max === SCAN.n ? `exactly ${SCAN.n}` : `${SCAN.n}-${SCAN.max}`) : `≥${SCAN.n}`} candles${SCAN.ha === 'ha' ? ' (HA)' : ''}`;
     if (!scanAbort || found.length) {
       SCANS.unshift({ id: String(t0.getTime()), title, detail, items: found }); SCANS = SCANS.slice(0, 30); store.set('gc_scans', SCANS); favUI();
     }
@@ -4653,15 +4705,16 @@ $('scanbtn').onclick = async e => {
   $('sc_src').value = SCAN.src; $('sc_tf').value = SCAN.tf || (parseIv(tf) && parseIv(tf).kind === 'time' ? tf : '15s');
   $('sc_tfl').innerHTML = ['1s', ...PRESETS].map(t => `<option value="${t}">`).join('');
   const sm = inds.find(i => i.type === 'smma');
-  $('sc_type').value = SCAN.type || 'smma'; scanPushBuild(); scanTypeUI();
+  $('sc_type').value = SCAN.type || 'smma'; scanPushBuild(); scanPvBuild(); scanTypeUI();
   $('sc_len').value = SCAN.len || (sm ? sm.len : 50); $('sc_n').value = SCAN.n; $('sc_max').value = SCAN.max || ''; $('sc_side').value = SCAN.side; $('sc_ha').value = SCAN.ha; $('sc_whole').value = SCAN.whole; $('sc_form').checked = !!SCAN.form;
   if (!scanRunning) { $('sc_msg').textContent = 'Second timeframes (1s, 5s...) are slower: each symbol has to build its candles from ticks.'; $('sc_open').style.display = 'none'; }
   p.style.display = 'block';
 };
 function scanTypeUI() {
-  const push = $('sc_type').value === 'push';
-  document.querySelectorAll('#scanpop .sc_smma').forEach(e => e.style.display = push ? 'none' : (e.tagName === 'SPAN' ? 'inline' : 'flex'));
-  $('sc_pushbox').style.display = push ? 'block' : 'none';
+  const ty = $('sc_type').value, plain = ty === 'smma';
+  document.querySelectorAll('#scanpop .sc_smma').forEach(e => e.style.display = plain ? (e.tagName === 'SPAN' ? 'inline' : 'flex') : 'none');
+  $('sc_pushbox').style.display = ty === 'push' ? 'block' : 'none';
+  $('sc_pvbox').style.display = ty === 'pivot' ? 'block' : 'none';
 }
 $('sc_type').onchange = () => { SCAN.type = $('sc_type').value; scanSave(); scanTypeUI(); };
 $('sc_run').onclick = scanRunNow;

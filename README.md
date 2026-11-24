@@ -218,3 +218,7 @@ Toolbar button **DEMO 12345 / REAL 12345** (top row, next to Light / Dark). It s
 ## Template groups
 
 Templates can be put in groups (e.g. "15s execution" with its higher and lower template): type a group when saving, or use a template's **Group** button; click a group header to fold it, **Rename** / **Copy group** on the header. **Copy** on a single template (or a group) copies just that for the other chart (gold <-> India): Templates > Paste templates there. Groups travel with the templates.
+
+## Pivot-zone scan
+
+Scan > *Scan for* > **Price between two pivot levels**. Pick the pivot period (15m ... 360d) and type, the two levels (R1-R8, P, S1-S8) and the band in percent of the way from the first level (0%) to the second (100%), e.g. 15% to 85% = in the middle, away from both levels. The candle timeframe above is the candle checked (e.g. 1d with 360d pivots). Works on every list the scanner already has (favorites, all broker symbols, Nifty / F&O lists).
