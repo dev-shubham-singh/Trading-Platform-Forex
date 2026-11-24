@@ -221,4 +221,4 @@ Templates can be put in groups (e.g. "15s execution" with its higher and lower t
 
 ## Pivot-zone scan
 
-Scan > *Scan for* > **Price between two pivot levels**. Pick the pivot period (15m ... 360d) and type, the two levels (R1-R8, P, S1-S8) and the band in percent of the way from the first level (0%) to the second (100%), e.g. 15% to 85% = in the middle, away from both levels. The candle timeframe above is the candle checked (e.g. 1d with 360d pivots). Works on every list the scanner already has (favorites, all broker symbols, Nifty / F&O lists).
+Scan > *Scan for* > **Price near a current pivot level**. Pick the pivot period (15m ... 360d), the type and *Within (%)*. A symbol is listed when its last close is within that percent of ANY current level (P, R1-R8, S1-S8), above or below it. The percent is of the distance between that level and the next level on the same side. Works on every list the scanner already has.
