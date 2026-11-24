@@ -4585,14 +4585,14 @@ function scanPivotHits(rows, P, form) {          // -> null = no pivots could be
     const [n, v] = lv[q];
     if (px >= v) {                                                // price above this level: gap = up to the next level (or the one below for the top level)
       const gap = q + 1 < lv.length ? lv[q + 1][1] - v : v - lv[q - 1][1], d = (px - v) / gap * 100;
-      if (d <= pc && (q + 1 >= lv.length || px < lv[q + 1][1])) hits.push({ d, side: 'above', n, v });
+      if (d <= pc && (q + 1 >= lv.length || px < lv[q + 1][1])) hits.push({ d, side: 'above', n, v, m: q + 1 < lv.length ? lv[q + 1] : lv[q - 1] });
     } else {                                                      // price below this level: gap = down to the previous level (or the one above for the bottom level)
       const gap = q > 0 ? v - lv[q - 1][1] : lv[1][1] - v, d = (v - px) / gap * 100;
-      if (d <= pc && (q === 0 || px >= lv[q - 1][1])) hits.push({ d, side: 'below', n, v });
+      if (d <= pc && (q === 0 || px >= lv[q - 1][1])) hits.push({ d, side: 'below', n, v, m: q > 0 ? lv[q - 1] : lv[1] });
     }
   }
   hits.sort((x, y) => x.d - y.d);
-  return hits.map(h => ({ side: h.side, note: `${h.d.toFixed(0)}% ${h.side} ${h.n} (${f(px)} vs ${f(h.v)})` }));
+  return hits.map(h => ({ side: h.side, note: `${h.d.toFixed(0)}% ${h.side} ${h.n} of the ${h.n}-${h.m[0]} range (${f(h.v)} to ${f(h.m[1])}), price ${f(px)}` }));
 }
 let scanAbort = false, scanRunning = false;
 function scanSave() { store.set('gc_scancfg', SCAN); }
