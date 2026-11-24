@@ -3597,6 +3597,31 @@ function toggleInvert() { inverted = !inverted; store.set('gc_invert', inverted)
 $('invbtn').onclick = toggleInvert;
 document.addEventListener('keydown', e => { if (e.altKey && (e.key === 'i' || e.key === 'I')) { e.preventDefault(); toggleInvert(); } });
 applyInvert();
+/* Right-click on the price scale (like TradingView): Invert scale / Auto / Logarithmic */
+let logScale = store.get('gc_log', false);
+function applyLog() { chart.applyOptions({ rightPriceScale: { mode: logScale ? 1 : 0 } }); }
+applyLog();
+const scMenu = document.createElement('div'); scMenu.className = 'pop'; scMenu.style.cssText = 'display:none;min-width:190px;padding:4px 0;font-size:12px';
+document.body.appendChild(scMenu);
+function scItem(txt, on, fn) {
+  const d = document.createElement('div'); d.style.cssText = 'padding:6px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;white-space:nowrap';
+  d.innerHTML = `<span style="width:12px;color:var(--accent,#2962ff)">${on ? '&#10003;' : ''}</span><span>${txt}</span>`;
+  d.onmouseenter = () => d.style.background = 'var(--bg)'; d.onmouseleave = () => d.style.background = '';
+  d.onclick = () => { scMenu.style.display = 'none'; fn(); }; scMenu.appendChild(d);
+}
+$('chart').addEventListener('contextmenu', e => {
+  const r = $('chart').getBoundingClientRect(), x = e.clientX - r.left;
+  if (x < paneW()) return;                                       // only on the price scale; the rest of the chart is untouched
+  e.preventDefault(); scMenu.innerHTML = '';
+  scItem('Invert scale <span style="color:var(--muted)">&nbsp;Alt+I</span>', inverted, toggleInvert);
+  scItem('Auto (fit data to screen)', chart.priceScale('right').options().autoScale, () => { chart.priceScale('right').applyOptions({ autoScale: true }); bump(); });
+  scItem('Logarithmic', logScale, () => { logScale = !logScale; store.set('gc_log', logScale); applyLog(); bump(); });
+  scMenu.style.display = 'block';
+  scMenu.style.left = Math.max(4, Math.min(e.clientX - scMenu.offsetWidth, innerWidth - scMenu.offsetWidth - 4)) + 'px';
+  scMenu.style.top = Math.max(4, Math.min(e.clientY, innerHeight - scMenu.offsetHeight - 4)) + 'px';
+}, true);
+document.addEventListener('mousedown', e => { if (!scMenu.contains(e.target)) scMenu.style.display = 'none'; });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') scMenu.style.display = 'none'; });
 $('fit').onclick = () => ts.fitContent();
 $('latest').onclick = () => ts.scrollToRealTime();
 
