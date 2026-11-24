@@ -214,3 +214,7 @@ Toolbar button **Profit lock** (arrow = settings). When a trade's profit reaches
 ## Demo / real account switch
 
 Toolbar button **DEMO 12345 / REAL 12345** (top row, next to Light / Dark). It shows which MT5 account is live; click it to switch. No password is typed or stored: MT5 logs in with the password saved in the terminal (File > Login to Trade Account > Save password). Accounts you log into in MT5 appear automatically; you can also add one by login number and server. Switching to a REAL account needs a second confirming click. The list is kept in `mt5_accounts.json` (not committed). Restart `gold_chart.py` after updating.
+
+## Template groups
+
+Templates can be put in groups (e.g. "15s execution" with its higher and lower template): type a group when saving, or use a template's **Group** button; click a group header to fold it, **Rename** / **Copy group** on the header. **Copy** on a single template (or a group) copies just that for the other chart (gold <-> India): Templates > Paste templates there. Groups travel with the templates.

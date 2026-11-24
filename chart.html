@@ -42,6 +42,12 @@
   .tplrow { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:4px; cursor:pointer; }
   .tplrow:hover { background:rgba(41,98,255,.15); } .tplrow.cur { outline:1px solid #2962ff; }
   .tplrow b { font-weight:600; } .tplrow small { color:var(--muted); }
+  .tplgrp { display:flex; align-items:center; gap:6px; padding:5px 6px; margin-top:6px; border-bottom:1px solid var(--line); cursor:pointer; user-select:none; }
+  .tplgrp b { font-size:12px; } .tplgrp small { color:var(--muted); } .tplgrp .car { width:10px; color:var(--muted); }
+  .tplgrp .acts { margin-left:auto; display:flex; gap:4px; }
+  .tplgrp .acts button { background:none; border:1px solid var(--line); color:var(--muted); border-radius:4px; cursor:pointer; font:inherit; font-size:11px; padding:1px 6px; }
+  .tplgrp .acts button:hover { color:var(--text); border-color:#2962ff; }
+  .tplrow.ing { margin-left:12px; }
   .tplrow .acts { margin-left:auto; display:flex; gap:4px; }
   .tplrow .acts button { background:none; border:1px solid var(--line); color:var(--muted); border-radius:4px; cursor:pointer; font:inherit; font-size:11px; padding:1px 6px; }
   .tplrow .acts button:hover { color:var(--text); border-color:#2962ff; }
@@ -391,6 +397,7 @@
 <div id="tplpop" class="pop">
   <div class="th">Templates - indicators, chart type and timeframe</div><div id="tpllist"></div>
   <div id="tplsave"><input type="text" id="tplname" maxlength="40" placeholder="Name, e.g. 1D pivots" autocomplete="off">
+    <input type="text" id="tplgroup" maxlength="40" list="tplgroups" placeholder="Group (optional), e.g. 15s execution" autocomplete="off" style="margin-top:5px"><datalist id="tplgroups"></datalist>
     <label><input type="checkbox" id="tpl_tf" checked> Save the timeframe (e.g. 1d) too</label>
     <label><input type="checkbox" id="tpl_ct" checked> Save the chart type (Heikin Ashi / candles...) too</label>
     <button class="tool" id="tplgo" style="margin-top:8px;width:100%">Save current chart as template</button></div>
@@ -4713,20 +4720,55 @@ function tplSummary(t) {
   const n = t.inds.length;
   return [t.tf, t.ct ? ({ ha: 'Heikin Ashi', candle: 'Candles', line: 'Line', renko: 'Renko', kagi: 'Kagi' })[t.ct] : '', `${n} indicator${n === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
 }
+let TPLC = store.get('gc_tplcollapsed', {});
+const tplCopyText = list => JSON.stringify({ gcTemplates: 1, templates: list });
+async function tplCopy(list, what) {                          // copy to the clipboard (or show the text to copy by hand)
+  const txt = tplCopyText(list);
+  try { await navigator.clipboard.writeText(txt); tplMsg(`Copied ${what}. Now open the other chart (gold / India), Templates > Paste templates.`); }
+  catch (e) { $('tplbox').style.display = 'block'; $('tplbox').value = txt; $('tplbox').select(); tplMsg('Select all of the text above and copy it (Ctrl+C), then paste it on the other chart.'); }
+}
 function renderTpl() {
   const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-  $('tpllist').innerHTML = TPL.length ? TPL.map((t, i) => `<div class="tplrow${t.name === tplCur ? ' cur' : ''}" data-i="${i}"><div><b>${esc(t.name)}</b><br><small>${tplSummary(t)}</small></div>
-    <div class="acts"><button data-a="upd" title="Replace this template with what is on the chart now">Update</button><button data-a="del" title="Delete this template">&times;</button></div></div>`).join('')
-    : '<div class="symhead" style="text-transform:none">No templates yet. Set up the chart (timeframe, indicators, pivots), type a name below and save.</div>';
+  const names = [...new Set(TPL.map(t => t.g || '').filter(Boolean))];
+  $('tplgroups').innerHTML = names.map(g => `<option value="${esc(g)}">`).join('');
+  const order = TPL.some(t => !t.g) ? [...names, ''] : names, showHead = names.length > 0;
+  const row = (t, i, ing) => `<div class="tplrow${t.name === tplCur ? ' cur' : ''}${ing ? ' ing' : ''}" data-i="${i}"><div><b>${esc(t.name)}</b><br><small>${tplSummary(t)}</small></div>
+    <div class="acts"><button data-a="upd" title="Replace this template with what is on the chart now">Update</button><button data-a="cp" title="Copy just this template, then paste it on the other chart (Templates > Paste templates)">Copy</button><button data-a="grp" title="Move this template to a group">Group</button><button data-a="del" title="Delete this template">&times;</button></div></div>`;
+  $('tpllist').innerHTML = TPL.length ? order.map(g => {
+    const items = TPL.map((t, i) => [t, i]).filter(([t]) => (t.g || '') === g), shut = !!TPLC[g];
+    const head = showHead ? `<div class="tplgrp" data-g="${esc(g)}"><span class="car">${shut ? '&#9656;' : '&#9662;'}</span><b>${g ? esc(g) : 'No group'}</b><small>${items.length}</small>` +
+      (g ? `<span class="acts"><button data-ga="cp" title="Copy every template of this group for the other chart">Copy group</button><button data-ga="ren" title="Rename this group (empty name = take the templates out of the group)">Rename</button></span>` : '') + `</div>` : '';
+    return head + (shut ? '' : items.map(([t, i]) => row(t, i, showHead)).join(''));
+  }).join('') : '<div class="symhead" style="text-transform:none">No templates yet. Set up the chart (timeframe, indicators, pivots), type a name below and save.</div>';
+  $('tpllist').querySelectorAll('.tplgrp').forEach(h => h.onclick = e => {
+    const g = h.dataset.g, a = e.target.dataset.ga;
+    if (a === 'cp') { const l = TPL.filter(t => (t.g || '') === g); tplCopy(l, `${l.length} template${l.length === 1 ? '' : 's'} of "${g}"`); return; }
+    if (a === 'ren') {
+      const n = prompt(`New name for the group "${g}" (leave empty to take its templates out of the group):`, g); if (n === null) return;
+      TPL.forEach(t => { if ((t.g || '') === g) { if (n.trim()) t.g = n.trim().slice(0, 40); else delete t.g; } });
+      if (TPLC[g]) { TPLC[n.trim()] = true; delete TPLC[g]; store.set('gc_tplcollapsed', TPLC); }
+      tplSave(); renderTpl(); return;
+    }
+    TPLC[g] = !TPLC[g]; store.set('gc_tplcollapsed', TPLC); renderTpl();
+  });
   $('tpllist').querySelectorAll('.tplrow').forEach(r => r.onclick = e => {
     const i = +r.dataset.i, a = e.target.dataset.a;
     if (a === 'del') { if (confirm(`Delete template "${TPL[i].name}"?`)) { TPL.splice(i, 1); tplSave(); renderTpl(); } return; }
-    if (a === 'upd') { tplFromChart(TPL[i].name, TPL[i].tf != null, TPL[i].ct != null); renderTpl(); return; }
+    if (a === 'upd') { tplFromChart(TPL[i].name, TPL[i].tf != null, TPL[i].ct != null, TPL[i].g || ''); renderTpl(); return; }
+    if (a === 'cp') { tplCopy([TPL[i]], `the template "${TPL[i].name}"`); return; }
+    if (a === 'grp') {
+      const have = [...new Set(TPL.map(t => t.g || '').filter(Boolean))];
+      const n = prompt(`Group for "${TPL[i].name}"${have.length ? ` (existing: ${have.join(', ')})` : ''}.\nType a name to create or use a group; leave empty for no group:`, TPL[i].g || ''); if (n === null) return;
+      if (n.trim()) TPL[i].g = n.trim().slice(0, 40); else delete TPL[i].g;
+      tplSave(); renderTpl(); return;
+    }
+    if (a) return;
     applyTemplate(TPL[i]);
   });
 }
-function tplFromChart(name, withTf, withCt) {
-  const t = { name, inds: flatInds(), vc: volCandles };
+function tplFromChart(name, withTf, withCt, group) {
+  const old = TPL.find(x => x.name === name), t = { name, inds: flatInds(), vc: volCandles };
+  const g = group != null ? group : old ? old.g : ''; if (g) t.g = g;
   if (withTf) t.tf = tf;
   if (withCt) t.ct = ctype;
   const i = TPL.findIndex(x => x.name === name);
@@ -4754,13 +4796,13 @@ $('tplbtn').onclick = e => {
   if (p.style.display === 'block') { closeTpl(); return; }
   const r = $('tplbtn').getBoundingClientRect();
   p.style.left = Math.max(8, Math.min(r.left, innerWidth - 400)) + 'px'; p.style.top = (r.bottom + 6) + 'px';
-  $('tplname').value = tplCur; renderTpl(); p.style.display = 'block';
+  $('tplname').value = tplCur; $('tplgroup').value = (TPL.find(t => t.name === tplCur) || {}).g || ''; renderTpl(); p.style.display = 'block';
 };
 $('tplgo').onclick = () => {
   const name = $('tplname').value.trim();
   if (!name) { $('tplname').focus(); return; }
   if (TPL.some(t => t.name === name) && !confirm(`A template called "${name}" exists. Replace it?`)) return;
-  tplFromChart(name, $('tpl_tf').checked, $('tpl_ct').checked); renderTpl();
+  tplFromChart(name, $('tpl_tf').checked, $('tpl_ct').checked, $('tplgroup').value.trim().slice(0, 40)); renderTpl();
 };
 $('tplname').addEventListener('keydown', e => { if (e.key === 'Enter') $('tplgo').click(); });
 /* move templates between the gold and India charts (each runs on its own address, so they cannot see each other's saved data) */
