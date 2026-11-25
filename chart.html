@@ -58,6 +58,11 @@
   #symq { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:4px;
           padding:6px 8px; font:inherit; }
   #symlist { max-height:380px; overflow-y:auto; margin-top:6px; }
+  .wladd { font-style:normal; cursor:pointer; margin-left:8px; width:20px; height:20px; line-height:18px; text-align:center; border:1px solid var(--line); border-radius:50%; color:#26a69a; font-weight:700; flex:none; }
+  .wladd:hover { background:#26a69a; color:#fff; border-color:#26a69a; } .wladd.in { background:#26a69a; color:#fff; border-color:#26a69a; }
+  #wlmenu { position:fixed; z-index:60; display:none; min-width:210px; max-width:300px; max-height:320px; overflow:auto; background:var(--panel,#1b202b); border:1px solid var(--line); border-radius:8px; padding:4px; box-shadow:0 6px 20px rgba(0,0,0,.45); font-size:13px; }
+  #wlmenu div { padding:6px 8px; border-radius:5px; cursor:pointer; display:flex; gap:8px; } #wlmenu div:hover { background:rgba(41,98,255,.2); }
+  #wlmenu .hd { color:var(--muted); font-size:11px; cursor:default; text-transform:uppercase; } #wlmenu .hd:hover { background:none; }
   .symrow { display:flex; gap:10px; align-items:baseline; padding:6px 8px; border-radius:4px; cursor:pointer; }
   .symrow:hover, .symrow.on { background:rgba(41,98,255,.15); }
   .symrow b { font-weight:600; min-width:110px; }
@@ -417,7 +422,7 @@
     <div id="tplxmsg" style="color:var(--muted);margin-top:5px"></div></div>
 </div>
 <div id="sympop" class="pop"><input id="symq" placeholder="Search symbols" autocomplete="off">
-  <div class="symtabs" id="symtabs"><button id="symtab_all" class="on">All symbols</button><button id="symtab_fav">&#9733; Favorites</button><button id="symtab_scan" title="Lists saved by the scanner">&#128269; Scans</button></div><div id="symlist"></div></div>
+  <div class="symtabs" id="symtabs"><button id="symtab_all" class="on">All symbols</button><button id="symtab_fav">&#9733; Favorites</button><button id="symtab_scan" title="Lists saved by the scanner">&#128269; Scans</button><button id="symtab_wl" title="Your own watchlists: pick symbols from scan results with the + icon and keep them for the next day">&#9776; Watchlists</button></div><div id="symlist"></div><div id="wlmenu"></div></div>
 <div id="indpop"><div class="ph"><span id="pop_title"></span><button class="x" id="pop_close">Close</button></div><div id="pop_body"></div></div>
 <div id="panel">
   <div class="ph">Indicators <button class="x" id="pclose">Close</button></div>
@@ -4338,6 +4343,8 @@ requestAnimationFrame(render);
 /* ---------------- symbol, chart type and interval controls ---------------- */
 let favs = store.get('gc_favs', []), favTab = store.get('gc_favtab', false);
 let scanTab = store.get('gc_scantab', false), SCANS = store.get('gc_scans', []);
+let watchTab = false, WL = store.get('gc_watch', []), wlLast = store.get('gc_wllast', '');   // own watchlists: [{ id, name, items: [{ name, desc, note }] }]
+const wlSave = () => { store.set('gc_watch', WL); favUI(); };
 let LISTS = [], listTab = store.get('gc_listtab', ''), LDATA = {}, listTimer = 0;   // server lists (Indian chart): F&O, Nifty 50 / 100 / 500, top gainers
 const isFav = n => favs.some(f => f.name === n);
 function toggleFav(n, d) {
@@ -4352,12 +4359,15 @@ function favUI() {
   $('symtab_all').classList.toggle('on', !favTab && !listTab && !scanTab); $('symtab_fav').classList.toggle('on', favTab && !listTab && !scanTab); $('symtab_scan').classList.toggle('on', scanTab);
   $('symtab_scan').innerHTML = '&#128269; Scans' + (SCANS.length ? ` (${SCANS.length})` : '');
   document.querySelectorAll('#symtabs button[data-l]').forEach(b => b.classList.toggle('on', b.dataset.l === listTab && !scanTab));
+  $('symtab_wl').innerHTML = '&#9776; Watchlists' + (WL.length ? ` (${WL.length})` : '');
+  if (watchTab) { document.querySelectorAll('#symtabs button').forEach(b => b.classList.remove('on')); $('symtab_wl').classList.add('on'); }
+  else $('symtab_wl').classList.remove('on');
 }
 function buildTabs() {
   $('symtabs').querySelectorAll('button[data-l]').forEach(b => b.remove());
   LISTS.forEach(l => {
     const b = document.createElement('button'); b.dataset.l = l.id; b.textContent = l.label; b.title = l.title || l.label;
-    b.onclick = () => { scanTab = false; store.set('gc_scantab', false); listTab = l.id; favTab = false; store.set('gc_listtab', listTab); symSel = 0; favUI(); loadList(l.id); renderSymbols(); $('symq').focus(); };
+    b.onclick = () => { scanTab = false; watchTab = false; store.set('gc_scantab', false); listTab = l.id; favTab = false; store.set('gc_listtab', listTab); symSel = 0; favUI(); loadList(l.id); renderSymbols(); $('symq').focus(); };
     $('symtabs').appendChild(b);
   });
   if (listTab && !LISTS.some(l => l.id === listTab)) listTab = '';
@@ -4391,6 +4401,7 @@ async function setSymbol(name, fromSync) {
   await load();
 }
 function renderSymbols() {
+  if (watchTab) return renderWatch();
   if (scanTab) return renderScans();
   const q = $('symq').value.trim().toLowerCase();
   const LD = listTab ? (LDATA[listTab] || { status: 'loading', symbols: [] }) : null;
@@ -4449,24 +4460,73 @@ async function openSymbols() {
 }
 function closeSymbols() { $('sympop').style.display = 'none'; }
 $('favbtn').onclick = () => toggleFav(symbol, symMeta && symMeta.desc);
-$('symtab_all').onclick = () => { scanTab = false; store.set('gc_scantab', false); favTab = false; listTab = ''; store.set('gc_listtab', ''); store.set('gc_favtab', false); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
-$('symtab_fav').onclick = () => { scanTab = false; store.set('gc_scantab', false); favTab = true; listTab = ''; store.set('gc_listtab', ''); store.set('gc_favtab', true); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
+$('symtab_all').onclick = () => { scanTab = false; watchTab = false; store.set('gc_scantab', false); favTab = false; listTab = ''; store.set('gc_listtab', ''); store.set('gc_favtab', false); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
+$('symtab_fav').onclick = () => { scanTab = false; watchTab = false; store.set('gc_scantab', false); favTab = true; listTab = ''; store.set('gc_listtab', ''); store.set('gc_favtab', true); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
 /* ---------------- scanner: which symbols have price below / above an SMMA for N candles ---------------- */
-$('symtab_scan').onclick = () => { scanTab = true; store.set('gc_scantab', true); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
+$('symtab_scan').onclick = () => { scanTab = true; watchTab = false; store.set('gc_scantab', true); symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
+const wlHas = n => WL.some(l => l.items.some(x => x.name === n));
+function wlAdd(l, items) { let k = 0; items.forEach(it => { if (!l.items.some(x => x.name === it.name)) { l.items.push({ name: it.name, desc: it.desc || '', note: it.note || '' }); k++; } }); return k; }
+function wlMenu(anchor, items, done) {                // small menu: pick the watchlist for these symbols (or make a new one)
+  const m = $('wlmenu'), esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const one = items.length === 1 ? items[0].name : '';
+  const lists = WL.slice().sort((a, b) => (a.id === wlLast ? -1 : b.id === wlLast ? 1 : 0));
+  m.innerHTML = `<div class="hd">${one ? 'Save ' + esc(one) + ' to' : 'Save ' + items.length + ' symbols to'}</div>` +
+    lists.map(l => { const has = one && l.items.some(x => x.name === one); return `<div data-id="${l.id}"><span style="flex:1">${esc(l.name)}</span><small style="color:var(--muted)">${l.items.length}</small>${has ? '<b style="color:#26a69a" title="Already in this list. Click to remove it.">&#10003;</b>' : ''}</div>`; }).join('') +
+    '<div data-new="1" style="color:#2962ff"><b>+ New watchlist...</b></div>';
+  const r = anchor.getBoundingClientRect();
+  m.style.display = 'block'; m.style.left = Math.max(8, Math.min(r.left - 150, innerWidth - 310)) + 'px'; m.style.top = Math.min(r.bottom + 4, innerHeight - m.offsetHeight - 8) + 'px';
+  m.onclick = e => {
+    const d = e.target.closest('div[data-id], div[data-new]'); if (!d) return;
+    let l;
+    if (d.dataset.new) {
+      const n = prompt('Name of the new watchlist (e.g. "Tomorrow"):', ''); if (n === null || !n.trim()) return;
+      l = WL.find(x => x.name.toLowerCase() === n.trim().toLowerCase());
+      if (!l) { l = { id: String(Date.now()), name: n.trim().slice(0, 40), items: [] }; WL.push(l); }
+    } else l = WL.find(x => x.id === d.dataset.id);
+    if (!l) return;
+    if (one && l.items.some(x => x.name === one) && !d.dataset.new) l.items = l.items.filter(x => x.name !== one); else wlAdd(l, items);
+    wlLast = l.id; store.set('gc_wllast', wlLast); wlSave(); m.style.display = 'none'; if (done) done();
+  };
+}
+document.addEventListener('mousedown', e => { const m = $('wlmenu'); if (m && !m.contains(e.target) && !e.target.classList.contains('wladd') && !e.target.classList.contains('wladdall')) m.style.display = 'none'; });
+function renderWatch() {
+  const q = $('symq').value.trim().toLowerCase(), hits = [], esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  let html = '';
+  WL.forEach(l => {
+    const items = l.items.filter(x => !q || x.name.toLowerCase().includes(q) || (x.desc || '').toLowerCase().includes(q));
+    html += `<div class="symhead" style="text-transform:none;display:flex;gap:8px;align-items:center"><b style="color:var(--text)">${esc(l.name)}</b><span style="flex:1">${l.items.length} symbol${l.items.length === 1 ? '' : 's'}</span><i class="wlren" data-id="${l.id}" title="Rename" style="cursor:pointer;font-style:normal">&#9998;</i><i class="wlclr" data-id="${l.id}" title="Empty this watchlist" style="cursor:pointer;font-style:normal">&#8635;</i><i class="wldel" data-id="${l.id}" title="Delete this watchlist" style="cursor:pointer;font-style:normal">&#10005;</i></div>`;
+    items.forEach(x => { hits.push(x); html += `<div class="symrow" data-n="${esc(x.name)}"><b>${esc(x.name)}</b><span>${esc(x.desc || '')}</span><em style="margin-left:auto;font-style:normal;font-size:12px;color:var(--muted)">${esc(x.note || '')}</em><i class="wlrm" data-id="${l.id}" data-n="${esc(x.name)}" title="Remove from this watchlist" style="cursor:pointer;font-style:normal;margin-left:8px">&#10005;</i></div>`; });
+    if (!items.length) html += '<div class="symhead" style="text-transform:none">Empty.</div>';
+  });
+  $('symlist').innerHTML = html || '<div class="symhead" style="text-transform:none">No watchlists yet. Run a scan, open Symbols &gt; Scans and press the + icon next to a result.</div>';
+  $('symlist').querySelectorAll('.symrow').forEach(r => r.onclick = () => { closeSymbols(); setSymbol(r.dataset.n); });
+  $('symlist').querySelectorAll('.wlrm').forEach(b => b.onclick = e => { e.stopPropagation(); const l = WL.find(x => x.id === b.dataset.id); l.items = l.items.filter(x => x.name !== b.dataset.n); wlSave(); renderWatch(); });
+  $('symlist').querySelectorAll('.wldel').forEach(b => b.onclick = e => { e.stopPropagation(); const l = WL.find(x => x.id === b.dataset.id); if (confirm(`Delete the watchlist "${l.name}" (${l.items.length} symbols)?`)) { WL = WL.filter(x => x !== l); wlSave(); renderWatch(); } });
+  $('symlist').querySelectorAll('.wlclr').forEach(b => b.onclick = e => { e.stopPropagation(); const l = WL.find(x => x.id === b.dataset.id); if (l.items.length && confirm(`Remove all ${l.items.length} symbols from "${l.name}"?`)) { l.items = []; wlSave(); renderWatch(); } });
+  $('symlist').querySelectorAll('.wlren').forEach(b => b.onclick = e => { e.stopPropagation(); const l = WL.find(x => x.id === b.dataset.id), n = prompt('New name:', l.name); if (n && n.trim()) { l.name = n.trim().slice(0, 40); wlSave(); renderWatch(); } });
+  return hits;
+}
+$('symtab_wl').onclick = () => { watchTab = true; scanTab = false; symSel = 0; favUI(); renderSymbols(); $('symq').focus(); };
 function renderScans() {
   const q = $('symq').value.trim().toLowerCase(), hits = [];
   let html = '';
   SCANS.forEach(sc => {
     const items = sc.items.filter(x => !q || x.name.toLowerCase().includes(q) || (x.desc || '').toLowerCase().includes(q));
-    html += `<div class="symhead" style="text-transform:none;display:flex;gap:6px;align-items:center"><b style="color:var(--text)">${sc.title}</b><span style="flex:1">${sc.detail} - ${sc.items.length} found</span><i class="scdel" data-id="${sc.id}" title="Delete this scan" style="cursor:pointer;font-style:normal">&#10005;</i></div>`;
+    html += `<div class="symhead" style="text-transform:none;display:flex;gap:6px;align-items:center"><b style="color:var(--text)">${sc.title}</b><span style="flex:1">${sc.detail} - ${sc.items.length} found</span><i class="wladdall" data-id="${sc.id}" title="Save all ${sc.items.length} results of this scan to a watchlist" style="cursor:pointer;font-style:normal;color:#26a69a;font-weight:600;white-space:nowrap">+ all</i><i class="scdel" data-id="${sc.id}" title="Delete this scan" style="cursor:pointer;font-style:normal">&#10005;</i></div>`;
     items.forEach(x => {
       hits.push(x);
-      html += `<div class="symrow" data-n="${x.name}"><b>${x.name}</b><span>${x.desc || ''}</span>${x.note ? `<em style="margin-left:auto;font-style:normal;font-size:12px;color:${x.side === 'below' ? '#ef5350' : '#26a69a'}">${x.note}</em>` : ''}</div>`;
+      html += `<div class="symrow" data-n="${x.name}"><b>${x.name}</b><span>${x.desc || ''}</span>${x.note ? `<em style="margin-left:auto;font-style:normal;font-size:12px;color:${x.side === 'below' ? '#ef5350' : '#26a69a'}">${x.note}</em>` : '<em style="margin-left:auto"></em>'}<i class="wladd${wlHas(x.name) ? ' in' : ''}" data-n="${x.name}" title="Save to a watchlist">${wlHas(x.name) ? '&#10003;' : '+'}</i></div>`;
     });
     if (!items.length) html += '<div class="symhead" style="text-transform:none">No symbols matched.</div>';
   });
   $('symlist').innerHTML = html || '<div class="symhead" style="text-transform:none">No scans yet. Press the Scan button in the toolbar and run one.</div>';
   $('symlist').querySelectorAll('.symrow').forEach(r => r.onclick = () => { closeSymbols(); setSymbol(r.dataset.n); });
+  $('symlist').querySelectorAll('.wladd').forEach(b => b.onclick = e => {
+    e.stopPropagation(); const n = b.dataset.n, it = hits.find(x => x.name === n); wlMenu(b, [it || { name: n }], () => renderScans());
+  });
+  $('symlist').querySelectorAll('.wladdall').forEach(b => b.onclick = e => {
+    e.stopPropagation(); const sc = SCANS.find(x => x.id === b.dataset.id); if (sc) wlMenu(b, sc.items, () => renderScans());
+  });
   $('symlist').querySelectorAll('.scdel').forEach(b => b.onclick = e => {
     e.stopPropagation(); SCANS = SCANS.filter(x => x.id !== b.dataset.id); store.set('gc_scans', SCANS); favUI(); renderScans();
   });
@@ -4634,6 +4694,7 @@ async function scanSources() {
   if (SRC === 'MT5' && symbols.length) out.push({ id: 'all', label: `All broker symbols (${symbols.length})`, get: async () => symbols.map(x => ({ name: x.name, desc: x.desc })) });
   const mw = symbols.filter(x => x.mw);
   if (mw.length) out.push({ id: 'mw', label: `${watchLabel} (${mw.length})`, get: async () => mw.map(x => ({ name: x.name, desc: x.desc })) });
+  WL.forEach(l => out.push({ id: 'w:' + l.id, label: `Watchlist: ${l.name} (${l.items.length})`, get: async () => l.items.map(x => ({ name: x.name, desc: x.desc })) }));
   LISTS.forEach(l => out.push({ id: 'l:' + l.id, label: l.label, get: async () => {
     for (let t = 0; t < 60; t++) {                                  // a server list can still be loading
       const d = await (await fetch('/api/list?id=' + encodeURIComponent(l.id))).json();
@@ -4751,7 +4812,7 @@ function scanTypeUI() {
 $('sc_type').onchange = () => { SCAN.type = $('sc_type').value; scanSave(); scanTypeUI(); };
 $('sc_run').onclick = scanRunNow;
 $('sc_stop').onclick = () => { scanAbort = true; };
-$('sc_open').onclick = () => { $('scanpop').style.display = 'none'; scanTab = true; store.set('gc_scantab', true); favUI(); openSymbols(); };
+$('sc_open').onclick = () => { $('scanpop').style.display = 'none'; scanTab = true; watchTab = false; store.set('gc_scantab', true); favUI(); openSymbols(); };
 document.addEventListener('mousedown', e => { if (!$('scanpop').contains(e.target) && !$('scanbtn').contains(e.target)) $('scanpop').style.display = 'none'; });
 $('symbtn').onclick = e => { e.stopPropagation(); $('sympop').style.display === 'block' ? closeSymbols() : openSymbols(); };
 $('symq').addEventListener('input', () => { symSel = 0; renderSymbols(); });

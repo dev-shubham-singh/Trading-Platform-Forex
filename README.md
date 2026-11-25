@@ -226,3 +226,7 @@ Scan > *Scan for* > **Price near a current pivot level**. Pick the pivot period 
 ## Quick template bar
 
 When you have 2 or more templates, a small bar at the bottom-left of the chart shows the buttons of one group (for example *Bias* and *Exec*). One click loads that template. The group button (yellow) shows the next group, and the arrow loads the next template of the group. The loaded template is highlighted.
+
+## Watchlists from scan results
+
+Symbols > Scans: every result has a round **+** icon (and each scan has **+ all**). It opens a small menu: pick a watchlist or make a new one (e.g. "Tomorrow"). A tick shows the symbol is already in a list; click the list again to take it out. Symbols > **Watchlists** shows your lists (rename, empty, delete, remove single symbols; click a symbol to open it). Lists stay saved in the browser for the next day and can be chosen as the source of a new scan.
