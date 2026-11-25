@@ -160,6 +160,12 @@
   #rpbar select, #rpbar input { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:3px; padding:2px; }
   #rpbar input { width:70px; } #rp_time { color:var(--muted); min-width:150px; }
   #replaybtn.on { color:#ff9800; background:rgba(255,152,0,.12); }
+  #tqbar { position:absolute; left:12px; bottom:34px; z-index:5; display:none; gap:4px; align-items:center; flex-wrap:wrap; max-width:calc(100% - 90px);
+           background:rgba(20,24,33,.82); border:1px solid var(--line); border-radius:8px; padding:4px 6px; font-size:12px; }
+  #tqbar button { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:5px; padding:3px 9px; cursor:pointer; font-size:12px; white-space:nowrap; max-width:220px; overflow:hidden; text-overflow:ellipsis; }
+  #tqbar button:hover { border-color:#2962ff; }
+  #tqbar button.cur { background:#2962ff; border-color:#2962ff; color:#fff; font-weight:600; }
+  #tqbar .qg { color:#f7c948; border-color:#6b5a1f; font-weight:600; }
   #legend { position:absolute; left:12px; top:8px; z-index:3; pointer-events:none;
             font-size:12px; color:var(--muted); line-height:1.6; }
   #legend .t { color:var(--text); font-weight:500; margin-right:8px; }
@@ -291,6 +297,7 @@
     <div id="chart"></div>
     <canvas id="overlay"></canvas>
     <div id="legend"></div>
+    <div id="tqbar"></div>
     <div id="rpbar" style="display:none">
       <b style="color:#ff9800">REPLAY</b><span id="rp_time"></span>
       <button id="rp_pick" title="Pick another start candle (starts a new practice session)">&#10226; Start</button>
@@ -4793,7 +4800,36 @@ $('boxin').addEventListener('keydown', e => {
 /* ---------------- templates: a saved set of indicators (+ chart type + timeframe) you can switch to in one click ---------------- */
 let TPL = store.get('gc_templates', []), tplCur = store.get('gc_tplcur' + WK, '');
 const flatInds = () => inds.map(ind => Object.fromEntries(Object.entries(ind).filter(([k, v]) => k !== 'id' && (v === null || typeof v !== 'object'))));
-function tplSave() { store.set('gc_templates', TPL); }
+function tplSave() { store.set('gc_templates', TPL); setTimeout(renderQuick, 0); }
+/* quick switch bar on the chart: the templates of one group as buttons, one click loads one (no need to open Templates) */
+let QG = store.get('gc_qgrp', '');
+function renderQuick() {
+  const bar = $('tqbar'); if (!bar) return;
+  const groups = [...new Set(TPL.map(t => t.g || '').filter(Boolean))]; if (TPL.some(t => !t.g)) groups.push('');
+  if (TPL.length < 2 || !groups.length) { bar.style.display = 'none'; return; }
+  const curT = TPL.find(t => t.name === tplCur);
+  if (curT && groups.includes(curT.g || '')) QG = curT.g || ''; else if (!groups.includes(QG)) QG = groups[0];
+  const items = TPL.filter(t => (t.g || '') === QG);
+  const pre = (() => { const p = items.map(t => (t.name.indexOf(' - ') > 0 ? t.name.slice(0, t.name.indexOf(' - ') + 3) : '')); return items.length > 1 && p[0] && p.every(x => x === p[0]) ? p[0] : ''; })();
+  const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  bar.innerHTML = `<button class="qg" data-q="grp" title="Group: ${esc(QG || 'No group')}. Click to show the next group (${groups.length} group${groups.length === 1 ? '' : 's'}).">\u25A4 ${esc(QG || 'Templates')}${groups.length > 1 ? ' \u25BE' : ''}</button>` +
+    items.map(t => `<button data-n="${esc(t.name)}" class="${t.name === tplCur ? 'cur' : ''}" title="${esc(t.name)} \u00B7 ${esc(tplSummary(t))}">${esc(pre ? t.name.slice(pre.length) : t.name)}</button>`).join('') +
+    (items.length > 1 ? `<button data-q="next" title="Load the next template of this group">\u25B6</button>` : '');
+  bar.style.display = 'flex';
+}
+$('tqbar').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const groups = [...new Set(TPL.map(t => t.g || '').filter(Boolean))]; if (TPL.some(t => !t.g)) groups.push('');
+  if (b.dataset.q === 'grp') { QG = groups[(groups.indexOf(QG) + 1) % groups.length]; store.set('gc_qgrp', QG); const f = TPL.find(t => (t.g || '') === QG); if (f && !TPL.some(t => t.name === tplCur && (t.g || '') === QG)) { renderQuickForce(); } else renderQuick(); return; }
+  const items = TPL.filter(t => (t.g || '') === QG);
+  if (b.dataset.q === 'next') { const k = items.findIndex(t => t.name === tplCur); applyTemplate(items[(k + 1) % items.length]); return; }
+  const t = TPL.find(x => x.name === b.dataset.n); if (t) { QG = t.g || ''; store.set('gc_qgrp', QG); applyTemplate(t); }
+};
+function renderQuickForce() {                   // show another group's buttons although the loaded template belongs to a different group
+  const keep = tplCur; tplCur = ''; renderQuick(); tplCur = keep;
+  $('tqbar').querySelectorAll('button[data-n]').forEach(x => x.classList.toggle('cur', x.dataset.n === tplCur));
+}
+setTimeout(renderQuick, 0);
 function tplSummary(t) {
   const n = t.inds.length;
   return [t.tf, t.ct ? ({ ha: 'Heikin Ashi', candle: 'Candles', line: 'Line', renko: 'Renko', kagi: 'Kagi' })[t.ct] : '', `${n} indicator${n === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
@@ -4865,7 +4901,7 @@ async function applyTemplate(t) {
   lastTf = tf; saveInds();                           // the template's indicators belong to the timeframe it sets
   saveView(); closeTpl();
   await load();
-  renderPanel(); legend(null); bump();
+  renderPanel(); legend(null); bump(); renderQuick();
 }
 /* Ready-made pair for 15 second execution (added once, to the group "15s execution"): the 1d / 1h-SMMA / 360d-pivot bias view and the
    1h / 5m-SMMA / 30d-pivot execution view, both scaled down by 240 (1h -> 15s): bias = 6m chart, 15s SMMA, 36h pivot;
