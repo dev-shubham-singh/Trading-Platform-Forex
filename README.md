@@ -246,3 +246,7 @@ Toolbar > **Alerts**. Connect once: in Telegram talk to **@BotFather**, send /ne
 ## Candle pattern alerts (doji, any timeframe)
 
 Alerts window > *Candle pattern alerts*. Type a symbol and one or more timeframes (e.g. `6m, 15m, 1h`), choose Heikin Ashi or normal candles and press + Add. Each rule watches its own candles in the background (the chart can show any other timeframe) and sends a Telegram alert with a picture of that timeframe when a candle closes as a doji (upper and lower wick both longer than the body). Only closed candles count; the first check after adding or reloading does not alert for the past. The chart page has to stay open.
+
+## Active hours for alerts (India time)
+
+Alerts window > *Active hours (India time)*: tick *Only send alerts between* and pick the from / to time (IST, whatever time zone the PC uses; a window like 22:00-06:00 runs over midnight). Doji alerts always follow it; push-count and price alerts follow it when ticked (price alerts are off by default so a price level can still wake you). Outside the window the doji watchers pause and nothing is queued; when the window opens they start again by themselves and only report candles that close after that. The chart page has to stay open.

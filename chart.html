@@ -406,6 +406,11 @@
   <label style="display:flex;gap:6px;align-items:center;margin:3px 0"><input type="checkbox" id="al_push"> Push-count breaks from push number <input type="number" id="al_pmin" min="1" step="1" style="width:52px" title="1 = every break, 2 = only from the 2nd push on"></label>
   <label style="display:flex;gap:6px;align-items:center;margin:3px 0"><input type="checkbox" id="al_scan"> Scan results when a scan finishes (text only)</label>
   <label style="display:flex;gap:6px;align-items:center;margin:3px 0"><input type="checkbox" id="al_shot"> Include a screenshot of the chart</label>
+  <div class="th" style="margin:8px 0 4px">Active hours (India time)</div>
+  <label style="display:flex;gap:6px;align-items:center;margin:3px 0"><input type="checkbox" id="al_win"> Only send alerts between <input type="time" id="al_wfrom" style="width:92px"> and <input type="time" id="al_wto" style="width:92px"> IST</label>
+  <label style="display:flex;gap:6px;align-items:center;margin:3px 0;padding-left:20px"><input type="checkbox" id="al_wpush"> also for push-count alerts</label>
+  <label style="display:flex;gap:6px;align-items:center;margin:3px 0;padding-left:20px"><input type="checkbox" id="al_wprice"> also for price alerts (off = they can wake you)</label>
+  <div id="al_wnow" style="color:var(--muted);margin:2px 0 4px"></div>
   <div class="th" style="margin:8px 0 4px">Price alerts</div>
   <div style="display:flex;gap:6px;align-items:center;margin:3px 0"><input id="al_price_in" type="number" step="any" placeholder="price" style="width:92px"><select id="al_dir"><option value="auto">auto (above / below now)</option><option value="above">crosses above</option><option value="below">crosses below</option></select></div>
   <div style="display:flex;gap:6px;align-items:center;margin:3px 0"><input id="al_note" placeholder="note (optional)" style="flex:1"><button class="tool" id="al_addbtn">+ Add</button></div>
@@ -3724,7 +3729,17 @@ $('latest').onclick = () => ts.scrollToRealTime();
 /* ---------------- Telegram alerts ----------------
    The page decides when to alert (price levels, push-count signals, scan results), takes the screenshot and hands it to the
    chart server, which sends it to your Telegram bot (tg_alerts.py). It only works while the chart page is open. */
-const ALC = Object.assign({ price: true, push: true, scan: true, shot: true, pushMin: 1 }, store.get('gc_alcfg', {}));
+const ALC = Object.assign({ price: true, push: true, scan: true, shot: true, pushMin: 1, winOn: false, winFrom: '09:00', winTo: '23:30', winPush: true, winPrice: false }, store.get('gc_alcfg', {}));
+/* Active hours in India time (IST = UTC + 5:30, whatever time zone the PC is set to). Doji alerts always follow the window;
+   push-count and price alerts follow it when ticked. Outside the window nothing is sent, and the watchers start again by themselves. */
+function istMinutes() { const d = new Date(Date.now() + 19800000); return d.getUTCHours() * 60 + d.getUTCMinutes(); }
+function alWinOpen(kind) {
+  if (!ALC.winOn) return true;
+  if (kind === 'push' && !ALC.winPush) return true;
+  if (kind === 'price' && !ALC.winPrice) return true;
+  const m = t => { const [h, n] = String(t).split(':').map(Number); return (h || 0) * 60 + (n || 0); }, a = m(ALC.winFrom), b = m(ALC.winTo), now = istMinutes();
+  return a === b ? true : a < b ? now >= a && now < b : now >= a || now < b;      // a window like 22:00-06:00 runs over midnight
+}
 let ALS = store.get('gc_alerts', []);                       // price alerts: { id, sym, price, dir: 'above' | 'below', note, once, on }
 let ALLOG = store.get('gc_allog', []);                      // last alerts: { t, text, res }
 let TG = { configured: false, chat: false, bot: '', token: '' };
@@ -3769,7 +3784,7 @@ async function alRun() {
 }
 let alPrev = {};
 function alCheck(s) {                                       // called with every live price
-  if (!ALC.price || !ALS.length || s.bid == null) return;
+  if (!ALC.price || !ALS.length || s.bid == null || !alWinOpen('price')) return;
   const px = s.ask != null && isFinite(s.ask) ? (s.bid + s.ask) / 2 : s.bid, p = alPrev[symbol], now = Date.now();
   alPrev[symbol] = { px, now };
   if (!p || now - p.now > 30000) return;                    // first price, or a gap (page was asleep): no false crossing
@@ -3795,9 +3810,10 @@ function alPush() {                                         // new push-count br
     const ck = `${symbol}|${tf}|${ctype}|${n}|${PUSH_KEYS.map(k => ind[k]).join(',')}`, evs = [];
     [[ind.res.up, 1], [ind.res.dn, -1]].forEach(([r, d]) => { for (let i = Math.max(0, raw.length - 300); i < raw.length; i++) { const k = r.ev[i]; if (k) evs.push({ i, k, d, key: `${ck}|${raw[i][0]}|${d}|${k}` }); } });
     if (!alArmed.has(ck)) { alArmed.add(ck); evs.forEach(e => alSeen.add(e.key)); return; }   // first look: remember what is already there
+    const quiet = !alWinOpen('push');
     evs.forEach(e => {
       if (alSeen.has(e.key)) return; alSeen.add(e.key);
-      if (e.k < (ALC.pushMin || 1) || e.i < raw.length - 3) return;
+      if (quiet || e.k < (ALC.pushMin || 1) || e.i < raw.length - 3) return;
       alFire(`${e.d > 0 ? '🟢 BUY side' : '🔴 SELL side'}: ${e.d > 0 ? 'HH' : 'LL'}${e.k} push  -  ${symbol} ${tf}\nClose ${fmt(raw[e.i][4])}   (${label(ind)})`);
     });
   });
@@ -3862,6 +3878,8 @@ function alpShot(rule, bars, markIdx, title) {               // picture of this 
 }
 async function alpRun(rule) {
   const st = alpState[rule.id] || (alpState[rule.id] = { rows: null, lastT: null, busy: false, msg: '' });
+  if (!alWinOpen('doji')) { st.lastT = null; if (!st.paused) { st.msg = 'paused: outside your active hours'; st.paused = true; alUI(); } return; }       // starts again by itself; no alerts for the quiet hours
+  if (st.paused) { st.paused = false; st.msg = ''; }
   if (st.busy) return; st.busy = true;
   try {
     const iv = parseIv(rule.tf); if (!iv || iv.kind !== 'time') { st.msg = 'timeframe must be a time like 6m'; return; }
@@ -3890,7 +3908,7 @@ async function alpRun(rule) {
       alFireImg(`🕯 Doji: ${rule.sym}  ${rule.tf} ${rule.ha !== false ? 'Heikin Ashi' : 'normal'} candle closed (${when})\nHigh ${fmt(b.high)}  Low ${fmt(b.low)}  Open ${fmt(b.open)}  Close ${fmt(b.close)}`, img);
     }
   } catch (e) { st.msg = 'could not check: ' + (e.message || e); }
-  finally { st.busy = false; }
+  finally { st.busy = false; alUI(); }
 }
 function alFireImg(text, img) {                              // like alFire but with a picture that is already made
   alQ.push({ text: `${text}\n${new Date().toLocaleString()}`, shot: false, img }); if (!alBusy) alRun();
@@ -3921,6 +3939,9 @@ function alUI() {
   $('al_test').style.display = ok ? '' : 'none'; $('al_forget').style.display = TG.configured ? '' : 'none';
   ['price', 'push', 'scan', 'shot'].forEach(k => { $('al_' + k).checked = !!ALC[k]; });
   $('al_pmin').value = ALC.pushMin;
+  $('al_win').checked = !!ALC.winOn; $('al_wfrom').value = ALC.winFrom; $('al_wto').value = ALC.winTo; $('al_wpush').checked = !!ALC.winPush; $('al_wprice').checked = !!ALC.winPrice;
+  { const m = istMinutes(), hh = `${p2(Math.floor(m / 60))}:${p2(m % 60)}`;
+    $('al_wnow').innerHTML = ALC.winOn ? `Now ${hh} IST: ${alWinOpen('doji') ? '<span style="color:var(--up,#26a69a)">inside the window - doji alerts are on</span>' : '<span style="color:#ffb74d">outside the window - doji alerts are paused and start by themselves at ' + esc(ALC.winFrom) + '</span>'}` : 'Off: alerts are sent at any hour.'; }
   $('al_list').innerHTML = ALS.length ? ALS.map(a => `<div style="display:flex;gap:6px;align-items:center;margin:3px 0;opacity:${a.on ? 1 : .5}"><input type="checkbox" data-i="${a.id}" class="al_on" ${a.on ? 'checked' : ''} title="On / off"><b>${esc(a.sym)}</b><span>${a.dir === 'above' ? 'above' : 'below'} ${fmt(a.price)}</span><span style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.note || '')}</span><i class="al_x" data-i="${a.id}" style="cursor:pointer;font-style:normal" title="Delete">&#10005;</i></div>`).join('')
     : '<div style="color:var(--muted)">No price alerts yet. Right-click the price scale and choose "Add alert here", or use the box above.</div>';
   $('alp_list').innerHTML = ALP.length ? ALP.map(a => { const st = alpState[a.id] || {}; return `<div style="display:flex;gap:6px;align-items:center;margin:3px 0;opacity:${a.on ? 1 : .5}"><input type="checkbox" class="alp_on" data-i="${a.id}" ${a.on ? 'checked' : ''}><b>${esc(a.sym)}</b><span>${esc(a.tf)} ${a.ha !== false ? 'HA' : 'normal'} doji</span><span style="color:${st.msg ? '#ef5350' : 'var(--muted)'};flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${st.msg ? esc(st.msg) : st.lastT != null ? 'watching' : a.on ? 'starting...' : ''}</span><i class="alp_x" data-i="${a.id}" style="cursor:pointer;font-style:normal" title="Delete">&#10005;</i></div>`; }).join('') : '<div style="color:var(--muted)">No pattern alerts yet.</div>';
@@ -3944,6 +3965,11 @@ $('al_find').onclick = async () => { const r = await tgPost('/api/tgchat').catch
 $('al_test').onclick = () => { alMsg('Sending a test with a screenshot...'); alFire(`✅ Test alert from your chart: ${symbol} ${tf}`); setTimeout(() => alMsg(''), 4000); };
 $('al_forget').onclick = async () => { if (!confirm('Forget the Telegram bot on this PC? (alerts stop until you connect again)')) return; TG = await tgPost('/api/tgclear'); alUI(); alMsg('Bot forgotten.'); };
 ['price', 'push', 'scan', 'shot'].forEach(k => $('al_' + k).onchange = () => { ALC[k] = $('al_' + k).checked; alSave(); });
+$('al_win').onchange = () => { ALC.winOn = $('al_win').checked; alSave(); };
+$('al_wpush').onchange = () => { ALC.winPush = $('al_wpush').checked; alSave(); };
+$('al_wprice').onchange = () => { ALC.winPrice = $('al_wprice').checked; alSave(); };
+['from', 'to'].forEach(k => $('al_w' + k).onchange = () => { if (/^\d\d:\d\d$/.test($('al_w' + k).value)) { ALC['win' + (k === 'from' ? 'From' : 'To')] = $('al_w' + k).value; alSave(); } });
+setInterval(() => { if ($('alpop').style.display === 'block') alUI(); }, 30000);
 $('al_pmin').onchange = () => { const v = Math.floor(+$('al_pmin').value); if (v >= 1) { ALC.pushMin = v; alSave(); } };
 $('al_addbtn').onclick = () => {
   const v = Number($('al_price_in').value); if (!(v > 0)) return alMsg('Type the price for the alert.');
