@@ -410,6 +410,11 @@
   <div style="display:flex;gap:6px;align-items:center;margin:3px 0"><input id="al_price_in" type="number" step="any" placeholder="price" style="width:92px"><select id="al_dir"><option value="auto">auto (above / below now)</option><option value="above">crosses above</option><option value="below">crosses below</option></select></div>
   <div style="display:flex;gap:6px;align-items:center;margin:3px 0"><input id="al_note" placeholder="note (optional)" style="flex:1"><button class="tool" id="al_addbtn">+ Add</button></div>
   <div id="al_list" style="margin-top:4px"></div>
+  <div class="th" style="margin:8px 0 4px">Candle pattern alerts (any timeframe)</div>
+  <div style="color:var(--muted);line-height:1.5;margin-bottom:4px">Watched in the background: your chart can stay on another timeframe. You get the alert when a candle of that timeframe closes as a <b>doji</b>, with a picture of that timeframe.</div>
+  <div style="display:flex;gap:6px;align-items:center;margin:3px 0"><input id="alp_sym" placeholder="symbol" style="width:110px"><input id="alp_tf" placeholder="6m, 15m, 1h" style="flex:1" title="One or more timeframes separated by commas, e.g. 6m, 15m, 1h"></div>
+  <div style="display:flex;gap:6px;align-items:center;margin:3px 0"><select id="alp_ha"><option value="ha">Heikin Ashi candles</option><option value="real">Normal candles</option></select><button class="tool" id="alp_add">+ Add</button></div>
+  <div id="alp_list" style="margin-top:4px"></div>
   <div class="th" style="margin:8px 0 4px">Last alerts</div>
   <div id="al_log"></div>
   <div style="color:var(--muted);margin-top:8px;line-height:1.5">Alerts are checked by this chart page, so keep it open (a minimised window is fine). Each price alert fires once, then switches itself off.</div>
@@ -3754,7 +3759,7 @@ async function alRun() {
     try {
       if (!TG.configured || !TG.chat) res = 'not sent: Telegram is not set up (Alerts > Telegram)';
       else {
-        const r = await tgPost('/api/tgsend', { text: a.text, image: a.shot ? alShot(a.text.split('\n')[0]) : null });
+        const r = await tgPost('/api/tgsend', { text: a.text, image: a.img ? a.img : a.shot ? alShot(a.text.split('\n')[0]) : null });
         res = r.error ? 'failed: ' + r.error : 'sent';
       }
     } catch (e) { res = 'failed: ' + (e.message || e); }
@@ -3815,6 +3820,83 @@ function drawAlerts() {                                     // thin dotted line 
   });
   if (any) ctx.restore();
 }
+/* ---- Candle pattern alerts: watch any symbol / timeframe in the background, whatever the screen shows ----
+   Each rule fetches its own candles from the server, so the chart can be on another timeframe. A new CLOSED candle that is
+   a doji (upper AND lower wick both longer than the body, on Heikin Ashi or normal candles) sends an alert with a picture
+   of that timeframe's chart. Rules: { id, sym, tf, ha, pat: 'doji', on } */
+let ALP = store.get('gc_alpat', []);
+const alpState = {};                                         // id -> { rows, lastT, busy, msg }
+const alpSave = () => { store.set('gc_alpat', ALP); alUI(); };
+function alpHa(rows) {
+  const out = []; let po = 0, pc = 0;
+  rows.forEach((r, k) => {
+    const c = (r[1] + r[2] + r[3] + r[4]) / 4, o = k ? (po + pc) / 2 : (r[1] + r[4]) / 2;
+    out.push({ time: r[0], open: o, close: c, high: Math.max(r[2], o, c), low: Math.min(r[3], o, c) }); po = o; pc = c;
+  });
+  return out;
+}
+const alpBars = (rows, ha) => ha ? alpHa(rows) : rows.map(r => ({ time: r[0], open: r[1], high: r[2], low: r[3], close: r[4] }));
+function alpShot(rule, bars, markIdx, title) {               // picture of this timeframe's candles (last ~110) with the doji marked
+  const div = document.createElement('div'); div.style.cssText = 'position:fixed;left:-12000px;top:0;width:1000px;height:520px';
+  document.body.appendChild(div);
+  try {
+    if (!LightweightCharts.createChart) return null;
+    const c = LightweightCharts.createChart(div, {
+      width: 1000, height: 520, layout: { background: { type: 'solid', color: TH().bg }, textColor: TH().text, fontSize: 12 },
+      grid: { vertLines: { color: TH().grid }, horzLines: { color: TH().grid } }, rightPriceScale: { borderColor: TH().border },
+      timeScale: { borderColor: TH().border, timeVisible: true, secondsVisible: false, rightOffset: 4, barSpacing: 9,
+        tickMarkFormatter: (t, type) => { const d = new Date(disp(t) * 1000); return type === 2 ? `${d.getUTCDate()} ${MON[d.getUTCMonth()]}` : type === 0 ? String(d.getUTCFullYear()) : type === 1 ? MON[d.getUTCMonth()] : `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; } },
+      localization: { timeFormatter: t => fullTime(t) },
+    });
+    const s = c.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineVisible: false });
+    const from = Math.max(0, bars.length - 110); s.setData(bars.slice(from));
+    s.setMarkers([{ time: bars[markIdx].time, position: 'aboveBar', color: '#ffd54f', shape: 'arrowDown', text: 'doji' }]);
+    c.timeScale().fitContent();
+    const shot = c.takeScreenshot(), w = shot.width, h = shot.height, out = document.createElement('canvas');
+    out.width = w; out.height = h; const x = out.getContext('2d'); x.drawImage(shot, 0, 0);
+    const k = w / 1000, fs = Math.round(13 * k);
+    x.font = `600 ${fs}px sans-serif`; x.fillStyle = 'rgba(0,0,0,.65)'; x.fillRect(0, 0, w, fs * 2.1);
+    x.fillStyle = '#fff'; x.textBaseline = 'middle'; x.fillText(title, 10 * k, fs * 1.05);
+    c.remove(); return out.toDataURL('image/png').split(',')[1];
+  } catch (e) { try { div.remove(); } catch (z) { /* nothing */ } return null; } finally { div.remove(); }
+}
+async function alpRun(rule) {
+  const st = alpState[rule.id] || (alpState[rule.id] = { rows: null, lastT: null, busy: false, msg: '' });
+  if (st.busy) return; st.busy = true;
+  try {
+    const iv = parseIv(rule.tf); if (!iv || iv.kind !== 'time') { st.msg = 'timeframe must be a time like 6m'; return; }
+    const url = `/api/bars?symbol=${encodeURIComponent(rule.sym)}&kind=time&p=${iv.n}` + (st.rows && st.rows.length ? `&since=${st.rows[st.rows.length - 1][0]}` : '');
+    const j = await fetchJ(url, 30000);
+    if (j.error) { st.msg = String(j.error).slice(0, 80); return; }
+    if (!st.rows) st.rows = [];
+    for (const c of j.bars) {
+      const last = st.rows.length ? st.rows[st.rows.length - 1][0] : -1;
+      if (c[0] === last) st.rows[st.rows.length - 1] = c; else if (c[0] > last) st.rows.push(c);
+    }
+    if (st.rows.length > 4000) st.rows = st.rows.slice(-3000);
+    st.msg = '';
+    if (st.rows.length < 3) return;
+    const closedIdx = st.rows.length - 2, closedT = st.rows[closedIdx][0];
+    if (st.lastT == null) { st.lastT = closedT; return; }       // first look: remember, no alert for the past
+    if (closedT <= st.lastT) return;
+    const bars = alpBars(st.rows, rule.ha !== false);
+    let first = closedIdx; while (first > 0 && st.rows[first - 1][0] > st.lastT) first--;
+    st.lastT = closedT;
+    for (let i = Math.max(first, closedIdx - 2); i <= closedIdx; i++) {
+      if (!isDoji(bars[i])) continue;
+      const b = bars[i], d = new Date(disp(b.time) * 1000), when = `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`;
+      const title = `${rule.sym} ${rule.tf} ${rule.ha !== false ? 'Heikin Ashi' : 'candle'}: doji at ${when}`;
+      const img = ALC.shot ? alpShot(rule, bars, i, title) : null;
+      alFireImg(`🕯 Doji: ${rule.sym}  ${rule.tf} ${rule.ha !== false ? 'Heikin Ashi' : 'normal'} candle closed (${when})\nHigh ${fmt(b.high)}  Low ${fmt(b.low)}  Open ${fmt(b.open)}  Close ${fmt(b.close)}`, img);
+    }
+  } catch (e) { st.msg = 'could not check: ' + (e.message || e); }
+  finally { st.busy = false; }
+}
+function alFireImg(text, img) {                              // like alFire but with a picture that is already made
+  alQ.push({ text: `${text}\n${new Date().toLocaleString()}`, shot: false, img }); if (!alBusy) alRun();
+}
+ticker(() => { ALP.forEach(r => { if (r.on) alpRun(r); }); }, 6000);
+
 let alDrag = null;
 const alNear = (px, py) => { const r = chartEl.getBoundingClientRect(); if (tool !== 'cursor' || px - r.left >= paneW() || py - r.top > paneH()) return null;
   return ALS.find(a => a.on && a.sym === symbol && (y => y != null && Math.abs(y - (py - r.top)) <= 5)(series.priceToCoordinate(a.price))) || null; };
@@ -3841,13 +3923,14 @@ function alUI() {
   $('al_pmin').value = ALC.pushMin;
   $('al_list').innerHTML = ALS.length ? ALS.map(a => `<div style="display:flex;gap:6px;align-items:center;margin:3px 0;opacity:${a.on ? 1 : .5}"><input type="checkbox" data-i="${a.id}" class="al_on" ${a.on ? 'checked' : ''} title="On / off"><b>${esc(a.sym)}</b><span>${a.dir === 'above' ? 'above' : 'below'} ${fmt(a.price)}</span><span style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.note || '')}</span><i class="al_x" data-i="${a.id}" style="cursor:pointer;font-style:normal" title="Delete">&#10005;</i></div>`).join('')
     : '<div style="color:var(--muted)">No price alerts yet. Right-click the price scale and choose "Add alert here", or use the box above.</div>';
+  $('alp_list').innerHTML = ALP.length ? ALP.map(a => { const st = alpState[a.id] || {}; return `<div style="display:flex;gap:6px;align-items:center;margin:3px 0;opacity:${a.on ? 1 : .5}"><input type="checkbox" class="alp_on" data-i="${a.id}" ${a.on ? 'checked' : ''}><b>${esc(a.sym)}</b><span>${esc(a.tf)} ${a.ha !== false ? 'HA' : 'normal'} doji</span><span style="color:${st.msg ? '#ef5350' : 'var(--muted)'};flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${st.msg ? esc(st.msg) : st.lastT != null ? 'watching' : a.on ? 'starting...' : ''}</span><i class="alp_x" data-i="${a.id}" style="cursor:pointer;font-style:normal" title="Delete">&#10005;</i></div>`; }).join('') : '<div style="color:var(--muted)">No pattern alerts yet.</div>';
   $('al_log').innerHTML = ALLOG.length ? ALLOG.slice(0, 6).map(l => `<div style="margin:2px 0"><span style="color:var(--muted)">${new Date(l.t).toLocaleTimeString()}</span> ${esc(l.text.slice(0, 70))} <span style="color:${l.res === 'sent' ? 'var(--up,#26a69a)' : '#ef5350'}">${esc(l.res)}</span></div>`).join('') : '<div style="color:var(--muted)">Nothing sent yet.</div>';
 }
 $('albtn').onclick = async e => {
   e.stopPropagation(); const p = $('alpop');
   if (p.style.display === 'block') { p.style.display = 'none'; return; }
   const r = $('albtn').getBoundingClientRect(); p.style.left = Math.max(8, Math.min(r.left, innerWidth - 400)) + 'px'; p.style.top = (r.bottom + 6) + 'px';
-  p.style.display = 'block'; $('al_price_in').value = status && status.bid != null ? fmt(status.bid) : ''; alUI(); await tgStatus();
+  p.style.display = 'block'; if (!$('alp_sym').value) $('alp_sym').value = symbol; $('al_price_in').value = status && status.bid != null ? fmt(status.bid) : ''; alUI(); await tgStatus();
 };
 document.addEventListener('mousedown', e => { if (!$('alpop').contains(e.target) && !$('albtn').contains(e.target)) $('alpop').style.display = 'none'; });
 const alMsg = t => { $('al_msg').textContent = t || ''; };
@@ -3870,6 +3953,18 @@ $('al_list').onclick = e => {
   const x = e.target.closest('.al_x'), o = e.target.closest('.al_on');
   if (x) { ALS = ALS.filter(a => a.id !== x.dataset.i); alSave(); }
   else if (o) { const a = ALS.find(q => q.id === o.dataset.i); if (a) { a.on = o.checked; alSave(); } }
+};
+$('alp_add').onclick = () => {
+  const sym = ($('alp_sym').value.trim() || symbol), tfs = $('alp_tf').value.split(',').map(x => x.trim()).filter(Boolean);
+  if (!tfs.length) return alMsg('Type one or more timeframes, e.g. 6m, 15m.');
+  const bad = tfs.find(t => { const v = parseIv(t); return !v || v.kind !== 'time'; }); if (bad) return alMsg(`"${bad}" is not a time length (use 30s, 6m, 1h ...).`);
+  tfs.forEach(t => { const v = parseIv(t); if (!ALP.some(r => r.sym === sym && r.tf === v.label && (r.ha !== false) === ($('alp_ha').value === 'ha'))) ALP.push({ id: String(Date.now()) + Math.floor(Math.random() * 99), sym, tf: v.label, ha: $('alp_ha').value === 'ha', pat: 'doji', on: true }); });
+  alpSave(); alMsg(`Watching ${tfs.length} timeframe${tfs.length === 1 ? '' : 's'}.`); ALP.forEach(r => { if (r.on) alpRun(r); });
+};
+$('alp_list').onclick = e => {
+  const x = e.target.closest('.alp_x'), o = e.target.closest('.alp_on');
+  if (x) { ALP = ALP.filter(a => a.id !== x.dataset.i); delete alpState[x.dataset.i]; alpSave(); }
+  else if (o) { const a = ALP.find(q => q.id === o.dataset.i); if (a) { a.on = o.checked; if (!a.on) delete alpState[a.id]; alpSave(); } }
 };
 setTimeout(tgStatus, 0);
 

@@ -242,3 +242,7 @@ The *Last N hours* box on second charts is remembered per timeframe, so two wind
 ## Telegram alerts (both charts)
 
 Toolbar > **Alerts**. Connect once: in Telegram talk to **@BotFather**, send /newbot, paste the token into the Alerts window and press Connect, then open your bot and press Start. The token is saved on your PC only, in `telegram_config.json` (never committed). Alerts sent: price levels crossed (right-click anywhere on the chart (or the price scale) > *Add alert at ...*, like TradingView; drag the yellow line to move it, right-click near it > *Remove alert*; or use the Alerts window; each one fires once), new push-count breaks (from push number N), and scan results when a scan finishes. Every chart alert carries a screenshot of the chart with a title strip. The chart page has to stay open. Needs `tg_alerts.py` next to the server; restart the matching .bat after updating.
+
+## Candle pattern alerts (doji, any timeframe)
+
+Alerts window > *Candle pattern alerts*. Type a symbol and one or more timeframes (e.g. `6m, 15m, 1h`), choose Heikin Ashi or normal candles and press + Add. Each rule watches its own candles in the background (the chart can show any other timeframe) and sends a Telegram alert with a picture of that timeframe when a candle closes as a doji (upper and lower wick both longer than the body). Only closed candles count; the first check after adding or reloading does not alert for the past. The chart page has to stay open.
