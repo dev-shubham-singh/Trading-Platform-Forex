@@ -20,3 +20,5 @@ broker_tz.json
 
 profit_lock.json
 mt5_accounts.json
+
+telegram_config.json

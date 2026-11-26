@@ -238,3 +238,7 @@ Indicators > **Sessions (high / low)**. Thin lines for the high and low of the A
 ## History window per timeframe
 
 The *Last N hours* box on second charts is remembered per timeframe, so two windows no longer overwrite each other. Defaults: 1s loads 2 hours, 15s loads 8 hours; any other second timeframe keeps the old 12 hours until you change it.
+
+## Telegram alerts (both charts)
+
+Toolbar > **Alerts**. Connect once: in Telegram talk to **@BotFather**, send /newbot, paste the token into the Alerts window and press Connect, then open your bot and press Start. The token is saved on your PC only, in `telegram_config.json` (never committed). Alerts sent: price levels crossed (add them in the window or right-click the price scale > *Add alert at ...*; each one fires once), new push-count breaks (from push number N), and scan results when a scan finishes. Every chart alert carries a screenshot of the chart with a title strip. The chart page has to stay open. Needs `tg_alerts.py` next to the server; restart the matching .bat after updating.

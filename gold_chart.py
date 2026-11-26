@@ -55,6 +55,8 @@ ORDER_MAGIC = 26110601   # tags this chart's orders in MT5
 # ------------------------------------------
 
 HERE = Path(__file__).resolve().parent
+import tg_alerts
+TGX = tg_alerts.Telegram(HERE, PORT)      # Telegram alerts (token in telegram_config.json)
 MT5_LOCK = threading.Lock()   # MT5 library calls are made one at a time
 
 
@@ -1291,6 +1293,8 @@ def make_handler(default_sym):
 
         def do_GET(self):
             url = urlparse(self.path)
+            if url.path == "/api/tg":
+                return self.js(TGX.get("/api/tg"))
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             try:
                 if url.path == "/lightweight-charts.js":
@@ -1367,6 +1371,15 @@ def make_handler(default_sym):
 
         def do_POST(self):
             url = urlparse(self.path)
+            if url.path.startswith("/api/tg"):                       # Telegram alerts (screenshots are bigger than order requests)
+                try:
+                    n = int(self.headers.get("Content-Length", "0"))
+                    if n > tg_alerts.MAX_BODY:
+                        return self.js({"error": "request too large"}, 400)
+                    res = TGX.post(url.path, self.headers, self.rfile.read(n))
+                    return self.js(*res) if res else self.send_error(404)
+                except Exception as e:
+                    return self.js({"error": str(e)}, 500)
             try:
                 # Only this chart page may send orders: right host (no DNS tricks), same origin, JSON, secret token.
                 host = self.headers.get("Host", "")

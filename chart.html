@@ -233,6 +233,7 @@
     <input id="boxin" type="number" min="0" step="any" title="Price units. Press Enter."></label>
   <div class="sep"></div>
   <button class="tool" id="indbtn">&#402;x Indicators</button>
+  <button class="tool" id="albtn" title="Telegram alerts: price levels, push-count signals and scan results are sent to your Telegram bot with a screenshot">&#128276; Alerts</button>
   <button class="tool" id="scanbtn" title="Scanner: check every symbol of a watchlist for price below / above an SMMA and save the matches as a new list">&#128269; Scan</button>
   <button class="tool" id="clrbtn" title="Clear chart: delete ALL indicators in one click (your templates are not touched, pick one to bring its indicators back)">Clear</button>
   <label id="keepwrap" title="ON: the indicators you have stay when you change the timeframe. OFF: every timeframe has its own indicators - a new timeframe starts clean, and going back to one brings its own indicators back. Drawings stay either way."><input type="checkbox" id="keepbox"> Keep indicators on every timeframe</label>
@@ -388,6 +389,30 @@
   <div class="tpr" style="display:flex;gap:6px;align-items:center;margin:4px 0"><label style="width:96px;color:var(--muted)">Max loss</label><input id="fsl_max" type="number" step="any" min="0" style="width:70px"> <span style="color:var(--muted)">skip if the new stop would lose more (0 = no limit)</span></div>
   <label style="display:flex;gap:6px;align-items:center;color:var(--muted);margin:4px 0;cursor:pointer"><input type="checkbox" id="fsl_tight"> Never wider than my original stop</label>
   <div id="fsl_info" style="margin-top:6px;padding:6px 8px;background:var(--bg);border-radius:4px;line-height:1.6"></div>
+</div>
+<div id="alpop" class="pop" style="display:none;width:min(390px, calc(100vw - 24px)); max-height:calc(100vh - 90px); overflow-y:auto; padding:10px 12px; font-size:12px">
+  <div class="th" style="margin:0 0 6px">Telegram alerts</div>
+  <div id="al_tg" style="margin-bottom:6px"></div>
+  <div id="al_setup" style="color:var(--muted);line-height:1.55;margin-bottom:6px">
+    1. In Telegram search <b>@BotFather</b>, send <b>/newbot</b> and follow the questions. It gives you a token (like 123456789:ABC...).<br>
+    2. Paste the token here (it stays on this PC, in <code>telegram_config.json</code>):
+    <div style="display:flex;gap:6px;margin:4px 0"><input id="al_token" type="password" autocomplete="off" placeholder="bot token" style="flex:1"><button class="tool" id="al_connect">Connect</button></div>
+    3. Open your new bot in Telegram, press <b>Start</b>. Then the chart finds your chat by itself.
+  </div>
+  <div style="display:flex;gap:6px;margin:4px 0"><button class="tool" id="al_find" style="display:none">Find my chat</button><button class="tool" id="al_test" style="display:none">Send test (with screenshot)</button><button class="tool" id="al_forget" style="display:none">Forget bot</button></div>
+  <div id="al_msg" style="color:#ffb74d;min-height:14px;margin:2px 0"></div>
+  <div class="th" style="margin:8px 0 4px">What to send</div>
+  <label style="display:flex;gap:6px;align-items:center;margin:3px 0"><input type="checkbox" id="al_price"> Price alerts (the list below)</label>
+  <label style="display:flex;gap:6px;align-items:center;margin:3px 0"><input type="checkbox" id="al_push"> Push-count breaks from push number <input type="number" id="al_pmin" min="1" step="1" style="width:52px" title="1 = every break, 2 = only from the 2nd push on"></label>
+  <label style="display:flex;gap:6px;align-items:center;margin:3px 0"><input type="checkbox" id="al_scan"> Scan results when a scan finishes (text only)</label>
+  <label style="display:flex;gap:6px;align-items:center;margin:3px 0"><input type="checkbox" id="al_shot"> Include a screenshot of the chart</label>
+  <div class="th" style="margin:8px 0 4px">Price alerts</div>
+  <div style="display:flex;gap:6px;align-items:center;margin:3px 0"><input id="al_price_in" type="number" step="any" placeholder="price" style="width:92px"><select id="al_dir"><option value="auto">auto (above / below now)</option><option value="above">crosses above</option><option value="below">crosses below</option></select></div>
+  <div style="display:flex;gap:6px;align-items:center;margin:3px 0"><input id="al_note" placeholder="note (optional)" style="flex:1"><button class="tool" id="al_addbtn">+ Add</button></div>
+  <div id="al_list" style="margin-top:4px"></div>
+  <div class="th" style="margin:8px 0 4px">Last alerts</div>
+  <div id="al_log"></div>
+  <div style="color:var(--muted);margin-top:8px;line-height:1.5">Alerts are checked by this chart page, so keep it open (a minimised window is fine). Each price alert fires once, then switches itself off.</div>
 </div>
 <div id="scanpop" class="pop" style="width:min(400px, calc(100vw - 24px)); max-height:calc(100vh - 90px); overflow-y:auto; padding:10px 12px; font-size:12px">
   <div class="th" style="margin:0 0 6px">Scanner: price vs SMMA</div>
@@ -1346,6 +1371,7 @@ function refreshBos() {
     });
   });
   markers.sort((a, b) => a.time - b.time);
+  try { alPush(); } catch (e) { /* alerts must never break the chart */ }
   series.setMarkers(markers);
   const el = $('bias');
   if (!shownBias || !shownBias.res.bias) { el.style.display = shownBias ? 'inline-block' : 'none'; el.textContent = 'Bias: none yet'; el.style.background = 'var(--panel)'; el.style.color = 'var(--muted)'; return; }
@@ -3487,6 +3513,7 @@ function setStatus(s) {
   $('bid').textContent = fmt(s.bid); $('ask').textContent = fmt(s.ask);
   $('spr').textContent = fmt(s.ask - s.bid);
   bidLine.applyOptions({ price: s.bid });
+  if (typeof alCheck === 'function') alCheck(s);
   if (typeof renderBar === 'function' && ACC) { renderBar(); if (plan) updatePlan(); }   // P/L, panel and chart move together
 }
 setInterval(() => {
@@ -3666,6 +3693,8 @@ $('chart').addEventListener('contextmenu', e => {
   e.preventDefault(); scMenu.innerHTML = '';
   scItem('Invert scale <span style="color:var(--muted)">&nbsp;Alt+I</span>', inverted, toggleInvert);
   scItem('Auto (fit data to screen)', chart.priceScale('right').options().autoScale, () => { chart.priceScale('right').applyOptions({ autoScale: true }); bump(); });
+  const ay = e.clientY - r.top, ap = series.coordinateToPrice(ay);
+  if (ap != null && isFinite(ap)) scItem(`\uD83D\uDD14 Add alert at ${fmt(ap)}`, false, () => alAdd(+ap.toFixed(digits)));
   scItem('Logarithmic', logScale, () => { logScale = !logScale; store.set('gc_log', logScale); applyLog(); bump(); });
   scMenu.style.display = 'block';
   scMenu.style.left = Math.max(4, Math.min(e.clientX - scMenu.offsetWidth, innerWidth - scMenu.offsetWidth - 4)) + 'px';
@@ -3675,6 +3704,149 @@ document.addEventListener('mousedown', e => { if (!scMenu.contains(e.target)) sc
 document.addEventListener('keydown', e => { if (e.key === 'Escape') scMenu.style.display = 'none'; });
 $('fit').onclick = () => ts.fitContent();
 $('latest').onclick = () => ts.scrollToRealTime();
+
+/* ---------------- Telegram alerts ----------------
+   The page decides when to alert (price levels, push-count signals, scan results), takes the screenshot and hands it to the
+   chart server, which sends it to your Telegram bot (tg_alerts.py). It only works while the chart page is open. */
+const ALC = Object.assign({ price: true, push: true, scan: true, shot: true, pushMin: 1 }, store.get('gc_alcfg', {}));
+let ALS = store.get('gc_alerts', []);                       // price alerts: { id, sym, price, dir: 'above' | 'below', note, once, on }
+let ALLOG = store.get('gc_allog', []);                      // last alerts: { t, text, res }
+let TG = { configured: false, chat: false, bot: '', token: '' };
+const alSave = () => { store.set('gc_alerts', ALS); store.set('gc_alcfg', ALC); bump(); alUI(); };
+async function tgStatus() { try { TG = await fetchJ('/api/tg'); } catch (e) { /* server busy */ } alUI(); }
+async function tgPost(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Chart-Token': TG.token || '' }, body: JSON.stringify(body || {}) });
+  return r.json();
+}
+function alShot(title) {                                    // PNG (base64) of the chart as you see it, with a title strip; null if it cannot be made
+  try {
+    if (!chart.takeScreenshot) return null;
+    const shot = chart.takeScreenshot(), w = shot.width, h = shot.height, out = document.createElement('canvas');
+    out.width = w; out.height = h; const c = out.getContext('2d');
+    c.fillStyle = TH().bg; c.fillRect(0, 0, w, h);
+    [ucv, shot, cv].forEach(src => { try { c.drawImage(src, 0, 0, w, h); } catch (e) { /* layer not drawable */ } });
+    const k = w / Math.max(1, chartEl.clientWidth), fs = Math.round(13 * k);
+    c.font = `600 ${fs}px sans-serif`; c.fillStyle = 'rgba(0,0,0,.65)'; c.fillRect(0, 0, w, fs * 2.1);
+    c.fillStyle = '#fff'; c.textBaseline = 'middle'; c.fillText(String(title).replace(/\s*\n\s*/g, '   ').slice(0, 140), 10 * k, fs * 1.05);
+    return out.toDataURL('image/png').split(',')[1];
+  } catch (e) { return null; }
+}
+const alQ = []; let alBusy = false;
+function alFire(text, opt) {
+  const a = { text: `${text}\n${new Date().toLocaleString()}`, shot: !(opt && opt.shot === false) && ALC.shot };
+  alQ.push(a); if (!alBusy) alRun();
+}
+async function alRun() {
+  alBusy = true;
+  while (alQ.length) {
+    const a = alQ.shift(); let res = '';
+    try {
+      if (!TG.configured || !TG.chat) res = 'not sent: Telegram is not set up (Alerts > Telegram)';
+      else {
+        const r = await tgPost('/api/tgsend', { text: a.text, image: a.shot ? alShot(a.text.split('\n')[0]) : null });
+        res = r.error ? 'failed: ' + r.error : 'sent';
+      }
+    } catch (e) { res = 'failed: ' + (e.message || e); }
+    ALLOG.unshift({ t: Date.now(), text: a.text.split('\n').slice(0, 2).join(' | '), res }); ALLOG = ALLOG.slice(0, 15); store.set('gc_allog', ALLOG); alUI();
+  }
+  alBusy = false;
+}
+let alPrev = {};
+function alCheck(s) {                                       // called with every live price
+  if (!ALC.price || !ALS.length || s.bid == null) return;
+  const px = s.ask != null && isFinite(s.ask) ? (s.bid + s.ask) / 2 : s.bid, p = alPrev[symbol], now = Date.now();
+  alPrev[symbol] = { px, now };
+  if (!p || now - p.now > 30000) return;                    // first price, or a gap (page was asleep): no false crossing
+  ALS.forEach(a => {
+    if (!a.on || a.sym !== symbol) return;
+    const hit = a.dir === 'above' ? p.px < a.price && px >= a.price : p.px > a.price && px <= a.price;
+    if (!hit) return;
+    alFire(`🔔 ${symbol} crossed ${a.dir === 'above' ? 'above' : 'below'} ${fmt(a.price)}` + (a.note ? '\n' + a.note : '') + `\nPrice now ${fmt(px)}`);
+    if (a.once !== false) a.on = false;
+    alSave();
+  });
+}
+function alAdd(price, dir, note) {
+  const cur = status && status.bid != null ? status.bid : raw.length ? raw[raw.length - 1][4] : price;
+  ALS.push({ id: String(Date.now()) + Math.floor(Math.random() * 99), sym: symbol, price: +price, dir: dir || (price >= cur ? 'above' : 'below'), note: note || '', once: true, on: true });
+  alSave();
+}
+const alSeen = new Set(), alArmed = new Set();
+function alPush() {                                         // new push-count breaks on the newest candles
+  if (!ALC.push || !raw.length) return;
+  inds.forEach((ind, n) => {
+    if (ind.type !== 'push' || ind.visible === false || !ind.res) return;
+    const ck = `${symbol}|${tf}|${ctype}|${n}|${PUSH_KEYS.map(k => ind[k]).join(',')}`, evs = [];
+    [[ind.res.up, 1], [ind.res.dn, -1]].forEach(([r, d]) => { for (let i = Math.max(0, raw.length - 300); i < raw.length; i++) { const k = r.ev[i]; if (k) evs.push({ i, k, d, key: `${ck}|${raw[i][0]}|${d}|${k}` }); } });
+    if (!alArmed.has(ck)) { alArmed.add(ck); evs.forEach(e => alSeen.add(e.key)); return; }   // first look: remember what is already there
+    evs.forEach(e => {
+      if (alSeen.has(e.key)) return; alSeen.add(e.key);
+      if (e.k < (ALC.pushMin || 1) || e.i < raw.length - 3) return;
+      alFire(`${e.d > 0 ? '🟢 BUY side' : '🔴 SELL side'}: ${e.d > 0 ? 'HH' : 'LL'}${e.k} push  -  ${symbol} ${tf}\nClose ${fmt(raw[e.i][4])}   (${label(ind)})`);
+    });
+  });
+}
+function alScan(title, found) {
+  if (!ALC.scan || !found.length) return;
+  alFire(`🔍 Scan finished: ${found.length} match${found.length === 1 ? '' : 'es'}  (${title})\n` + found.slice(0, 25).map(x => `${x.name}${x.note ? '  ' + x.note : ''}`).join('\n') + (found.length > 25 ? `\n... and ${found.length - 25} more` : ''), { shot: false });
+}
+function drawAlerts() {                                     // thin dotted line for each active price alert of this symbol
+  const pw = paneW(); let any = false;
+  ALS.forEach(a => {
+    if (!a.on || a.sym !== symbol) return;
+    const y = series.priceToCoordinate(a.price); if (y == null || y < 0 || y > paneH()) return;
+    if (!any) { any = true; ctx.save(); ctx.font = '11px sans-serif'; ctx.textBaseline = 'bottom'; }
+    ctx.strokeStyle = '#ffd54f'; ctx.fillStyle = '#ffd54f'; ctx.lineWidth = 1; ctx.setLineDash([2, 4]);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(pw, y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillText(`🔔 ${fmt(a.price)}${a.note ? ' ' + a.note : ''}`, pw - 8 - ctx.measureText(`🔔 ${fmt(a.price)}${a.note ? ' ' + a.note : ''}`).width, y - 2);
+  });
+  if (any) ctx.restore();
+}
+function alUI() {
+  const p = $('alpop'); if (!p || p.style.display !== 'block') { $('albtn').classList.toggle('on', ALS.some(a => a.on)); return; }
+  const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const ok = TG.configured && TG.chat;
+  $('al_tg').innerHTML = ok ? `<span style="color:var(--up,#26a69a)">&#9679; Connected</span> to your bot <b>@${esc(TG.bot || '?')}</b>${TG.name ? ' (chat with ' + esc(TG.name) + ')' : ''}`
+    : TG.configured ? `<span style="color:#ffb74d">&#9679; Bot saved (@${esc(TG.bot || '?')}) but no chat found yet.</span> Open the bot in Telegram, press <b>Start</b>, then press <b>Find my chat</b>.`
+    : '<span style="color:#ef5350">&#9679; Not set up.</span> Steps are below.';
+  $('al_setup').style.display = TG.configured ? 'none' : '';
+  $('al_find').style.display = TG.configured && !TG.chat ? '' : 'none';
+  $('al_test').style.display = ok ? '' : 'none'; $('al_forget').style.display = TG.configured ? '' : 'none';
+  ['price', 'push', 'scan', 'shot'].forEach(k => { $('al_' + k).checked = !!ALC[k]; });
+  $('al_pmin').value = ALC.pushMin;
+  $('al_list').innerHTML = ALS.length ? ALS.map(a => `<div style="display:flex;gap:6px;align-items:center;margin:3px 0;opacity:${a.on ? 1 : .5}"><input type="checkbox" data-i="${a.id}" class="al_on" ${a.on ? 'checked' : ''} title="On / off"><b>${esc(a.sym)}</b><span>${a.dir === 'above' ? 'above' : 'below'} ${fmt(a.price)}</span><span style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.note || '')}</span><i class="al_x" data-i="${a.id}" style="cursor:pointer;font-style:normal" title="Delete">&#10005;</i></div>`).join('')
+    : '<div style="color:var(--muted)">No price alerts yet. Right-click the price scale and choose "Add alert here", or use the box above.</div>';
+  $('al_log').innerHTML = ALLOG.length ? ALLOG.slice(0, 6).map(l => `<div style="margin:2px 0"><span style="color:var(--muted)">${new Date(l.t).toLocaleTimeString()}</span> ${esc(l.text.slice(0, 70))} <span style="color:${l.res === 'sent' ? 'var(--up,#26a69a)' : '#ef5350'}">${esc(l.res)}</span></div>`).join('') : '<div style="color:var(--muted)">Nothing sent yet.</div>';
+}
+$('albtn').onclick = async e => {
+  e.stopPropagation(); const p = $('alpop');
+  if (p.style.display === 'block') { p.style.display = 'none'; return; }
+  const r = $('albtn').getBoundingClientRect(); p.style.left = Math.max(8, Math.min(r.left, innerWidth - 400)) + 'px'; p.style.top = (r.bottom + 6) + 'px';
+  p.style.display = 'block'; $('al_price_in').value = status && status.bid != null ? fmt(status.bid) : ''; alUI(); await tgStatus();
+};
+document.addEventListener('mousedown', e => { if (!$('alpop').contains(e.target) && !$('albtn').contains(e.target)) $('alpop').style.display = 'none'; });
+const alMsg = t => { $('al_msg').textContent = t || ''; };
+$('al_connect').onclick = async () => {
+  alMsg('Checking the token...'); const t = $('al_token').value.trim();
+  const r = await tgPost('/api/tgsetup', { token: t }).catch(e => ({ error: String(e) }));
+  if (r.error) return alMsg(r.error);
+  $('al_token').value = ''; TG = r; alUI(); alMsg(r.chat ? 'Connected.' : 'Token saved. Now open your bot in Telegram, press Start and press "Find my chat".');
+};
+$('al_find').onclick = async () => { const r = await tgPost('/api/tgchat').catch(e => ({ error: String(e) })); if (r.token) TG = r; alUI(); alMsg(r.error || 'Chat found.'); };
+$('al_test').onclick = () => { alMsg('Sending a test with a screenshot...'); alFire(`✅ Test alert from your chart: ${symbol} ${tf}`); setTimeout(() => alMsg(''), 4000); };
+$('al_forget').onclick = async () => { if (!confirm('Forget the Telegram bot on this PC? (alerts stop until you connect again)')) return; TG = await tgPost('/api/tgclear'); alUI(); alMsg('Bot forgotten.'); };
+['price', 'push', 'scan', 'shot'].forEach(k => $('al_' + k).onchange = () => { ALC[k] = $('al_' + k).checked; alSave(); });
+$('al_pmin').onchange = () => { const v = Math.floor(+$('al_pmin').value); if (v >= 1) { ALC.pushMin = v; alSave(); } };
+$('al_addbtn').onclick = () => {
+  const v = Number($('al_price_in').value); if (!(v > 0)) return alMsg('Type the price for the alert.');
+  alAdd(v, $('al_dir').value === 'auto' ? null : $('al_dir').value, $('al_note').value.trim()); $('al_note').value = ''; alMsg('Alert added.');
+};
+$('al_list').onclick = e => {
+  const x = e.target.closest('.al_x'), o = e.target.closest('.al_on');
+  if (x) { ALS = ALS.filter(a => a.id !== x.dataset.i); alSave(); }
+  else if (o) { const a = ALS.find(q => q.id === o.dataset.i); if (a) { a.on = o.checked; alSave(); } }
+};
+setTimeout(tgStatus, 0);
 
 /* ---------------- drawings ---------------- */
 const PALETTE = ['#2962ff', '#26a69a', '#ef5350', '#ff9800', '#e040fb', '#ffeb3b', '#ffffff'];
@@ -4049,6 +4221,7 @@ function render() {
       drawStretch();
       drawPushZones();
       drawSessions();
+      drawAlerts();
       drawPivots(pw);
       drawPanes(pw, ph);
       drawHtf(pw, ph);
@@ -4876,6 +5049,7 @@ async function scanRunNow() {
     const detail = piv ? `Pivots ${SCANV.pvIv} ${PIVOT_TYPES[SCANV.pvType]}: ${SCANV.pvMin || 0}% to ${SCANV.pvPct}% away from any level${SCANV.pv2On ? ` AND ${SCANV.pv2Iv} ${PIVOT_TYPES[SCANV.pv2Type]}: ${SCANV.pv2Min || 0}% to ${SCANV.pv2Pct}%` : ''}` : push ? `Push ${SCANP.side === 'both' ? 'HH / LL' : SCANP.side === 'long' ? 'HH' : 'LL'} ${SCANP.kMax ? (SCANP.kMax === SCANP.kMin ? `exactly ${SCANP.kMin}` : `${SCANP.kMin}-${SCANP.kMax}`) : `\u2265${SCANP.kMin}`}, bias ${SCANP.pIv ? SCANP.pIv + ' x' + SCANP.pN : 'off'}, SMMA ${SCANP.smLen}${SCANP.sIv ? ' ' + SCANP.sIv : ''}${SCANP.recent ? `, last ${SCANP.recent} candles` : ''}` : `SMMA ${SCAN.len} ${SCAN.side === 'both' ? 'below/above' : SCAN.side} ${SCAN.max ? (SCAN.max === SCAN.n ? `exactly ${SCAN.n}` : `${SCAN.n}-${SCAN.max}`) : `≥${SCAN.n}`} candles${SCAN.ha === 'ha' ? ' (HA)' : ''}`;
     if (!scanAbort || found.length) {
       SCANS.unshift({ id: String(t0.getTime()), title, detail, items: found }); SCANS = SCANS.slice(0, 30); store.set('gc_scans', SCANS); favUI();
+      if (!scanAbort) alScan(title, found);
     }
     $('sc_msg').textContent = `${scanAbort ? 'Stopped' : 'Done'}: ${found.length} of ${list.length} symbols matched` + (nodata ? `, ${nodata} had too little data for this timeframe` : '') + (errs ? `, ${errs} failed` : '') + `. Saved as "${title}".`;
     $('sc_open').style.display = '';

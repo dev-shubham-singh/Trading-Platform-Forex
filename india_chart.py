@@ -56,6 +56,8 @@ MAX_BARS_SENT = 60000
 # ------------------------------------------
 
 HERE = Path(__file__).resolve().parent
+import tg_alerts
+TGX = tg_alerts.Telegram(HERE, PORT)      # Telegram alerts (token in telegram_config.json)
 CONFIG = HERE / "fyers_config.json"
 TOKEN_FILE = HERE / "fyers_token.json"
 WATCH_FILE = HERE / "fyers_watchlist.txt"
@@ -1140,8 +1142,21 @@ def make_handler():
             self.send_header("Location", to)
             self.end_headers()
 
+        def do_POST(self):
+            url = urlparse(self.path)
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                if n > tg_alerts.MAX_BODY:
+                    return self.js({"error": "request too large"}, 400)
+                res = TGX.post(url.path, self.headers, self.rfile.read(n)) if url.path.startswith("/api/tg") else None
+                return self.js(*res) if res else self.send_error(404)
+            except Exception as e:
+                return self.js({"error": str(e)}, 500)
+
         def do_GET(self):
             url = urlparse(self.path)
+            if url.path == "/api/tg":
+                return self.js(TGX.get("/api/tg"))
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             try:
                 if url.path == "/login":
