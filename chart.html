@@ -3689,8 +3689,19 @@ function scItem(txt, on, fn) {
 }
 $('chart').addEventListener('contextmenu', e => {
   const r = $('chart').getBoundingClientRect(), x = e.clientX - r.left;
-  if (x < paneW()) return;                                       // only on the price scale; the rest of the chart is untouched
+  const onScale = x >= paneW();
+  if (!onScale && (e.clientY - r.top > paneH() || tool !== 'cursor')) return;      // below the pane (time axis) or while drawing: untouched
   e.preventDefault(); scMenu.innerHTML = '';
+  if (!onScale) {                                                // right-click on the chart: add / remove a price alert at that height
+    const ay = e.clientY - r.top, ap = series.coordinateToPrice(ay);
+    if (ap != null && isFinite(ap)) scItem(`\uD83D\uDD14 Add alert at ${fmt(ap)}`, false, () => alAdd(+ap.toFixed(digits)));
+    ALS.filter(a => a.on && a.sym === symbol).forEach(a => { const y = series.priceToCoordinate(a.price); if (y != null && Math.abs(y - ay) <= 12) scItem(`Remove alert at ${fmt(a.price)}`, false, () => { ALS = ALS.filter(q => q !== a); alSave(); }); });
+    scItem('Alert settings (Telegram)...', false, () => $('albtn').click());
+    scMenu.style.display = 'block';
+    scMenu.style.left = Math.max(4, Math.min(e.clientX, innerWidth - scMenu.offsetWidth - 4)) + 'px';
+    scMenu.style.top = Math.max(4, Math.min(e.clientY, innerHeight - scMenu.offsetHeight - 4)) + 'px';
+    return;
+  }
   scItem('Invert scale <span style="color:var(--muted)">&nbsp;Alt+I</span>', inverted, toggleInvert);
   scItem('Auto (fit data to screen)', chart.priceScale('right').options().autoScale, () => { chart.priceScale('right').applyOptions({ autoScale: true }); bump(); });
   const ay = e.clientY - r.top, ap = series.coordinateToPrice(ay);
@@ -3798,10 +3809,24 @@ function drawAlerts() {                                     // thin dotted line 
     if (!any) { any = true; ctx.save(); ctx.font = '11px sans-serif'; ctx.textBaseline = 'bottom'; }
     ctx.strokeStyle = '#ffd54f'; ctx.fillStyle = '#ffd54f'; ctx.lineWidth = 1; ctx.setLineDash([2, 4]);
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(pw, y); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillText(`🔔 ${fmt(a.price)}${a.note ? ' ' + a.note : ''}`, pw - 8 - ctx.measureText(`🔔 ${fmt(a.price)}${a.note ? ' ' + a.note : ''}`).width, y - 2);
+    const tx = `🔔 ${fmt(a.price)}${a.note ? '  ' + a.note : ''}`, tw = ctx.measureText(tx).width + 12;
+    ctx.fillStyle = 'rgba(255,213,79,.95)'; ctx.fillRect(pw - tw - 6, y - 9, tw, 18);
+    ctx.fillStyle = '#000'; ctx.textBaseline = 'middle'; ctx.fillText(tx, pw - tw, y); ctx.textBaseline = 'bottom';
   });
   if (any) ctx.restore();
 }
+let alDrag = null;
+const alNear = (px, py) => { const r = chartEl.getBoundingClientRect(); if (tool !== 'cursor' || px - r.left >= paneW() || py - r.top > paneH()) return null;
+  return ALS.find(a => a.on && a.sym === symbol && (y => y != null && Math.abs(y - (py - r.top)) <= 5)(series.priceToCoordinate(a.price))) || null; };
+$('chart').addEventListener('mousedown', e => {                 // drag an alert line to a new price (like TradingView)
+  if (e.button !== 0) return; const a = alNear(e.clientX, e.clientY); if (!a) return;
+  alDrag = a; e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+}, true);
+window.addEventListener('mousemove', e => {
+  if (alDrag) { const r = chartEl.getBoundingClientRect(), p = series.coordinateToPrice(e.clientY - r.top); if (p != null && isFinite(p)) { alDrag.price = +p.toFixed(digits); bump(); } e.stopPropagation(); return; }
+  chartEl.style.cursor = alNear(e.clientX, e.clientY) ? 'ns-resize' : '';
+}, true);
+window.addEventListener('mouseup', () => { if (alDrag) { alDrag = null; alSave(); } }, true);
 function alUI() {
   const p = $('alpop'); if (!p || p.style.display !== 'block') { $('albtn').classList.toggle('on', ALS.some(a => a.on)); return; }
   const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
