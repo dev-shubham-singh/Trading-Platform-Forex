@@ -385,8 +385,45 @@ def rate_bars(sym, sec, since=None):
     a = pd.DataFrame({"o": g["o"].first(), "h": g["h"].max(), "l": g["l"].min(), "c": g["c"].last(), "v": g["v"].sum()})
     if since is not None:
         a = a[a.index >= int(since)]
-    return [[int(k), float(o), float(h), float(l), float(c), int(k), int(v)]
+    rows = [[int(k), float(o), float(h), float(l), float(c), int(k), int(v)]
             for k, o, h, l, c, v in zip(a.index, a["o"], a["h"], a["l"], a["c"], a["v"])]
+    return patch_rates(sym, sec, rows, since)
+
+
+def patch_rates(sym, sec, rows, since=None):
+    """MT5 can serve minute bars that stop growing while ticks keep arriving (the price moves, the candles do not).
+    When the newest tick is a whole bar newer than the newest bar, the missing time is rebuilt from the ticks."""
+    try:
+        if not rows:
+            return rows
+        with MT5_LOCK:
+            tk = mt5.symbol_info_tick(sym)
+        if not tk or not tk.time_msc:
+            return rows
+        live, last_id = int(tk.time_msc), rows[-1][0]
+        if live < (last_id + sec) * 1000:               # the newest bar is still the current one
+            return rows
+        t, b = fetch_ticks(sym, last_id * 1000, live + 1000)
+        if not len(t):
+            return rows
+        ks = (t // 1000 // sec) * sec
+        out = [list(r) for r in rows]
+        for k in np.unique(ks):
+            m = ks == k
+            bb = b[m]
+            k = int(k)
+            if k == out[-1][0]:
+                r = out[-1]
+                r[2], r[3], r[4] = max(r[2], float(bb.max())), min(r[3], float(bb.min())), float(bb[-1])
+            elif k > out[-1][0]:
+                prev_c = out[-1][4]
+                out.append([k, prev_c, max(prev_c, float(bb.max())), min(prev_c, float(bb.min())), float(bb[-1]), k, int(m.sum())])
+        if since is not None:
+            out = [r for r in out if r[0] >= int(since)]
+        return out
+    except Exception as e:
+        print("patch_rates:", e)
+        return rows
 
 
 def suggest_box(sym, point):

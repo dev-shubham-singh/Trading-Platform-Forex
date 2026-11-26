@@ -304,7 +304,7 @@
     <canvas id="overlay"></canvas>
     <div id="legend"></div>
     <div id="tqbar"></div>
-    <div id="stale" style="display:none;position:absolute;top:8px;right:90px;z-index:6;background:#b71c1c;color:#fff;padding:3px 9px;border-radius:5px;font-size:12px" title="The candles are not following the live price. The chart reloads them by itself.">&#9888; candles behind the live price - reloading</div>
+    <div id="stale" style="display:none;position:absolute;top:8px;right:90px;max-width:62%;line-height:1.4;z-index:6;background:#b71c1c;color:#fff;padding:3px 9px;border-radius:5px;font-size:12px" title="The candles are not following the live price. The chart reloads them by itself.">&#9888; candles behind the live price - reloading</div>
     <div id="rpbar" style="display:none">
       <b style="color:#ff9800">REPLAY</b><span id="rp_time"></span>
       <button id="rp_pick" title="Pick another start candle (starts a new practice session)">&#10226; Start</button>
@@ -3626,6 +3626,7 @@ async function poll() {
   const id = reqId, since = raw[raw.length - 1][0];
   try {
     const j = await fetchJ(query(since));
+    pollDiag = { n: j.bars ? j.bars.length : -1, newest: j.bars && j.bars.length ? j.bars[j.bars.length - 1][0] : null, err: j.error || '', at: Date.now() };
     if (id !== reqId || j.error || RP.on) return;
     setStatus(j.status);
     if (j.cnt != null) tickCnt = j.cnt;
@@ -3637,21 +3638,23 @@ async function poll() {
     }
     if (first >= 0) applyNewBars(first);
     staleCheck();
-  } catch (e) { /* server busy or restarting; next poll retries */ }
+  } catch (e) { pollDiag.err = String((e && e.message) || e).slice(0, 120); console.warn('poll:', e); }     // server busy or restarting: next poll retries
   finally { polling = false; }
 }
 ticker(poll, 500);
 ['visibilitychange', 'focus', 'pageshow', 'online'].forEach(ev => window.addEventListener(ev, () => { if (!document.hidden) poll(); }));
 /* Safety net: on a time chart the newest candle closes at the live bid. If they stay apart for 20 s the candles have stopped
    (server hiccup, sleeping tab...): say so and reload the bars, at most once every 45 s. */
-let staleSince = 0, staleReload = 0;
+let staleSince = 0, staleReload = 0, pollDiag = { n: 0, newest: null, err: '', at: 0 };
 function staleCheck() {
   const b = $('stale');
   if (kind !== 'time' || !status || status.bid == null || !raw.length || RP.on) { staleSince = 0; b.style.display = 'none'; return; }
-  const c = raw[raw.length - 1][4], tol = Math.max(Math.abs(status.ask - status.bid) * 3, Math.abs(c) * 2e-5);
+  const c = raw[raw.length - 1][4], tol = Math.max(Math.abs(status.ask - status.bid) * 3, Math.abs(c) * 1e-4);
   if (Math.abs(status.bid - c) <= tol) { staleSince = 0; b.style.display = 'none'; return; }
   if (!staleSince) staleSince = Date.now();
   if (Date.now() - staleSince < 20000) return;
+  const hm = t => { const d = new Date(disp(realOf(t)) * 1000); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}`; };
+  b.textContent = `\u26A0 candles behind the live price - reloading   (last candle ${hm(raw[raw.length - 1][0])}; server sent ${pollDiag.n} bars${pollDiag.newest != null ? ', newest ' + hm(pollDiag.newest) : ''}${pollDiag.err ? '; problem: ' + pollDiag.err : ''})`;
   b.style.display = 'block';
   if (Date.now() - staleReload > 45000) { staleReload = Date.now(); load(); }
 }
