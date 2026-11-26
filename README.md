@@ -234,3 +234,7 @@ Symbols > Scans: every result has a round **+** icon (and each scan has **+ all*
 ## Sessions (gold chart only)
 
 Indicators > **Sessions (high / low)**. Thin lines for the high and low of the Asia, London and New York sessions. Hours are in UTC and editable (default Asia 00:00-09:00, London 07:00-16:00, New York 12:00-21:00; IST = UTC + 5:30). *Show last N sessions* sets how many sessions of each kind are drawn. *Shade %* fills the box between low and high: 0 = only lines (cleanest), 100 = dark. *Lines run*: only during the session, until the next same session, or to the right edge. Names / prices and dotted open lines can be switched off or on. Use a chart of 1h or shorter.
+
+## History window per timeframe
+
+The *Last N hours* box on second charts is remembered per timeframe, so two windows no longer overwrite each other. Defaults: 1s loads 2 hours, 15s loads 8 hours; any other second timeframe keeps the old 12 hours until you change it.

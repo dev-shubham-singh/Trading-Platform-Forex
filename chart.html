@@ -3507,7 +3507,11 @@ function query(since) {
   const p = kind === 'time' || kind === 'tick' ? ivN : box;
   return `/api/bars?symbol=${encodeURIComponent(symbol)}&kind=${kind}&p=${p}` + (since != null ? `&since=${since}` : isSecs() && secHours > 0 ? `&hours=${secHours}` : '');
 }
-let secHours = +store.get('gc_sechours', 12);          // second charts: how many hours of candles to load (0 = as many as possible)
+/* Second charts: how many hours of candles to load (0 = as many as possible). Remembered PER timeframe, so two windows can differ:
+   1s keeps 2 hours and 15s keeps 8 hours unless you choose otherwise. */
+const SEC_DEF = { '1s': 2, '15s': 8 };
+function secFor(t) { const m = store.get('gc_sechours_tf', {}); return t in m ? +m[t] : t in SEC_DEF ? SEC_DEF[t] : +store.get('gc_sechours', 12); }
+let secHours = secFor(typeof tf === 'string' ? tf : '15s');
 function isSecs() { return kind === 'time' && tfSec < 60; }
 function syncControls() {
   const iv = parseIv(tf) || { kind: 'time', n: 15 };
@@ -3515,6 +3519,7 @@ function syncControls() {
   ivN = iv.n; tfSec = kind === 'time' ? iv.n : 1;
   $('ctype').value = ctype;
   $('secwin').style.display = kind === 'time' && tfSec < 60 && ctype !== 'renko' && ctype !== 'kagi' ? '' : 'none';
+  secHours = secFor(tf);
   $('secwin').value = String(secHours);
   const customs = store.get('gc_custom_iv', []);
   $('tfs').innerHTML = [...PRESETS, ...customs.filter(c => !PRESETS.includes(c))]
@@ -4913,7 +4918,7 @@ $('symq').addEventListener('keydown', e => {
   else if (e.key === 'Escape') closeSymbols();
 });
 document.addEventListener('mousedown', e => { if (!$('sympop').contains(e.target) && e.target !== $('symbtn')) closeSymbols(); });
-$('secwin').onchange = () => { secHours = +$('secwin').value; store.set('gc_sechours', secHours); load(); };
+$('secwin').onchange = () => { secHours = +$('secwin').value; const m = store.get('gc_sechours_tf', {}); m[tf] = secHours; store.set('gc_sechours_tf', m); load(); };
 $('ctype').onchange = () => {
   ctype = $('ctype').value;
   if ((ctype === 'ha' || ctype === 'candle' || ctype === 'line') && !parseIv(tf)) tf = '15s';
