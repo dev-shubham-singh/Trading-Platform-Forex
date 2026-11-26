@@ -1184,6 +1184,8 @@ def make_handler():
                     self.end_headers()
                     self.wfile.write(lib)
                     return
+                if url.path == "/grid" and AUTH.ok:
+                    return self.send((HERE / "grid.html").read_bytes(), "text/html; charset=utf-8")
                 if url.path in ("/", "/index.html"):
                     if not AUTH.ok:
                         return self.send(LOGIN_PAGE.replace("%ERR%", state["err"]).encode(), "text/html; charset=utf-8")

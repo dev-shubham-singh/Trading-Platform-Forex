@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Multi-chart</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#131722; --panel:#1e222d; --line:#2a2e39; --text:#d1d4dc; --muted:#787b86; --accent:#2962ff; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:13px -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display:flex; flex-direction:column; }
+  #bar { display:flex; align-items:center; gap:6px; padding:5px 8px; background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  #bar b { color:var(--muted); font-weight:500; margin-right:2px; }
+  button { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:4px; padding:4px 9px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); }
+  button.on { color:var(--accent); background:rgba(41,98,255,.12); border-color:var(--accent); }
+  .lay { padding:3px 5px; line-height:0; }
+  .lay svg { width:30px; height:22px; }
+  .lay rect { fill:none; stroke:currentColor; stroke-width:1.5; }
+  .sep { width:1px; height:20px; background:var(--line); margin:0 4px; }
+  #g { flex:1; min-height:0; display:grid; gap:3px; background:var(--line); padding:0; }
+  .cell { position:relative; background:var(--bg); min-width:0; min-height:0; }
+  .cell iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+  .cell .pop { position:absolute; right:6px; bottom:30px; z-index:5; opacity:.35; padding:2px 6px; font-size:12px; }
+  .cell .pop:hover { opacity:1; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <b>Layout</b>
+  <span id="lays"></span>
+  <div class="sep"></div>
+  <button id="cross" title="Crosshair, drawings and theme follow between the charts (only where the symbol is the same)">&#8644; Sync crosshair</button>
+  <button id="sym" title="When on, changing the symbol in one chart changes it in all of them">&#9741; Same symbol in all</button>
+  <div class="sep"></div>
+  <button id="reset" title="Put the tiles back to the default timeframes (1m, 5m, 15m, 1h)">Reset tiles</button>
+  <button id="neww" title="Open another multi-chart window (for your second screen)">&#10697; New grid window</button>
+</div>
+<div id="g"></div>
+<script>
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+};
+const Q = new URLSearchParams(location.search);
+const GID = (Q.get('g') || '1').replace(/\D/g, '') || '1';          // grid window number: each grid window keeps its own tiles
+const GK = 'gc_grid' + (GID === '1' ? '' : '_' + GID);
+const TF = ['1m', '5m', '15m', '1h'];
+// layouts: tiles = how many charts, areas = CSS grid layout, icon = the little pictures on the buttons
+const LAYOUTS = {
+  '2v': { n: 2, cols: '1fr 1fr', rows: '1fr', areas: ['a b'], title: '2 charts side by side', icon: [[1,1,8,18],[11,1,8,18]] },
+  '2h': { n: 2, cols: '1fr', rows: '1fr 1fr', areas: ['a', 'b'], title: '2 charts one above the other', icon: [[1,1,18,8],[1,11,18,8]] },
+  '3l': { n: 3, cols: '2fr 1fr', rows: '1fr 1fr', areas: ['a b', 'a c'], title: '3 charts: one big on the left', icon: [[1,1,11,18],[14,1,5,8],[14,11,5,8]] },
+  '3t': { n: 3, cols: '1fr 1fr', rows: '2fr 1fr', areas: ['a a', 'b c'], title: '3 charts: one big on top', icon: [[1,1,18,11],[1,14,8,5],[11,14,8,5]] },
+  '3c': { n: 3, cols: '1fr 1fr 1fr', rows: '1fr', areas: ['a b c'], title: '3 charts in a row', icon: [[1,1,5,18],[8,1,5,18],[15,1,5,18]] },
+  '4':  { n: 4, cols: '1fr 1fr', rows: '1fr 1fr', areas: ['a b', 'c d'], title: '4 charts (2 x 2)', icon: [[1,1,8,8],[11,1,8,8],[1,11,8,8],[11,11,8,8]] },
+  '4c': { n: 4, cols: '1fr 1fr 1fr 1fr', rows: '1fr', areas: ['a b c d'], title: '4 charts in a row', icon: [[1,1,3,18],[6,1,3,18],[11,1,3,18],[16,1,3,18]] },
+  '4r': { n: 4, cols: '1fr', rows: '1fr 1fr 1fr 1fr', areas: ['a', 'b', 'c', 'd'], title: '4 charts stacked', icon: [[1,1,18,3],[1,6,18,3],[1,11,18,3],[1,16,18,3]] },
+};
+let cfg = Object.assign({ layout: '4' }, store.get(GK, {}));
+if (!LAYOUTS[cfg.layout]) cfg.layout = '4';
+const tileId = i => 100 + (GID === '1' ? 0 : Number(GID) * 10) + i + 1;     // 101..104 for the first grid, 121..124 for grid 2, ...
+const $ = id => document.getElementById(id);
+const frames = {};                                                          // tile index -> iframe, kept alive when the layout changes
+
+function lays() {
+  $('lays').innerHTML = Object.entries(LAYOUTS).map(([k, L]) =>
+    `<button class="lay${k === cfg.layout ? ' on' : ''}" data-k="${k}" title="${L.title}"><svg viewBox="0 0 20 20">${L.icon.map(r => `<rect x="${r[0]}" y="${r[1]}" width="${r[2]}" height="${r[3]}"/>`).join('')}</svg></button>`).join('');
+  $('lays').querySelectorAll('button').forEach(b => b.onclick = () => { cfg.layout = b.dataset.k; store.set(GK, cfg); build(); });
+}
+function frameFor(i) {
+  if (frames[i]) return frames[i];
+  const f = document.createElement('iframe');
+  f.src = `/?w=${tileId(i)}&tile=1&tf=${TF[i]}`;                           // the tile keeps whatever symbol / timeframe you set in it afterwards
+  frames[i] = f; return f;
+}
+function build() {
+  const L = LAYOUTS[cfg.layout], g = $('g'), keep = new Set();
+  g.style.gridTemplateColumns = L.cols; g.style.gridTemplateRows = L.rows;
+  g.style.gridTemplateAreas = L.areas.map(r => `"${r}"`).join(' ');
+  const old = {}; g.querySelectorAll('.cell').forEach(c => { old[c.dataset.i] = c; });
+  for (let i = 0; i < L.n; i++) {
+    let c = old[i];
+    if (!c) {
+      c = document.createElement('div'); c.className = 'cell'; c.dataset.i = i;
+      c.appendChild(frameFor(i));
+      const p = document.createElement('button'); p.className = 'pop'; p.innerHTML = '&#10697;';
+      p.title = 'Open this chart in its own window (same symbol and timeframe)';
+      p.onclick = () => popOut(i);
+      c.appendChild(p); g.appendChild(c);
+    }
+    c.style.gridArea = 'abcd'[i]; keep.add(String(i));
+  }
+  Object.keys(old).forEach(k => { if (!keep.has(k)) { old[k].remove(); } });       // a smaller layout hides the extra tiles (their iframes reload if shown again)
+  Object.keys(frames).forEach(k => { if (!keep.has(k)) delete frames[k]; });
+  lays();
+}
+function popOut(i) {
+  let sym = '', tf = '';
+  try { const w = frames[i].contentWindow; sym = w.eval('symbol'); tf = w.eval('tf'); } catch (e) {}
+  let n = Number(store.get('gc_winseq', 1)) + 1; if (n >= 100) n = 2; store.set('gc_winseq', n);
+  window.open(`/?w=${n}&sym=${encodeURIComponent(sym)}&tf=${encodeURIComponent(tf)}`, 'gc_win_' + n, 'popup=yes,width=1280,height=800');
+}
+function ui() {
+  const sync = store.get('gc_sync', true), sym = store.get('gc_symsync', false);
+  $('cross').classList.toggle('on', sync); $('sym').classList.toggle('on', sym);
+}
+$('cross').onclick = () => { store.set('gc_sync', !store.get('gc_sync', true)); ui(); Object.values(frames).forEach(f => { try { f.contentWindow.eval("syncOn = " + store.get('gc_sync', true) + "; store.set('gc_sync', syncOn); applySync();"); } catch (e) {} }); };
+$('sym').onclick = () => {
+  const on = !store.get('gc_symsync', false); store.set('gc_symsync', on); ui();
+  Object.values(frames).forEach(f => { try { f.contentWindow.postMessage({ gc: 'symsync', on }, location.origin); } catch (e) {} });
+};
+$('reset').onclick = () => {
+  if (!confirm('Put all tiles back to the default timeframes (1m, 5m, 15m, 1h) and the default symbol?')) return;
+  for (let i = 0; i < 4; i++) { try { localStorage.removeItem('gc_view_w' + tileId(i)); } catch (e) {} }
+  Object.values(frames).forEach((f, ) => { f.src = f.src; });
+};
+$('neww').onclick = () => {
+  let n = Number(store.get('gc_gridseq', 1)) + 1; if (n >= 9) n = 2; store.set('gc_gridseq', n);
+  window.open('/grid?g=' + n, 'gc_grid_' + n, 'popup=yes,width=1700,height=950');
+};
+document.title = 'Multi-chart' + (GID === '1' ? '' : ' ' + GID);
+build(); ui();
+</script>
+</body>
+</html>

@@ -1383,6 +1383,8 @@ def make_handler(default_sym):
                     self.end_headers()
                     self.wfile.write(lib)
                     return
+                if url.path == "/grid":
+                    return self.send((HERE / "grid.html").read_bytes(), "text/html; charset=utf-8")
                 if url.path in ("/", "/index.html"):
                     return self.send((HERE / "chart.html").read_bytes(), "text/html; charset=utf-8")   # read fresh: a new chart.html shows after a refresh
                 if url.path == "/api/symbols":

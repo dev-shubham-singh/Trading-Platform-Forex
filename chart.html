@@ -214,6 +214,8 @@
   footer .tzbox { display:flex; align-items:center; gap:8px; white-space:nowrap; }
   #clock { color:var(--text); font-variant-numeric:tabular-nums; }
   #tzsel { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:4px; padding:2px 4px; font-size:11px; }
+  html.tile header { flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; white-space:nowrap; scrollbar-width:thin; }
+  html.tile #tradebar, html.tile #tbtoggle, html.tile footer { display:none !important; }
 </style>
 </head>
 <body>
@@ -258,7 +260,9 @@
   <button class="tool" id="lkcfg" title="Profit lock settings" style="padding:4px 6px">&#9662;</button></span>
   <div class="sep"></div>
   <button class="tool" id="winbtn" title="Open another chart window (e.g. 5m) to put on your other screen">&#10697; New window</button>
-  <button class="tool" id="syncbtn" title="Sync drawings, crosshair, symbol and theme between your chart windows">&#8644; Sync</button>
+  <button class="tool" id="gridbtn" title="Open 2, 3 or 4 charts on one screen, each with its own symbol and timeframe">&#9638; Multi-chart</button>
+  <button class="tool" id="syncbtn" title="Sync drawings, crosshair and theme between your chart windows">&#8644; Sync</button>
+  <button class="tool" id="symsyncbtn" title="Symbol sync">&#9741; Same symbol</button>
   <button class="tool" id="hidebtn" title="Hide the candles so only your indicators, drawings and orders show. Click again to show them.">&#128065; Hide candles</button>
   <button class="tool" id="themebtn" title="Switch between dark and light mode">&#9788; Light</button>
   <button class="tool mt5only" id="acctbtn" title="Your MT5 account: switch between your demo and real accounts" style="font-weight:600">Account</button>
@@ -554,6 +558,8 @@ const store = {
 // Each extra window (?w=2, ?w=3 ...) keeps its own interval / chart type / indicators; drawings are per symbol and shared.
 const URLQ = new URLSearchParams(location.search);
 const WIN = (URLQ.get('w') || '').replace(/\D/g, ''), WK = WIN ? '_w' + WIN : '';
+const TILE = URLQ.get('tile') === '1';            // one tile of the multi-chart grid page (/grid)
+if (TILE) document.documentElement.classList.add('tile');
 // Redraw only when something changed (saves CPU / battery): anything that can move the overlay calls bump().
 let needDraw = true, needBase = true;
 function bump() { needDraw = true; needBase = true; }            // something changed: redraw everything
@@ -4025,7 +4031,7 @@ function saveDrawings() { store.set('gc_draw_' + symbol, drawings); send({ type:
 /* ---- sync between chart windows (monitor + laptop screen) ----
    Windows of this chart in the same browser talk over a BroadcastChannel: drawings, the crosshair (shown as a
    dashed line in the other windows), the symbol and the theme. On/off with the Sync button. */
-let syncOn = store.get('gc_sync', true), remoteCross = null, booted = false;
+let syncOn = store.get('gc_sync', true), symSync = store.get('gc_symsync', false), remoteCross = null, booted = false;
 const ME = Math.random().toString(36).slice(2);
 const bc = 'BroadcastChannel' in window ? new BroadcastChannel('gc_sync') : null;
 function send(m) { if (bc && syncOn) try { bc.postMessage({ ...m, from: ME, src: SRC }); } catch (e) {} }
@@ -4036,7 +4042,7 @@ if (bc) bc.onmessage = e => {
     drawings = m.drawings || []; if (sel && !drawings.some(d => d.id === sel)) sel = null;
   } else if (m.type === 'cross') {
     remoteCross = m.symbol === symbol && m.t != null ? { t: m.t, p: m.p } : null;
-  } else if (m.type === 'symbol' && m.symbol && m.symbol !== symbol) {
+  } else if (m.type === 'symbol' && symSync && m.symbol && m.symbol !== symbol) {
     setSymbol(m.symbol, true);
   } else if (m.type === 'theme' && m.theme !== theme) {
     theme = m.theme; store.set('gc_theme', theme); applyTheme();
@@ -4045,8 +4051,8 @@ if (bc) bc.onmessage = e => {
 };
 function applySync() {
   $('syncbtn').classList.toggle('on', syncOn);
-  $('syncbtn').title = syncOn ? 'Sync is ON: drawings, crosshair, symbol and theme follow your other chart windows. Click to turn off.'
-                              : 'Sync is OFF. Click to sync drawings, crosshair, symbol and theme between chart windows.';
+  $('syncbtn').title = syncOn ? 'Sync is ON: drawings, crosshair and theme follow your other chart windows. Click to turn off.'
+                              : 'Sync is OFF. Click to sync drawings, crosshair and theme between chart windows.';
   if (!syncOn) remoteCross = null;
   bump();
 }
@@ -4054,10 +4060,23 @@ $('syncbtn').onclick = () => {
   syncOn = !syncOn; store.set('gc_sync', syncOn); applySync();
   if (syncOn) { send({ type: 'draw', symbol, drawings }); }
 };
-$('winbtn').onclick = () => {
-  const n = WIN ? Number(WIN) + 1 : 2;
-  window.open(`${location.pathname}?w=${n}`, 'gc_win_' + n, 'popup=yes,width=1280,height=800');
+function applySymSync() {
+  $('symsyncbtn').classList.toggle('on', symSync);
+  $('symsyncbtn').title = symSync ? 'Symbol sync is ON: changing the symbol in one chart changes it in all your chart windows. Click to turn off.'
+                                  : 'Symbol sync is OFF: each chart window keeps its own symbol. Click to make all windows follow one symbol.';
+}
+$('symsyncbtn').onclick = () => { symSync = !symSync; store.set('gc_symsync', symSync); applySymSync(); };
+window.addEventListener('message', e => {             // the grid page tells its tiles when the symbol-sync switch changes
+  if (e.origin !== location.origin) return;
+  const m = e.data || {};
+  if (m.gc === 'symsync') { symSync = !!m.on; applySymSync(); }
+});
+$('winbtn').onclick = () => {                         // a new window opens on the same symbol and timeframe; change either there (symbol sync is off by default)
+  let n = Number(store.get('gc_winseq', 1)) + 1; if (n >= 100) n = 2;
+  store.set('gc_winseq', n);
+  window.open(`${location.pathname}?w=${n}&sym=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}`, 'gc_win_' + n, 'popup=yes,width=1280,height=800');
 };
+$('gridbtn').onclick = () => window.open('/grid', 'gc_grid', 'popup=yes,width=1700,height=950');
 $('hidebtn').onclick = () => {
   hideC = !hideC; try { localStorage.setItem('gc_hidecandles', hideC ? '1' : '0'); } catch (e) {}
   styleSeries(); repaintBars(null); bump();
@@ -4812,7 +4831,7 @@ async function loadList(id) {
 }
 let symbols = [], symSel = 0, symSearch = false, watchLabel = 'Market Watch', found = [], findQ = '', findTimer = 0;
 async function setSymbol(name, fromSync) {
-  if (booted && !fromSync) send({ type: 'symbol', symbol: name });
+  if (booted && !fromSync) if (symSync) send({ type: 'symbol', symbol: name });
   remoteCross = null;
   const id = ++reqId;
   $('msg').style.display = 'flex'; $('msg').textContent = `Opening ${name}...`;
@@ -6799,7 +6818,9 @@ $('rp_exit').onclick = () => replayExit(false);
     PA = Object.assign({ bal: 100000, startBal: 100000, pos: [], pend: [], next: 1, deals: [] }, store.get('gc_paper', {}));
     if (!PA.deals.length) paperReset(PA.bal);
     const view = store.get('gc_view' + WK, null) || { ...store.get('gc_view', {}), ...(WIN ? { tf: '5m' } : {}) };
-    if (URLQ.get('tf')) view.tf = URLQ.get('tf');
+    const savedView = store.get('gc_view' + WK, null);
+    if (URLQ.get('tf') && !(WIN && savedView)) view.tf = URLQ.get('tf');        // a window keeps its own timeframe once it has one
+    if (URLQ.get('sym') && !(WIN && savedView)) view.symbol = URLQ.get('sym');
     if (WIN) document.title = `${SRC} Chart (window ${WIN})`;
     ctype = ['ha', 'candle', 'line', 'renko', 'kagi'].includes(view.ctype) ? view.ctype : 'ha';
     volCandles = !!view.vc;
@@ -6808,7 +6829,7 @@ $('rp_exit').onclick = () => replayExit(false);
     inds.forEach(makeSeries);
     await setSymbol(want);
     if (!symMeta && want !== list.default) await setSymbol(list.default);    // e.g. an expired contract
-    booted = true; applySync();
+    booted = true; applySync(); applySymSync();
     if (store.get('gc_tbar', true)) showBar(true);
   } catch (e) {
     $('msg').textContent = 'Could not reach the chart server. Start it first, then refresh this page.';
