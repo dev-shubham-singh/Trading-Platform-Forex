@@ -403,15 +403,54 @@ def suggest_box(sym, point):
     return float(rng)
 
 
+STORE_LAG = {}
+
+
+def check_store_lag(st):
+    """MT5 shows a fresh tick but the newest tick in the store is much older: the store stopped growing (a hiccup in the
+    tick request), so every second / tick chart of that symbol would freeze while the price still moves. First ask for the
+    missing range again; if that does not help, forget the store and its bar builders so they are rebuilt from MT5."""
+    now = time.time()
+    if now - STORE_LAG.get(("chk", st.sym), 0) < 2 or not st.n:
+        return
+    STORE_LAG[("chk", st.sym)] = now
+    with MT5_LOCK:
+        tk = mt5.symbol_info_tick(st.sym)
+    if not tk or not tk.time_msc:
+        return
+    last, live = int(st.t[st.n - 1]), int(tk.time_msc)
+    if live - last < 15000:
+        STORE_LAG[st.sym] = 0
+        return
+    n = STORE_LAG[st.sym] = STORE_LAG.get(st.sym, 0) + 1
+    if n < 4:
+        t, b = fetch_ticks(st.sym, last - 2000, live + 2000)
+        with st.lock:
+            st._append(t, b)
+        print(f"Tick store of {st.sym} was {(live - last) // 1000}s behind: asked MT5 again ({n}).")
+        return
+    print(f"Tick store of {st.sym} stays behind: rebuilding it.")
+    STORE_LAG[st.sym] = 0
+    with STORES_LOCK:
+        STORES.pop(st.sym, None)
+    with BUILDERS_LOCK:
+        for k in [k for k in BUILDERS if k[0] == st.sym]:
+            BUILDERS.pop(k, None)
+
+
 def live_loop():
     while True:
         try:
             with STORES_LOCK:
                 active = [s for s in STORES.values() if time.time() - s.last_used < 120]
-            for st in active:
+        except Exception:
+            active = []
+        for st in active:                              # one bad symbol must not stop the others
+            try:
                 st.update()
-        except Exception as e:                         # keep the chart alive through hiccups
-            print("Live update problem (retrying):", e)
+                check_store_lag(st)
+            except Exception as e:
+                print(f"Live update problem for {st.sym} (retrying):", e)
         time.sleep(POLL_SEC)
 
 

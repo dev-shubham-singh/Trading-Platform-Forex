@@ -250,3 +250,7 @@ Alerts window > *Candle pattern alerts*. Type a symbol and one or more timeframe
 ## Active hours for alerts (India time)
 
 Alerts window > *Active hours (India time)*: tick *Only send alerts between* and pick the from / to time (IST, whatever time zone the PC uses; a window like 22:00-06:00 runs over midnight). Doji alerts always follow it; push-count and price alerts follow it when ticked (price alerts are off by default so a price level can still wake you). Outside the window the doji watchers pause and nothing is queued; when the window opens they start again by themselves and only report candles that close after that. The chart page has to stay open.
+
+## Stale-candle protection (gold chart)
+
+If the candles stop while the price still moves, two safety nets act: the server notices when a symbol's tick store is more than 15 s behind MT5, re-asks MT5 and, if needed, rebuilds it; the page shows a red "candles behind the live price" note when the newest candle has been away from the live bid for 20 s, and reloads the bars by itself (at most every 45 s). One bad symbol no longer stops the live update of the others. Restart the gold .bat after updating.
