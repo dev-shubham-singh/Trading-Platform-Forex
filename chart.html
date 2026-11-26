@@ -437,6 +437,7 @@
     <button data-add="pivot">Pivot points</button>
     <button data-add="hl">Candle high/low sweeps</button>
     <button data-add="pdhl">Previous day high/low</button>
+    <button data-add="sess" class="mt5only" title="Asia / London / New York session high and low as thin lines, with an optional soft shade. Gold chart only.">Sessions (high / low)</button>
     <button data-add="vwap">VWAP</button>
     <button data-add="atr">ATR</button>
     <button data-add="macd" class="mt5only">MACD + doji</button>
@@ -723,6 +724,8 @@ const IND_DEFAULTS = {
   macd: { fast: 12, slow: 26, sig: 9, src: 'ha', doji: 'ha', cDoji: '#f7c948', cMacd: '#2962ff', cSig: '#ff6d00',
           cUp: '#26a69a', cUp2: '#b2dfdb', cDn: '#ff5252', cDn2: '#ffcdd2' },
   vol: { by: 'real', cUp: '#26a69a', cDn: '#ef5350' },
+  sess: { aOn: true, aTime: '00:00-09:00', aCol: '#ffb74d', lOn: true, lTime: '07:00-16:00', lCol: '#4fc3f7', nOn: true, nTime: '12:00-21:00', nCol: '#ba68c8',
+          count: 2, shade: 0, run: 'next', labels: true, prices: true, vlines: false },
   pdhl: { day: 'broker', close: false, history: true, labels: true, prices: true, fit: true, style: 'dashed',
           cH: '#ef5350', cL: '#26a69a', cC: '#9598a1', width: 1 },
   vwap: { day: 'broker', bands: 1, mult: 1, color: '#2962ff', cBand: '#7e57c2', width: 2 },
@@ -2617,6 +2620,7 @@ function labelBase(ind) {
   if (ind.type === 'hswitch') return 'HA switch boxes';
   if (ind.type === 'chop') return 'Sideways filter';
   if (ind.type === 'stretch') return 'Stretch';
+  if (ind.type === 'sess') return 'Sessions';
   if (ind.type === 'push') return `Push count (SMMA ${ind.smLen}${ind.sIv ? ' ' + ind.sIv : ''})`;
   return ind.type === 'bb' ? `BB ${ind.len} ${ind.mult}` : `${ind.type.toUpperCase()} ${ind.len}`;
 }
@@ -2656,7 +2660,7 @@ function makeSeries(ind) {
       lastValueVisible: false, priceFormat: { type: 'volume' } }));
     layoutPanes(); return;
   }
-  if (ind.type === 'chop') return;
+  if (ind.type === 'chop' || ind.type === 'sess') return;
   if (ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'htf' || ind.type === 'burke') { ind.hlN = 0; return; }       // lanes are created by fillHL as needed
   if (ind.type === 'pivot' || ind.type === 'pdhl') {
     ind.pnames = pivotNames(ind);
@@ -2691,7 +2695,7 @@ function makeSeries(ind) {
 const lineShown = ind => ind.visible !== false && !((ind.type === 'smma' || ind.type === 'push') && ind.line === false);   // SMMA: line can be hidden while its candle colours stay
 function fullData(ind) {
   if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind);
-  if (ind.type === 'vprof' || ind.type === 'foot') return;
+  if (ind.type === 'vprof' || ind.type === 'foot' || ind.type === 'sess') return;
   if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, 0); }
   if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf' || ind.type === 'burke') return;
   ind.vals = calc(ind);
@@ -2705,7 +2709,7 @@ function fullData(ind) {
 function tailData(ind, first) {
   if (ind.tfLive && mtfLen(ind)) return fullData(ind);            // the forming higher candle moves every older bar of its period
   if (ind.type === 'macd' || ind.type === 'vol' || ind.type === 'atr' || ind.type === 'cvd') return fillPane(ind, first);
-  if (ind.type === 'vprof' || ind.type === 'foot') return;
+  if (ind.type === 'vprof' || ind.type === 'foot' || ind.type === 'sess') return;
   if (ind.type === 'vwap') { ind.vals = vwapCalc(ind); return runFill(ind, first); }
   if (ind.type === 'bos' || ind.type === 'pivot' || ind.type === 'pdhl' || ind.type === 'hl' || ind.type === 'hdoji' || ind.type === 'hswitch' || ind.type === 'chop' || ind.type === 'htf' || ind.type === 'burke') return;
   ind.vals = calc(ind);
@@ -2865,6 +2869,17 @@ function renderPanel() {
       `<label title="How many days in a row before the first opposite day">after <input type="number" data-k="run" min="1" max="6" step="1" value="${ind.run}" style="width:44px"> days</label>` +
       `<label title="Only show signals that agree with the first red / green day"><input type="checkbox" data-k="biasOnly" ${ind.biasOnly ? 'checked' : ''}> Only with day bias</label>` +
       `<label>Buy <input type="color" data-k="cBuy" value="${ind.cBuy}"></label><label>Sell <input type="color" data-k="cSell" value="${ind.cSell}"></label>` +
+      `<button class="x" title="Remove">Remove</button>`;
+    else if (ind.type === 'sess') row.innerHTML =
+      `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
+      `<b style="width:auto">Sessions</b>` +
+      [['a', 'Asia'], ['l', 'London'], ['n', 'New York']].map(([p, nm]) => `<label title="Show the ${nm} session. Hours in UTC (IST = UTC + 5:30), written 07:00-16:00."><input type="checkbox" data-k="${p}On" ${ind[p + 'On'] !== false ? 'checked' : ''}> ${nm} <input type="text" data-k="${p}Time" value="${ind[p + 'Time']}" style="width:92px" title="Start-end in UTC, e.g. 07:00-16:00"> <input type="color" data-k="${p}Col" value="${ind[p + 'Col']}"></label>`).join('') +
+      `<label title="How many sessions of each kind to show: 1 = only the latest one, 2 = the latest and the one before ...">Show last <input type="number" data-k="count" min="1" max="30" step="1" value="${ind.count}" style="width:52px"> sessions</label>` +
+      `<label title="Shade between the session low and high. 0 = no shade, only the two lines (cleanest). 100 = dark.">Shade <input type="number" data-k="shade" min="0" max="100" step="5" value="${ind.shade}" style="width:56px">%</label>` +
+      `<label title="How far the high / low lines run to the right"><select data-k="run">${[['session', 'Only during the session'], ['next', 'Until the next same session'], ['now', 'To the right edge']].map(([v, t]) => `<option value="${v}" ${ind.run === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>` +
+      `<label title="Small name at the start of each line, e.g. LDN H"><input type="checkbox" data-k="labels" ${ind.labels !== false ? 'checked' : ''}> Names</label>` +
+      `<label title="Add the price to the name"><input type="checkbox" data-k="prices" ${ind.prices !== false ? 'checked' : ''}> Prices</label>` +
+      `<label title="A thin dotted vertical line where each session opens"><input type="checkbox" data-k="vlines" ${ind.vlines ? 'checked' : ''}> Open lines</label>` +
       `<button class="x" title="Remove">Remove</button>`;
     else if (ind.type === 'push') row.innerHTML =
       `<input type="checkbox" data-k="visible" ${ind.visible !== false ? 'checked' : ''} title="Show/hide">` +
@@ -3101,6 +3116,14 @@ function renderPanel() {
     row.querySelectorAll('[data-k]').forEach(el => {
       el.addEventListener(el.type === 'number' || el.type === 'color' ? 'input' : 'change', () => {
         const k = el.dataset.k;
+        if (ind.type === 'sess') {
+          if (el.type === 'checkbox') ind[k] = el.checked;
+          else if (k === 'count') { const v = Math.floor(Number(el.value)); if (!(v >= 1)) return; ind.count = Math.min(30, v); }
+          else if (k === 'shade') { const v = Number(el.value); if (!(v >= 0)) return; ind.shade = Math.min(100, v); }
+          else if (/Time$/.test(k)) { const ok = !!sessParse(el.value); el.style.borderColor = ok ? '' : 'var(--down)'; if (!ok) return; ind[k] = el.value.trim(); }
+          else ind[k] = el.value;
+          bump(); saveInds(); legend(null); return;
+        }
         if (ind.type === 'push' && (k === 'pIv' || k === 'sIv' || k === 'stTf')) {
           if (!el.value.trim()) { ind[k] = ''; el.style.borderColor = ''; }
           else {
@@ -3275,6 +3298,9 @@ function legend(idx) {
       ` <b class="eye dj${i.doji === 'off' ? ' off' : ''}" data-act="doji" data-i="${inds.indexOf(i)}" title="Doji dots on the MACD: click to switch between Heikin Ashi candles, normal candles and off">` +
       `doji dots: ${i.doji === 'candle' ? 'normal' : i.doji === 'off' ? 'off' : 'HA'}</b></div>`;
   });
+  inds.filter(i => i.type === 'sess' && i.visible !== false).forEach(i => {
+    html += `<div>${eye(i)}<span style="color:var(--text)">Sessions</span> ${sessWarn() ? `<span style="color:var(--down)">${sessWarn()}</span>` : [['a', 'Asia'], ['l', 'London'], ['n', 'New York']].filter(([p]) => i[p + 'On'] !== false).map(([p, nm]) => `<span style="color:${i[p + 'Col']}">${nm}</span>`).join(' ')}</div>`;
+  });
   inds.filter(i => i.type === 'pdhl' && i.visible !== false && i.piv).forEach(i => {
     const rt = raw[idx] ? raw[idx][5] : null, pv = i.piv.find(p => rt >= p.start && rt < p.end) || i.piv[i.piv.length - 1];
     html += `<div>${eye(i)}<span style="color:var(--text)">Prev day</span> ` + (i.pivWarn ? `<span style="color:var(--down)">${i.pivWarn}</span>`
@@ -3372,7 +3398,7 @@ function legend(idx) {
     const zinfo = i.zones === false ? 'zones off' : zn ? `<b>${zn} zone${zn > 1 ? 's' : ''}</b>` : `<span style="color:var(--muted)">no zone yet (needs HH${zf}; try bias 0 or zone from 1)</span>`;
     html += `<div>${eye(i)}<span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${fmt(r.smma[k])}</span> &nbsp;&middot;&nbsp; bias ${bt} &nbsp;&middot;&nbsp; ${st} &nbsp;&middot;&nbsp; ${zinfo}</div>`;
   });
-  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'hswitch', 'chop', 'htf', 'burke', 'vprof', 'foot', 'cvd', 'push'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
+  inds.filter(i => !['bos', 'stretch', 'pivot', 'pdhl', 'vwap', 'atr', 'hl', 'macd', 'vol', 'hdoji', 'hswitch', 'chop', 'htf', 'burke', 'vprof', 'foot', 'cvd', 'push', 'sess'].includes(i.type) && i.visible !== false && i.vals).forEach(i => {
     const v = i.vals.map(a => fmt(a[idx])).join(' / ');
     html += `<div>${eye(i)}<span style="color:${i.color}">${label(i)}</span> <span style="color:var(--text)">${v}</span></div>`;
   });
@@ -4017,6 +4043,7 @@ function render() {
       drawBos();
       drawStretch();
       drawPushZones();
+      drawSessions();
       drawPivots(pw);
       drawPanes(pw, ph);
       drawHtf(pw, ph);
@@ -4142,6 +4169,68 @@ function drawMomentum(ind, r) {
       ctx.fillText(m.outcome, x1 + 4, (m.outcome === 'TP' ? ytp : m.outcome === 'SL' ? ysl : ye) + 4);
     }
   }
+}
+/* Session high / low lines (gold chart). Hours are UTC. Windows are found from the newest candle backwards, so it stays fast on 1s charts. */
+function sessParse(t) {
+  const m = /^\s*(\d{1,2}):?(\d{2})?\s*-\s*(\d{1,2}):?(\d{2})?\s*$/.exec(t || ''); if (!m) return null;
+  const a = (+m[1]) * 3600 + (+(m[2] || 0)) * 60, b = (+m[3]) * 3600 + (+(m[4] || 0)) * 60;
+  return a >= 0 && a < 86400 && b >= 0 && b <= 86400 && a !== b ? [a, b] : null;
+}
+function sessWarn() {
+  const iv = typeof parseIv === 'function' ? parseIv(tf) : null;
+  return iv && iv.kind === 'time' && iv.n > 3600 ? 'use a chart of 1h or shorter' : '';
+}
+let SESSC = { key: '', val: null };
+function sessCalc(ind) {
+  const n = raw.length, last = raw[n - 1];
+  const key = [n, last[0], last[2], last[3], ind.count, ind.aTime, ind.lTime, ind.nTime, ind.aOn, ind.lOn, ind.nOn].join('|') + '|' + ind.id;
+  if (SESSC.key === key) return SESSC.val;
+  const out = [];
+  for (const [p, nm, ab] of [['a', 'Asia', 'ASIA'], ['l', 'London', 'LDN'], ['n', 'New York', 'NY']]) {
+    if (ind[p + 'On'] === false) continue;
+    const win = sessParse(ind[p + 'Time']); if (!win) continue;
+    const [s0, e0] = win, e = e0 > s0 ? e0 : e0 + 86400, wins = [];
+    let cur = null;
+    for (let k = n - 1; k >= 0; k--) {
+      const t = raw[k][5], day = Math.floor(t / 86400), sod = t - day * 86400;
+      let id = null;
+      if (sod >= s0 && sod < e) id = day; else if (e > 86400 && sod + 86400 >= s0 && sod + 86400 < e) id = day - 1;
+      if (id == null) { cur = null; continue; }
+      if (!cur || cur.id !== id) {
+        if (wins.length >= ind.count) break;
+        cur = { id, hi: -Infinity, lo: Infinity, i0: k, i1: k, t0: id * 86400 + s0, nm, ab, col: ind[p + 'Col'] }; wins.push(cur);
+      }
+      if (raw[k][2] > cur.hi) cur.hi = raw[k][2]; if (raw[k][3] < cur.lo) cur.lo = raw[k][3]; cur.i0 = k;
+    }
+    wins.forEach((w, j) => { w.next = j ? wins[j - 1].i0 : null; w.live = j === 0 && w.i1 === n - 1; });
+    out.push(...wins);
+  }
+  SESSC = { key, val: out }; return out;
+}
+function drawSessions() {
+  const r = ts.getVisibleLogicalRange(); if (!r || !raw.length) return;
+  inds.filter(i => i.type === 'sess' && i.visible !== false).forEach(ind => {
+    if (sessWarn()) return;
+    const wins = sessCalc(ind), n = raw.length, sp = (l2x(1) || 0) - (l2x(0) || 0), shade = Math.max(0, Math.min(100, Number(ind.shade) || 0)) / 100;
+    ctx.font = '10px sans-serif'; ctx.textBaseline = 'alphabetic';
+    for (const w of wins) {
+      const iEnd = ind.run === 'now' ? n - 1 + 0.5 : ind.run === 'next' && w.next != null ? w.next - 0.5 : w.i1 + 0.5;
+      if (iEnd < r.from || w.i0 > r.to) continue;
+      const x0 = l2x(w.i0 - 0.5), x1 = l2x(iEnd), xs = l2x(w.i1 + 0.5), yh = series.priceToCoordinate(w.hi), yl = series.priceToCoordinate(w.lo);
+      if (x0 == null || x1 == null || yh == null || yl == null) continue;
+      if (shade > 0 && xs != null) { ctx.globalAlpha = shade * 0.7; ctx.fillStyle = w.col; ctx.fillRect(x0, Math.min(yh, yl), Math.max(1, xs - x0), Math.max(1, Math.abs(yl - yh))); }
+      if (ind.vlines) { ctx.globalAlpha = 0.45; ctx.strokeStyle = w.col; ctx.lineWidth = 1; ctx.setLineDash([2, 4]); ctx.beginPath(); ctx.moveTo(x0, 0); ctx.lineTo(x0, paneH()); ctx.stroke(); ctx.setLineDash([]); }
+      ctx.globalAlpha = 0.9; ctx.strokeStyle = w.col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, yh); ctx.lineTo(x1, yh); ctx.moveTo(x0, yl); ctx.lineTo(x1, yl); ctx.stroke();
+      if (ind.labels !== false) {
+        ctx.fillStyle = w.col; ctx.globalAlpha = 0.95;
+        const lx = Math.max(x0, 4) + 3, f = v => fmt(v);
+        ctx.fillText(`${w.ab} H${ind.prices !== false ? ' ' + f(w.hi) : ''}`, lx, yh - 3);
+        ctx.fillText(`${w.ab} L${ind.prices !== false ? ' ' + f(w.lo) : ''}`, lx, yl + 11);
+      }
+      ctx.globalAlpha = 1;
+    }
+  });
 }
 function drawPushZones() {
   const r = ts.getVisibleLogicalRange(); if (!r || !raw.length) return;

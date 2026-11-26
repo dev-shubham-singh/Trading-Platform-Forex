@@ -230,3 +230,7 @@ When you have 2 or more templates, a small bar at the bottom-left of the chart s
 ## Watchlists from scan results
 
 Symbols > Scans: every result has a round **+** icon (and each scan has **+ all**). It opens a small menu: pick a watchlist or make a new one (e.g. "Tomorrow"). A tick shows the symbol is already in a list; click the list again to take it out. Symbols > **Watchlists** shows your lists (rename, empty, delete, remove single symbols; click a symbol to open it). Lists stay saved in the browser for the next day and can be chosen as the source of a new scan.
+
+## Sessions (gold chart only)
+
+Indicators > **Sessions (high / low)**. Thin lines for the high and low of the Asia, London and New York sessions. Hours are in UTC and editable (default Asia 00:00-09:00, London 07:00-16:00, New York 12:00-21:00; IST = UTC + 5:30). *Show last N sessions* sets how many sessions of each kind are drawn. *Shade %* fills the box between low and high: 0 = only lines (cleanest), 100 = dark. *Lines run*: only during the session, until the next same session, or to the right edge. Names / prices and dotted open lines can be switched off or on. Use a chart of 1h or shorter.
