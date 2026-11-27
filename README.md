@@ -257,3 +257,6 @@ If the candles stop while the price still moves, two safety nets act: the server
 
 ## Multi-chart (2, 3 or 4 charts on one screen)
 Click **Multi-chart** in the top bar (or open `http://127.0.0.1:8765/grid`). Pick a layout (2 side by side / stacked, 3 with one big chart, 3 in a row, 4 as 2x2, in a row or stacked). Every tile is a full chart with its own symbol, timeframe, chart type and indicators; change them inside the tile and they are remembered. The small icon at the bottom right of a tile opens that chart in its own window. **Sync crosshair** follows the crosshair/drawings between tiles on the same symbol; **Same symbol in all** makes one symbol change apply to every chart. **New grid window** opens a second grid (for another screen). **New window** in the chart bar opens a separate chart on the same symbol/timeframe, and symbol sync is off by default so each window can show a different instrument.
+
+## Scanner: "between two levels" for pivots
+In the Pivot scan, **Look for price** can be **Near a level (percent range)** (as before) or **Between two levels (a zone)**: pick two levels such as S1 and S2, or R1 and R2, and symbols whose last close is between them are listed (**Any zone** accepts any zone between neighbouring levels). The optional second pivot period has the same choice, so e.g. "1d between S1 and S2 AND 1h near a level" works.
