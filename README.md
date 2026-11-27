@@ -263,3 +263,6 @@ In the Pivot scan, **Look for price** can be **Near a level (percent range)** (a
 
 ## Dragging pending orders
 A pending (limit / stop) order's lines can be dragged on the chart like a position's stop: grab the entry line to move the entry (its SL and TP move with it, keeping their distance) or grab the SL / TP line to move only that. The line shows "saving..." while MT5 is updated, and snaps back with a message if MT5 or the checks refuse (wrong side of the price, stop too close, SL/TP on the wrong side of the entry). Esc cancels a drag. Works on the practice account too.
+
+## Fix: 1m / 2m / 1h / 1d charts not following the price
+The live update request for minute-multiple charts asked MT5 for too few bars (1m, 1h and 1d asked for 5, but the loop only accepted 10 or more), so the server answered with no bars and those candles only changed on a reload. It now always asks for at least 10. The server also repairs a stalled MT5 feed from the newest tick (missing bars rebuilt, newest close = latest price), before the update request is trimmed.
