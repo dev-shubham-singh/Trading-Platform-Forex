@@ -260,3 +260,6 @@ Click **Multi-chart** in the top bar (or open `http://127.0.0.1:8765/grid`). Pic
 
 ## Scanner: "between two levels" for pivots
 In the Pivot scan, **Look for price** can be **Near a level (percent range)** (as before) or **Between two levels (a zone)**: pick two levels such as S1 and S2, or R1 and R2, and symbols whose last close is between them are listed (**Any zone** accepts any zone between neighbouring levels). The optional second pivot period has the same choice, so e.g. "1d between S1 and S2 AND 1h near a level" works.
+
+## Dragging pending orders
+A pending (limit / stop) order's lines can be dragged on the chart like a position's stop: grab the entry line to move the entry (its SL and TP move with it, keeping their distance) or grab the SL / TP line to move only that. The line shows "saving..." while MT5 is updated, and snaps back with a message if MT5 or the checks refuse (wrong side of the price, stop too close, SL/TP on the wrong side of the entry). Esc cancels a drag. Works on the practice account too.

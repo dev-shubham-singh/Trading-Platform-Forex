@@ -881,6 +881,45 @@ def cancel_order(ticket):
     return {"error": bad} if bad else {"ok": True}
 
 
+def modify_order(ticket, price, sl, tp):
+    """Move a pending order: its entry price, stop loss and take profit (0 = none). Checked against the current price first."""
+    if not ALLOW_TRADING:
+        return {"error": "Trading is turned off in gold_chart.py (ALLOW_TRADING = False)."}
+    with MT5_LOCK:
+        od = mt5.orders_get(ticket=int(ticket)) or ()
+        if not od:
+            return {"error": "that order is not pending any more"}
+        o = od[0]
+        info = mt5.symbol_info(o.symbol)
+        tk = mt5.symbol_info_tick(o.symbol)
+        if not info or not tk:
+            return {"error": f"no price for {o.symbol}"}
+        buy = o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP)
+        limit = o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)
+        if o.type not in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP, mt5.ORDER_TYPE_SELL_LIMIT, mt5.ORDER_TYPE_SELL_STOP):
+            return {"error": "only limit and stop orders can be moved here"}
+        stops = getattr(info, "trade_stops_level", 0) * info.point
+        d = info.digits
+        price, sl, tp = round(float(price or o.price_open), d), round(float(sl or 0), d), round(float(tp or 0), d)
+        ref = tk.ask if buy else tk.bid
+        below = (buy and limit) or (not buy and not limit)           # buy limit / sell stop wait BELOW the price
+        if below and not price < ref - stops:
+            return {"error": f"a {'buy limit' if buy else 'sell stop'} must be below the current price {ref}" + (f" by at least {stops:g}" if stops else "")}
+        if not below and not price > ref + stops:
+            return {"error": f"a {'buy stop' if buy else 'sell limit'} must be above the current price {ref}" + (f" by at least {stops:g}" if stops else "")}
+        if sl and (buy and not sl < price - stops or not buy and not sl > price + stops):
+            return {"error": f"stop loss {sl} must be {'below' if buy else 'above'} the entry {price}"}
+        if tp and (buy and not tp > price + stops or not buy and not tp < price - stops):
+            return {"error": f"take profit {tp} must be {'above' if buy else 'below'} the entry {price}"}
+        res = mt5.order_send({"action": mt5.TRADE_ACTION_MODIFY, "order": o.ticket, "symbol": o.symbol, "price": price, "sl": sl, "tp": tp,
+                              "type_time": o.type_time, "expiration": o.time_expiration, "stoplimit": o.price_stoplimit})
+        err = None if res else f"MT5 did not accept the change: {mt5.last_error()}"
+    bad = err or (None if res.retcode in (mt5.TRADE_RETCODE_DONE, 10008, 10025) else
+                  f"{RETCODE_TEXT.get(res.retcode, 'rejected')} (code {res.retcode}{', ' + res.comment if res.comment else ''})")
+    log_order(f"{datetime.now():%Y-%m-%d %H:%M:%S} MODIFY ORDER {o.ticket} {o.symbol} price={price} sl={sl} tp={tp} -> " + (bad or "done"))
+    return {"error": bad} if bad else {"ok": True, "ticket": o.ticket, "price": price, "sl": sl, "tp": tp}
+
+
 def modify_position(ticket, sl, tp):
     """Move an open position's stop loss / take profit (0 = none). Checked against the current price first."""
     if not ALLOW_TRADING:
@@ -1485,6 +1524,8 @@ def make_handler(default_sym):
                     return self.js({"error": err} if err else {"ok": True, "cfg": LOCK})
                 if url.path == "/api/cancel":
                     return self.js(cancel_order(body.get("ticket")))
+                if url.path == "/api/ordmodify":
+                    return self.js(modify_order(body.get("ticket"), body.get("price"), body.get("sl"), body.get("tp")))
                 if url.path == "/api/modify":
                     return self.js(modify_position(body.get("ticket"), body.get("sl"), body.get("tp")))
                 if url.path == "/api/close":

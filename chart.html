@@ -4217,6 +4217,12 @@ chartEl.addEventListener('pointerdown', e => {
   }
   const oh_ = ordHits.find(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
   if (oh_) { e.stopPropagation(); e.preventDefault(); cancelPending(oh_.ticket); return; }
+  const ol_ = !plan && tool === 'cursor' ? ordLineAt(x, y) : null;
+  if (ol_ && (ACC.orders || []).some(q => q.ticket === ol_.ticket)) {         // grab a pending order's entry / SL / TP line
+    e.stopPropagation(); e.preventDefault(); lockChart(true);
+    ordDrag = { ticket: ol_.ticket, which: ol_.which, price: null, sy: y };
+    drag = { kind: 'ordline' }; bump(); return;
+  }
   const pl_ = !plan && tool === 'cursor' ? posLineAt(x, y) : null;
   if (pl_) {                                           // grab an open position's SL / TP (or its entry line)
     const p = (ACC.positions || []).find(q => q.ticket === pl_.ticket);
@@ -4267,6 +4273,11 @@ chartEl.addEventListener('mousedown', e => { if (drag || tool !== 'cursor') e.st
 window.addEventListener('pointermove', e => {
   const { x, y } = local(e);
   if (pending) { const pt = ptAt(x, y); if (pt) pending.p2 = pt; }
+  if (drag && drag.kind === 'ordline' && ordDrag) {
+    const pr = series.coordinateToPrice(y);
+    if (pr != null && Math.abs(y - ordDrag.sy) > 2) { const k = Math.pow(10, digits); ordDrag.price = Math.round(pr * k) / k; bump(); }
+    return;
+  }
   if (drag && drag.kind === 'posline' && posDrag) {
     const pr = series.coordinateToPrice(y), p = (ACC.positions || []).find(q => q.ticket === posDrag.ticket);
     if (pr != null && p && Math.abs(y - posDrag.sy) > 2) {
@@ -4308,6 +4319,12 @@ window.addEventListener('pointermove', e => {
 window.addEventListener('pointerup', e => {
   if (!drag) return;
   if (drag.kind === 'plansl' || drag.kind === 'planlimit') { drag = null; lockChart(false); return; }
+  if (drag.kind === 'ordline') {
+    drag = null; lockChart(false);
+    const d = ordDrag; ordDrag = null; bump();
+    if (d && d.price != null) saveOrderLevel(d.ticket, d.which, d.price);
+    return;
+  }
   if (drag.kind === 'posline') {
     drag = null; lockChart(false);
     const d = posDrag; posDrag = null; bump();
@@ -4330,6 +4347,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     setTool('cursor'); sel = null; lockChart(false); if (plan) closePlan();
     if (posDrag) { posDrag = null; drag = null; bump(); }       // cancel a SL / TP drag
+    if (ordDrag) { ordDrag = null; drag = null; bump(); }       // cancel a pending-order drag
     if (RP.picking) { RP.picking = false; RP.hx = null; $('hint').textContent = ''; chartEl.style.cursor = ''; if (!RP.on) $('replaybtn').classList.remove('on'); else $('rpbar').style.display = 'flex'; bump(); }
   }
   if (e.key === 'ArrowRight' && RP.on && !RP.picking) { replayPause(); replayStep(); e.preventDefault(); }
@@ -6036,15 +6054,18 @@ async function cancelPending(ticket) {
   } catch (e) { tbNote('Lost connection to the chart server', 'pl-dn'); }
   accTick();
 }
-let ordHits = [];                              // clickable cancel boxes on pending-order lines
+let ordHits = [], ordLines = [], ordDrag = null, ordBusy = {};   // cancel boxes, draggable lines and the drag in progress for pending orders
 function drawPending(pw) {
-  ordHits = [];
+  ordHits = []; ordLines = [];
   if (!ACC || !ACC.orders || !ACC.sym) return;
   const vpp = ACC.sym.vpp, c = commLot();
-  for (const o of ACC.orders) {
+  for (const o0 of ACC.orders) {
+    const dg = ordDrag && ordDrag.ticket === o0.ticket && ordDrag.price != null ? ordDrag : null;       // the line being dragged shows at the mouse
+    const o = dg ? Object.assign({}, o0, { [dg.which]: dg.price }) : o0;
     const y = series.priceToCoordinate(o.price); if (y == null) continue;
+    ordLines.push({ y, ticket: o.ticket, which: 'price' });
     const loss = o.sl ? o.volume * Math.abs(o.price - o.sl) * vpp + o.volume * c : 0;
-    const txt = `${o.side.toUpperCase()} ${(o.kind || 'limit').toUpperCase()} ${o.volume}` + (loss ? `  risk ${money(loss)}` : '');
+    const txt = `${o.side.toUpperCase()} ${(o.kind || 'limit').toUpperCase()} ${o.volume}` + (loss ? `  risk ${money(loss)}` : '') + (ordBusy[o.ticket] ? '  saving...' : dg ? '' : '  \u2195');
     hLine(y, pw, '#2962ff', 1.5, [6, 3]); priceTag(y, pw, txt, '#2962ff', true);
     ctx.font = '11px sans-serif';
     const tw = ctx.measureText(txt).width + 10, bx = pw - tw - 4 - 22;
@@ -6054,6 +6075,7 @@ function drawPending(pw) {
     for (const [k, col] of [['sl', '#ef5350'], ['tp', '#26a69a']]) {
       if (!o[k]) continue;
       const yy = series.priceToCoordinate(o[k]); if (yy == null) continue;
+      ordLines.push({ y: yy, ticket: o.ticket, which: k });
       const m = k === 'sl' ? -loss : o.volume * Math.abs(o.tp - o.price) * vpp - o.volume * c;
       hLine(yy, pw, col, 1, [3, 4]); priceTag(yy, pw, `${k.toUpperCase()} ${fmt(o[k])}  ${m >= 0 ? '+' : ''}${money(m)}`, col, true);
     }
@@ -6385,6 +6407,33 @@ function posLineAt(x, y) {
   for (const l of posLines) { const d = Math.abs(y - l.y); if (d < bd || (d === bd && l.which !== 'entry')) { bd = d; best = l; } }
   return best;
 }
+function ordLineAt(x, y) {
+  let best = null, bd = 6;
+  for (const l of ordLines) { const d = Math.abs(y - l.y); if (d < bd || (d === bd && l.which !== 'price')) { bd = d; best = l; } }
+  return best;
+}
+async function saveOrderLevel(ticket, which, price) {            // drag finished on a pending order: entry price, SL or TP
+  const o = (ACC.orders || []).find(q => q.ticket === ticket); if (!o) return;
+  const k = Math.pow(10, digits); price = Math.round(price * k) / k;
+  const nw = { price: o.price, sl: o.sl || 0, tp: o.tp || 0 };
+  if (which === 'price' && (o.sl || o.tp)) {                       // moving the entry keeps the stop and target the same distance away
+    const dlt = price - o.price; if (o.sl) nw.sl = Math.round((o.sl + dlt) * k) / k; if (o.tp) nw.tp = Math.round((o.tp + dlt) * k) / k;
+  }
+  nw[which] = price;
+  const buy = o.side === 'buy';
+  if (nw.sl && (buy ? nw.sl >= nw.price : nw.sl <= nw.price)) { tbNote('Not moved: the stop loss must be ' + (buy ? 'below' : 'above') + ' the entry', 'pl-dn'); return; }
+  if (nw.tp && (buy ? nw.tp <= nw.price : nw.tp >= nw.price)) { tbNote('Not moved: the take profit must be ' + (buy ? 'above' : 'below') + ' the entry', 'pl-dn'); return; }
+  if (practice()) {
+    const q = (A().pend || []).find(x => x.ticket === ticket); if (q) Object.assign(q, nw); if (!RP.on) paperSave();
+    tbNote(`Practice pending order moved to ${fmt(nw.price)}`, ''); rpView(); renderBar(true); bump(); return;
+  }
+  const old = { price: o.price, sl: o.sl, tp: o.tp }; Object.assign(o, nw); ordBusy[ticket] = true; bump();
+  const res = await postJSON('/api/ordmodify', { ticket, price: nw.price, sl: nw.sl, tp: nw.tp });
+  delete ordBusy[ticket];
+  if (res.ok) tbNote(`Pending order moved to ${fmt(nw.price)}` + (nw.sl ? `, SL ${fmt(nw.sl)}` : '') + (nw.tp ? `, TP ${fmt(nw.tp)}` : ''), '');
+  else { Object.assign(o, old); tbNote(res.error || 'MT5 did not accept the change', 'pl-dn'); }
+  await accTick(); renderBar(true); bump();
+}
 async function savePosLevel(p, which, price) {
   const k = Math.pow(10, digits); price = Math.round(price * k) / k;
   if (practice()) {                                // practice position: just move it
@@ -6404,9 +6453,9 @@ async function savePosLevel(p, which, price) {
 }
 chartEl.addEventListener('pointermove', e => { if (RP.picking) { RP.hx = local(e).x; bump(); } });
 chartEl.addEventListener('pointermove', e => {           // hover: show that the line can be dragged
-  if (posDrag || drag || tool !== 'cursor' || !posLines.length) return;
+  if (posDrag || ordDrag || drag || tool !== 'cursor' || !(posLines.length || ordLines.length)) return;
   const { x, y } = local(e);
-  const on = x < paneW() && y < paneH() && posLineAt(x, y) && !posHits.some(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
+  const on = x < paneW() && y < paneH() && (posLineAt(x, y) || ordLineAt(x, y)) && !posHits.some(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) && !ordHits.some(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
   chartEl.style.cursor = on ? 'ns-resize' : '';
 });
 
